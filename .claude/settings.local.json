@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(node esbuild.config.mjs)",
+      "Bash(npx tsc:*)",
+      "Bash(node esbuild.config.mjs production)"
+    ]
+  }
+}

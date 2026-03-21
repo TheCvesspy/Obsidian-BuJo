@@ -1,0 +1,2008 @@
+/* Task BuJo Plugin Styles — Uses Obsidian CSS variables for theme compatibility */
+
+/* ─── Syntax Reference ─── */
+
+.task-bujo-syntax-modal {
+    max-width: 480px;
+}
+
+.task-bujo-syntax-modal h3 {
+    font-size: 13px;
+    margin: 12px 0 4px 0;
+    color: var(--text-muted);
+}
+
+.task-bujo-syntax-toggle {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+    width: 100%;
+    text-align: left;
+    margin-top: 8px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-syntax-toggle:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.task-bujo-syntax-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.task-bujo-syntax-table tr:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-syntax-table td {
+    padding: 3px 8px;
+    vertical-align: top;
+}
+
+.task-bujo-syntax-code code {
+    background: var(--background-secondary);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--text-accent);
+}
+
+.task-bujo-syntax-desc {
+    color: var(--text-muted);
+}
+
+.task-bujo-syntax-separator td {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-syntax-row-clickable {
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.task-bujo-syntax-row-clickable:hover {
+    background: var(--interactive-accent) !important;
+    color: var(--text-on-accent);
+}
+
+.task-bujo-syntax-row-clickable:hover .task-bujo-syntax-desc {
+    color: var(--text-on-accent);
+}
+
+.task-bujo-syntax-row-clickable:hover code {
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-on-accent);
+}
+
+.task-bujo-syntax-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin: -4px 0 8px 0;
+}
+
+/* ─── Add Task Bar ─── */
+
+.task-bujo-add-bar {
+    border-top: 1px solid var(--background-modifier-border);
+    padding: 8px 0;
+    margin-top: 12px;
+}
+
+.task-bujo-add-form {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.task-bujo-add-input {
+    flex: 1;
+    min-width: 120px;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+}
+
+.task-bujo-add-input:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+.task-bujo-add-priority {
+    padding: 5px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.task-bujo-add-date {
+    width: 100px;
+    padding: 6px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+}
+
+.task-bujo-add-date:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+.task-bujo-add-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+}
+
+.task-bujo-add-btn:hover {
+    opacity: 0.9;
+}
+
+/* ─── Insert Task Modal ─── */
+
+.task-bujo-insert-modal .modal-content,
+.task-bujo-due-modal .modal-content {
+    max-width: 500px;
+}
+
+/* ─── Folder Tree (Settings) ─── */
+
+.task-bujo-folder-tree {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 16px;
+    max-height: 400px;
+    overflow-y: auto;
+    background: var(--background-primary);
+}
+
+.task-bujo-folder-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    transition: background 0.1s;
+}
+
+.task-bujo-folder-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-folder-chevron {
+    width: 14px;
+    text-align: center;
+    font-size: 10px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.task-bujo-folder-chevron.task-bujo-clickable {
+    cursor: pointer;
+}
+
+.task-bujo-folder-state-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: background 0.1s;
+}
+
+.task-bujo-folder-state-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-folder-name {
+    font-size: 13px;
+    color: var(--text-normal);
+}
+
+.task-bujo-folder-excluded .task-bujo-folder-name {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+.task-bujo-folder-inherit .task-bujo-folder-name {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.task-bujo-folder-children {
+    /* no extra styles needed, indentation via padding-left on rows */
+}
+
+/* ─── Container & Layout ─── */
+
+.task-bujo-container {
+    padding: 12px 16px;
+    height: 100%;
+    overflow-y: auto;
+    background: var(--background-primary);
+}
+
+/* ─── View Switcher (Tabs) ─── */
+
+.task-bujo-view-switcher {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding: 4px 0 8px;
+    margin-bottom: 12px;
+}
+
+.task-bujo-view-tab {
+    border: none;
+    background: transparent;
+    padding: 6px 16px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.task-bujo-view-tab:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-view-tab-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+}
+
+/* ─── Toolbar ─── */
+
+.task-bujo-toolbar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 0;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.task-bujo-search {
+    flex: 1;
+    min-width: 150px;
+}
+
+.task-bujo-search-input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+}
+
+.task-bujo-search-input:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+.task-bujo-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-right: 6px;
+}
+
+.task-bujo-group-selector {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    align-items: center;
+}
+
+.task-bujo-group-btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.15s ease;
+}
+
+.task-bujo-group-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-active {
+    background: var(--interactive-accent) !important;
+    color: var(--text-on-accent) !important;
+    border-color: var(--interactive-accent) !important;
+}
+
+/* ─── Group Headers ─── */
+
+.task-bujo-group-header {
+    margin-top: 12px;
+}
+
+.task-bujo-group-header-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--background-secondary);
+}
+
+.task-bujo-clickable {
+    cursor: pointer;
+}
+
+.task-bujo-clickable:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-chevron {
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 14px;
+    text-align: center;
+    transition: transform 0.2s ease;
+}
+
+.task-bujo-group-label {
+    font-weight: 600;
+    color: var(--text-normal);
+    font-size: 14px;
+}
+
+.task-bujo-group-count {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.task-bujo-group-content {
+    padding-left: 8px;
+    transition: max-height 0.2s ease;
+}
+
+.task-bujo-collapsed {
+    display: none;
+}
+
+/* ─── Task Rows ─── */
+
+.task-bujo-task-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    transition: background 0.15s ease;
+}
+
+.task-bujo-task-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-checkbox {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.task-bujo-task-text {
+    flex: 1;
+    color: var(--text-normal);
+    font-size: 14px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-task-done {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+
+.task-bujo-task-migrated {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ─── Priority Dots ─── */
+
+.task-bujo-priority-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.task-bujo-priority-high {
+    background: var(--color-red, #e03e3e);
+}
+
+.task-bujo-priority-medium {
+    background: var(--color-yellow, #d9a200);
+}
+
+.task-bujo-priority-low {
+    background: var(--color-green, #08b94e);
+}
+
+/* ─── Status Markers ─── */
+
+.task-bujo-status-marker {
+    font-size: 14px;
+    flex-shrink: 0;
+    width: 18px;
+    text-align: center;
+}
+
+.task-bujo-status-migrated {
+    color: var(--text-accent);
+}
+
+.task-bujo-status-scheduled {
+    color: var(--color-blue, #2e80f2);
+}
+
+.task-bujo-status-cancelled {
+    color: var(--text-muted);
+}
+
+/* ─── Due Date Badges ─── */
+
+.task-bujo-due-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.task-bujo-due-overdue {
+    background: var(--background-modifier-error, rgba(224, 62, 62, 0.15));
+    color: var(--text-error, var(--color-red, #e03e3e));
+}
+
+/* ─── Source Links ─── */
+
+.task-bujo-source-link {
+    font-size: 11px;
+    color: var(--text-accent);
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0.7;
+    transition: opacity 0.15s ease;
+    text-decoration: none;
+}
+
+.task-bujo-source-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+
+/* ─── Empty States ─── */
+
+.task-bujo-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 24px;
+    font-size: 14px;
+}
+
+/* ─── Weekly View ─── */
+
+.task-bujo-week-day {
+    margin-bottom: 16px;
+    border-left: 3px solid var(--background-modifier-border);
+    padding-left: 12px;
+}
+
+.task-bujo-today-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+/* ─── Sprint View ─── */
+
+.task-bujo-progress-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--background-modifier-border);
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+
+.task-bujo-progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--interactive-accent);
+    transition: width 0.3s ease;
+}
+
+.task-bujo-progress-text {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.task-bujo-sprint-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Migration Modal ─── */
+
+.task-bujo-migration-modal {
+    max-width: 700px;
+}
+
+.task-bujo-migration-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    background: var(--background-secondary);
+    flex-wrap: wrap;
+}
+
+.task-bujo-preview-item {
+    opacity: 0.8;
+}
+
+.task-bujo-migration-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.task-bujo-migration-item-text {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-normal);
+}
+
+.task-bujo-migration-item-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.task-bujo-migration-item-source {
+    color: var(--text-muted);
+}
+
+.task-bujo-migration-item-date {
+    color: var(--text-muted);
+}
+
+.task-bujo-migration-item-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.task-bujo-btn-forward,
+.task-bujo-btn-reschedule,
+.task-bujo-btn-cancel,
+.task-bujo-btn-done {
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.15s ease;
+}
+
+.task-bujo-btn-forward.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.task-bujo-btn-done.is-active { background: var(--color-green, #4caf50); color: #fff; }
+.task-bujo-btn-reschedule.is-active { background: var(--color-yellow, #ff9800); color: #fff; }
+.task-bujo-btn-cancel.is-active { background: var(--color-red, #f44336); color: #fff; }
+.is-dimmed { opacity: 0.5; }
+
+.task-bujo-migration-date-input {
+    width: 100%;
+    padding: 4px 12px;
+}
+
+.task-bujo-migration-date-input input {
+    width: 150px;
+    padding: 4px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.task-bujo-migration-summary {
+    padding: 12px;
+    margin-top: 12px;
+    background: var(--background-secondary);
+    border-radius: 6px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.task-bujo-migration-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+.task-bujo-review-section {
+    margin-bottom: 20px;
+}
+
+.task-bujo-review-section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-review-section-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-normal);
+}
+
+.task-bujo-review-section-count {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.task-bujo-review-quickadd {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-review-quickadd h3 {
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.task-bujo-add-form {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.task-bujo-add-input {
+    flex: 1;
+    min-width: 150px;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.task-bujo-add-priority {
+    padding: 6px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.task-bujo-add-date {
+    width: 110px;
+    padding: 6px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.task-bujo-add-btn {
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.task-bujo-review-added {
+    margin-top: 8px;
+}
+
+.task-bujo-empty {
+    padding: 20px 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ─── Picker Sections ─── */
+
+.task-bujo-picker-section {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-picker-header {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.task-bujo-picker-search {
+    width: 100%;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.task-bujo-picker-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+}
+
+.task-bujo-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--background-modifier-border-hover, rgba(0,0,0,0.05));
+}
+
+.task-bujo-picker-item:last-child {
+    border-bottom: none;
+}
+
+.task-bujo-picker-item:hover {
+    background: var(--background-secondary);
+}
+
+.task-bujo-picker-item input[type="checkbox"] {
+    flex-shrink: 0;
+}
+
+.task-bujo-picker-item-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-picker-item-source {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-picker-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.task-bujo-picker-feedback {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ─── Responsive (Tab View) ─── */
+
+.workspace-leaf-content[data-type="task-bujo-view"] .task-bujo-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+@media (min-width: 500px) {
+    .workspace-leaf-content[data-type="task-bujo-view"] .task-bujo-toolbar {
+        flex-direction: row;
+        align-items: center;
+    }
+}
+
+/* ─── Content Area ─── */
+
+.task-bujo-content {
+    flex: 1;
+    min-height: 0;
+}
+
+/* ─── View Headers ─── */
+
+.task-bujo-view-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.task-bujo-pending-count {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+.task-bujo-view-subheader {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-normal);
+    margin-bottom: 8px;
+}
+
+.task-bujo-separator {
+    border: none;
+    border-top: 1px solid var(--background-modifier-border);
+    margin: 16px 0;
+}
+
+/* ─── Daily View ─── */
+
+.task-bujo-daily-view {
+    /* container for daily log sections */
+}
+
+/* ─── Weekly View ─── */
+
+.task-bujo-day-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-normal);
+}
+
+.task-bujo-muted {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+    padding: 4px 0;
+}
+
+.task-bujo-progress-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.task-bujo-day-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.task-bujo-day-tasks {
+    padding-left: 4px;
+}
+
+/* ─── Open Points View ─── */
+
+.task-bujo-openpoints-view {
+    /* container for open points */
+}
+
+/* ─── Overdue View ─── */
+
+.task-bujo-overdue-view {
+    /* container for overdue tasks */
+}
+
+/* ─── Sprint View ─── */
+
+.task-bujo-sprint-view {
+    /* container for sprint view */
+}
+
+.task-bujo-sprint-empty {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-muted);
+}
+
+.task-bujo-sprint-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 8px;
+}
+
+.task-bujo-sprint-header-info {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.task-bujo-sprint-name {
+    font-weight: 600;
+    font-size: 15px;
+}
+
+.task-bujo-sprint-dates {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+.task-bujo-sprint-remaining {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+.task-bujo-sprint-progress {
+    margin-bottom: 16px;
+}
+
+/* ─── Kanban Board ─── */
+
+.task-bujo-kanban {
+    display: flex;
+    gap: 12px;
+    min-height: 200px;
+    margin-bottom: 16px;
+}
+
+.task-bujo-kanban-column {
+    flex: 1;
+    min-width: 180px;
+    background: var(--background-secondary);
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.task-bujo-kanban-column-header {
+    font-weight: 600;
+    font-size: 13px;
+    padding: 6px 8px;
+    border-bottom: 2px solid var(--background-modifier-border);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.task-bujo-kanban-column-count {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.task-bujo-kanban-column-body {
+    flex: 1;
+    min-height: 50px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+
+.task-bujo-kanban-column-dragover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-kanban-empty {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-faint);
+    padding: 16px 8px;
+}
+
+/* ─── Kanban Cards ─── */
+
+.task-bujo-kanban-card {
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 10px;
+    cursor: grab;
+    transition: box-shadow 0.15s, opacity 0.15s;
+}
+
+.task-bujo-kanban-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.task-bujo-kanban-card-dragging {
+    opacity: 0.4;
+}
+
+.task-bujo-kanban-card-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.task-bujo-kanban-card-title {
+    font-weight: 600;
+    font-size: 13px;
+    flex: 1;
+    cursor: pointer;
+}
+
+.task-bujo-kanban-card-title:hover {
+    color: var(--text-accent);
+}
+
+.task-bujo-kanban-card-blocked {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--color-red, #e03e3e);
+    color: #fff;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.task-bujo-kanban-card-jira {
+    font-size: 11px;
+    color: var(--text-accent);
+    margin-bottom: 2px;
+}
+
+.task-bujo-kanban-card-links {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    line-height: 1.4;
+}
+
+.task-bujo-kanban-card-progress {
+    margin-top: 4px;
+}
+
+.task-bujo-kanban-card-progress .task-bujo-progress-bar {
+    height: 4px;
+    margin-bottom: 2px;
+}
+
+.task-bujo-kanban-card-progress .task-bujo-progress-text {
+    font-size: 11px;
+}
+
+.task-bujo-kanban-card-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.task-bujo-kanban-card-actions button {
+    padding: 2px 8px;
+    font-size: 12px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.task-bujo-kanban-card-actions button:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-kanban-blocked-active {
+    background: var(--color-red, #e03e3e) !important;
+    color: #fff !important;
+    border-color: var(--color-red, #e03e3e) !important;
+}
+
+/* ─── Sprint Close Modal ─── */
+
+.task-bujo-sprint-close-modal .modal-content {
+    max-width: 700px;
+}
+
+.task-bujo-sprint-close-item {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+}
+
+.task-bujo-sprint-close-item-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.task-bujo-sprint-close-item-progress {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.task-bujo-sprint-close-actions-row {
+    display: flex;
+    gap: 4px;
+}
+
+.task-bujo-sprint-close-summary {
+    margin-top: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--background-secondary);
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+/* ─── Topic Modal ─── */
+
+.task-bujo-topic-modal .modal-content {
+    max-width: 500px;
+}
+
+.task-bujo-page-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+    width: 100%;
+}
+
+.task-bujo-page-chips-empty {
+    color: var(--text-faint);
+    font-size: 12px;
+    font-style: italic;
+}
+
+.task-bujo-page-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.task-bujo-page-chip-remove {
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-muted);
+    line-height: 1;
+}
+
+.task-bujo-page-chip-remove:hover {
+    color: var(--text-error, var(--color-red, #e03e3e));
+}
+
+/* Responsive: stack kanban columns on narrow panes */
+@media (max-width: 600px) {
+    .task-bujo-kanban {
+        flex-direction: column;
+    }
+    .task-bujo-kanban-column {
+        min-width: unset;
+    }
+}
+
+.task-bujo-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s;
+}
+
+.task-bujo-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-btn-warning {
+    border-color: var(--text-error, var(--color-red, #e03e3e));
+    color: var(--text-error, var(--color-red, #e03e3e));
+}
+
+.task-bujo-btn-warning:hover {
+    background: var(--background-modifier-error, rgba(224, 62, 62, 0.1));
+}
+
+/* ─── Task List ─── */
+
+.task-bujo-task-list {
+    /* container for grouped task lists */
+}
+
+/* ─── Sprint Modal ─── */
+
+.task-bujo-sprint-modal .modal-content {
+    max-width: 500px;
+}
+
+.task-bujo-modal-error {
+    color: var(--text-error, var(--color-red, #e03e3e));
+    font-size: 13px;
+    min-height: 1.2em;
+}
+
+/* ─── Migration Modal Details ─── */
+
+.task-bujo-migration-item-info {
+    flex: 1;
+    min-width: 200px;
+}
+
+.task-bujo-migration-item-text {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--text-normal);
+}
+
+.task-bujo-migration-item-source {
+    font-size: 12px;
+    color: var(--text-accent);
+    margin-top: 2px;
+}
+
+.task-bujo-migration-item-date {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.task-bujo-migration-item-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.task-bujo-migration-date-input {
+    width: 100%;
+    margin-top: 6px;
+}
+
+.task-bujo-migration-date-input input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+}
+
+.task-bujo-migration-date-input input:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+/* ─── Button active/dimmed states (Migration) ─── */
+
+.task-bujo-btn-forward.is-active,
+.task-bujo-btn-reschedule.is-active,
+.task-bujo-btn-cancel.is-active {
+    font-weight: 600;
+}
+
+.task-bujo-btn-forward.is-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
+.task-bujo-btn-reschedule.is-active {
+    background: var(--color-yellow, #d9a200);
+    color: white;
+    border-color: var(--color-yellow, #d9a200);
+}
+
+.task-bujo-btn-cancel.is-active {
+    background: var(--text-muted);
+    color: var(--background-primary);
+    border-color: var(--text-muted);
+}
+
+.is-dimmed {
+    opacity: 0.5;
+}
+
+/* ─── Analytics View ─── */
+
+.task-bujo-analytics {
+    padding: 12px;
+}
+
+.task-bujo-analytics-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.task-bujo-analytics-header h3 {
+    margin: 0;
+}
+
+.task-bujo-analytics-save-btn {
+    padding: 4px 12px;
+    border-radius: 4px;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.task-bujo-analytics-save-btn:hover {
+    opacity: 0.9;
+}
+
+.task-bujo-analytics-save-btn[disabled] {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.task-bujo-analytics-summary {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.task-bujo-analytics-card {
+    flex: 1;
+    min-width: 80px;
+    padding: 12px;
+    background: var(--background-secondary);
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-analytics-card-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.task-bujo-analytics-card.done .task-bujo-analytics-card-value {
+    color: var(--color-green, #4caf50);
+}
+
+.task-bujo-analytics-card.migrated .task-bujo-analytics-card-value {
+    color: var(--color-yellow, #ff9800);
+}
+
+.task-bujo-analytics-card.cancelled .task-bujo-analytics-card-value {
+    color: var(--text-muted);
+}
+
+.task-bujo-analytics-card-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.task-bujo-analytics-breakdown {
+    margin-bottom: 20px;
+}
+
+.task-bujo-analytics-breakdown h4 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+}
+
+.task-bujo-analytics-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.task-bujo-analytics-bar-label {
+    min-width: 100px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: right;
+}
+
+.task-bujo-analytics-bar-container {
+    flex: 1;
+    height: 16px;
+    background: var(--background-secondary);
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+}
+
+.task-bujo-analytics-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.task-bujo-analytics-bar.planned {
+    background: var(--background-modifier-border);
+}
+
+.task-bujo-analytics-bar.completed {
+    background: var(--interactive-accent);
+}
+
+.task-bujo-analytics-bar-value {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 40px;
+}
+
+/* Trends */
+
+.task-bujo-analytics-trends {
+    margin-bottom: 20px;
+}
+
+.task-bujo-analytics-trends h4 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+}
+
+.task-bujo-analytics-trend-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-bottom: 16px;
+}
+
+.task-bujo-analytics-trend-table th {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.task-bujo-analytics-trend-table td {
+    padding: 4px 8px;
+}
+
+.task-bujo-analytics-trend-table tr:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-analytics-trend-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    height: 120px;
+    padding: 8px 0;
+}
+
+.task-bujo-analytics-trend-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+}
+
+.task-bujo-analytics-trend-bar-wrap {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.task-bujo-analytics-trend-bar {
+    width: 60%;
+    background: var(--interactive-accent);
+    border-radius: 3px 3px 0 0;
+    min-height: 2px;
+    transition: height 0.3s ease;
+}
+
+.task-bujo-analytics-trend-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    white-space: nowrap;
+}
+
+/* ─── Weekly Review Modal ─── */
+
+.task-bujo-weekly-review-modal {
+    max-width: 500px;
+}
+
+.task-bujo-review-summary {
+    margin-bottom: 16px;
+}
+
+.task-bujo-review-stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-review-stat-label {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.task-bujo-review-stat-value {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.task-bujo-review-breakdown {
+    margin-bottom: 16px;
+}
+
+.task-bujo-review-breakdown h3 {
+    font-size: 14px;
+    margin: 0 0 8px 0;
+}
+
+.task-bujo-review-breakdown-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.task-bujo-review-breakdown-name {
+    min-width: 100px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.task-bujo-review-breakdown-bar-wrap {
+    flex: 1;
+    height: 12px;
+    background: var(--background-secondary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.task-bujo-review-breakdown-bar {
+    height: 100%;
+    background: var(--interactive-accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.task-bujo-review-breakdown-value {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 35px;
+}
+
+.task-bujo-review-comparison {
+    margin-bottom: 16px;
+}
+
+.task-bujo-review-comparison h3 {
+    font-size: 14px;
+    margin: 0 0 8px 0;
+}
+
+.task-bujo-review-comparison-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.task-bujo-review-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Structured Tasks / Subtasks ─── */
+
+.task-bujo-subtask-row {
+    border-left: 2px solid var(--background-modifier-border);
+    margin-left: 6px;
+}
+
+.task-bujo-subtask-toggle {
+    cursor: pointer;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-right: 4px;
+    width: 14px;
+    display: inline-block;
+    text-align: center;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.task-bujo-subtask-toggle:hover {
+    color: var(--text-normal);
+}
+
+.task-bujo-subtask-progress {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 6px;
+    background: var(--background-modifier-hover);
+    padding: 1px 6px;
+    border-radius: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Confirm modal for subtask completion */
+
+.task-bujo-confirm-modal {
+    max-width: 400px;
+}
+
+.task-bujo-confirm-modal .task-bujo-confirm-message {
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--text-normal);
+}
+
+.task-bujo-confirm-modal .task-bujo-confirm-task-name {
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.task-bujo-confirm-modal .task-bujo-confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+/* Migration modal: subtask context under parent */
+
+.task-bujo-migration-subtask {
+    padding-left: 24px;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 2px 0;
+}
+
+.task-bujo-migration-subtask::before {
+    content: '└ ';
+    color: var(--text-faint);
+}
+
+/* ─── Overview View Sub-Toggle ─── */
+
+.task-bujo-overview-toggle {
+    display: flex;
+    gap: 0;
+    margin-bottom: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    overflow: hidden;
+    width: fit-content;
+}
+
+.task-bujo-overview-toggle-btn {
+    padding: 5px 16px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.task-bujo-overview-toggle-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.task-bujo-overview-toggle-btn.task-bujo-overview-toggle-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.task-bujo-overview-toggle-btn + .task-bujo-overview-toggle-btn {
+    border-left: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Monthly View ─── */
+
+.task-bujo-monthly {
+    padding: 8px 0;
+}
+
+.task-bujo-monthly-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.task-bujo-monthly-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.task-bujo-monthly-nav h3 {
+    margin: 0;
+    min-width: 150px;
+    text-align: center;
+}
+
+.task-bujo-monthly-nav-btn {
+    padding: 2px 8px;
+    font-size: 18px;
+    line-height: 1;
+    background: none;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-normal);
+}
+
+.task-bujo-monthly-nav-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+/* Goals section */
+
+.task-bujo-monthly-goals {
+    margin: 12px 0;
+}
+
+.task-bujo-monthly-goals h4 {
+    margin: 0 0 8px 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.task-bujo-monthly-goals-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.task-bujo-monthly-goals-progress .task-bujo-progress-bar {
+    flex: 1;
+}
+
+.task-bujo-monthly-goal-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 4px;
+    border-radius: 4px;
+    flex-wrap: wrap;
+}
+
+.task-bujo-monthly-goal-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-monthly-goal-progress {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.task-bujo-monthly-goal-progress-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 28px;
+}
+
+.task-bujo-progress-bar-sm {
+    width: 60px;
+    height: 4px;
+}
+
+.task-bujo-monthly-goal-children {
+    padding-left: 24px;
+    margin-bottom: 4px;
+}
+
+/* Monthly Tasks section */
+
+.task-bujo-monthly-tasks {
+    margin: 12px 0;
+}
+
+.task-bujo-monthly-tasks h4 {
+    margin: 0 0 8px 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ─── Monthly Migration Modal ─── */
+
+.task-bujo-monthly-migration-item {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+}
+
+.task-bujo-monthly-migration-goal-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+}
+
+.task-bujo-monthly-migration-subtasks {
+    margin-top: 6px;
+    padding-left: 4px;
+}
+
+.task-bujo-monthly-migration-subtask-list {
+    margin-top: 4px;
+    padding-left: 8px;
+}
+
+.task-bujo-monthly-migration-subtask-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    font-size: 13px;
+}
+
+.task-bujo-monthly-migration-subtask-status {
+    width: 16px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.task-bujo-monthly-migration-subtask-text {
+    color: var(--text-normal);
+}
+
+.task-bujo-monthly-migration-actions-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.task-bujo-monthly-migration-actions-row button {
+    font-size: 12px;
+    padding: 3px 10px;
+}
+
+.task-bujo-monthly-migration-actions-row button.is-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+/* ─── Monthly Review / Reflections ─── */
+
+.task-bujo-monthly-reflections-section {
+    margin: 16px 0;
+}
+
+.task-bujo-monthly-reflections-section h3 {
+    margin: 0 0 4px 0;
+}
+
+.task-bujo-monthly-reflections-textarea {
+    width: 100%;
+    min-height: 120px;
+    padding: 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: inherit;
+    font-size: 14px;
+    resize: vertical;
+}
+
+.task-bujo-monthly-reflections-textarea:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+.task-bujo-text-muted {
+    color: var(--text-muted);
+    font-size: 13px;
+}
