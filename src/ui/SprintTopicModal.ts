@@ -45,6 +45,9 @@ export class SprintTopicModal extends Modal {
 		private onSave: (topic: SprintTopic) => void,
 		private editTopic?: SprintTopic,
 		private sprintService?: SprintService,
+		/** Optional pre-fill for create mode (ignored when editing). Used by the
+		 *  JIRA Dashboard "Create topic from issue" action to seed title/jira/priority. */
+		private prefill?: { title?: string; jira?: string; priority?: Priority },
 	) {
 		super(app);
 	}
@@ -66,6 +69,12 @@ export class SprintTopicModal extends Modal {
 		} else {
 			// For new topics, default to the sprintId passed by the caller (may be '' for backlog).
 			this.chosenSprintId = this.sprintId;
+			// Apply optional prefill (JIRA Dashboard "Create topic from issue" flow).
+			if (this.prefill) {
+				if (this.prefill.title) this.title = this.prefill.title;
+				if (this.prefill.jira) this.jira = this.prefill.jira;
+				if (this.prefill.priority) this.priority = this.prefill.priority;
+			}
 		}
 
 		contentEl.createEl('h2', {

@@ -6097,13 +6097,14 @@ var PageSuggestModal = class extends import_obsidian16.FuzzySuggestModal {
   }
 };
 var SprintTopicModal = class extends import_obsidian16.Modal {
-  constructor(app, topicService, sprintId, onSave, editTopic, sprintService) {
+  constructor(app, topicService, sprintId, onSave, editTopic, sprintService, prefill) {
     super(app);
     this.topicService = topicService;
     this.sprintId = sprintId;
     this.onSave = onSave;
     this.editTopic = editTopic;
     this.sprintService = sprintService;
+    this.prefill = prefill;
     this.title = "";
     this.jira = "";
     this.priority = "none" /* None */;
@@ -6130,6 +6131,14 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
       this.chosenSprintId = (_b = this.editTopic.sprintId) != null ? _b : "";
     } else {
       this.chosenSprintId = this.sprintId;
+      if (this.prefill) {
+        if (this.prefill.title)
+          this.title = this.prefill.title;
+        if (this.prefill.jira)
+          this.jira = this.prefill.jira;
+        if (this.prefill.priority)
+          this.priority = this.prefill.priority;
+      }
     }
     contentEl.createEl("h2", {
       text: this.editTopic ? "Edit Topic" : "New Sprint Topic"
@@ -6880,13 +6889,46 @@ var TaskBuJoView = class extends import_obsidian19.ItemView {
 
 // src/ui/JiraDashboardView.ts
 var import_obsidian20 = require("obsidian");
+function mapJiraPriority(jiraPriority) {
+  if (!jiraPriority)
+    return "none" /* None */;
+  const k = jiraPriority.toLowerCase();
+  if (k.includes("highest") || k === "high")
+    return "high" /* High */;
+  if (k.includes("medium"))
+    return "medium" /* Medium */;
+  if (k.includes("low") || k.includes("lowest"))
+    return "low" /* Low */;
+  return "none" /* None */;
+}
+var TopicSuggestModal = class extends import_obsidian20.FuzzySuggestModal {
+  constructor(app, topics, onChoose) {
+    super(app);
+    this.topics = topics;
+    this.onChoose = onChoose;
+    this.setPlaceholder("Search topics to link\u2026");
+  }
+  getItems() {
+    return this.topics;
+  }
+  getItemText(t) {
+    const keys = t.jira.length > 0 ? ` [${t.jira.join(", ")}]` : "";
+    return `${t.title}${keys}`;
+  }
+  onChooseItem(t) {
+    this.onChoose(t);
+  }
+};
 var JiraDashboardView = class extends import_obsidian20.ItemView {
-  constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics) {
+  constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics, topicService, sprintService, onTopicsChanged) {
     super(leaf);
     this.dashboardService = dashboardService;
     this.getSettings = getSettings;
     this.saveSettings = saveSettings;
     this.getAllTopics = getAllTopics;
+    this.topicService = topicService;
+    this.sprintService = sprintService;
+    this.onTopicsChanged = onTopicsChanged;
     this.searchQuery = "";
     this.listenerHandle = null;
     this.contentContainer = null;
@@ -6956,6 +6998,10 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
     this.contentContainer = containerEl.createDiv({ cls: "task-bujo-content task-bujo-jira-dashboard-content" });
     this.listenerHandle = () => this.renderContent();
     this.dashboardService.on(this.listenerHandle);
+    this.onTopicsChanged(() => {
+      if (this.contentContainer)
+        this.renderContent();
+    });
     if (this.dashboardService.isEnabled() && this.dashboardService.isStale()) {
       this.dashboardService.refresh();
     }
@@ -7203,6 +7249,11 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
     row.addClass(`task-bujo-jira-row-status-${issue.statusCategory}`);
     if (issue.flagged)
       row.addClass("is-flagged");
+    row.addEventListener("contextmenu", (evt) => {
+      var _a2;
+      evt.preventDefault();
+      this.openRowContextMenu(evt, issue, (_a2 = topicIndex.get(issue.key)) != null ? _a2 : []);
+    });
     const leftEl = row.createDiv({ cls: "task-bujo-jira-dashboard-row-left" });
     if (issue.issueTypeIconUrl) {
       const img = leftEl.createEl("img", {
@@ -7297,6 +7348,75 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
         this.openTopic(topic);
       });
     }
+  }
+  // ── JIRA → Topic actions ──────────────────────────────────────
+  //
+  // The dashboard is read-only against JIRA, but it's a natural launch point
+  // for topic creation/linking since the user is already looking at the issue.
+  // Both flows go through the normal topic-write path (createTopic / updateTopicFrontmatter)
+  // so they participate in the scanner's file-watch → onTopicsChange → re-render cycle.
+  openRowContextMenu(evt, issue, linkedTopics) {
+    const menu = new import_obsidian20.Menu();
+    menu.addItem((item) => item.setTitle("Create topic from this issue").setIcon("plus").onClick(() => this.createTopicFromIssue(issue)));
+    const allTopics = this.getAllTopics();
+    const linkableTopics = allTopics.filter((t) => !t.jira.includes(issue.key));
+    menu.addItem((item) => {
+      item.setTitle("Link to existing topic\u2026").setIcon("link").onClick(() => this.linkIssueToTopic(issue, linkableTopics));
+      if (linkableTopics.length === 0)
+        item.setDisabled(true);
+    });
+    if (linkedTopics.length > 0) {
+      menu.addSeparator();
+      for (const topic of linkedTopics) {
+        menu.addItem((item) => item.setTitle(`Open topic: ${topic.title}`).setIcon("file-text").onClick(() => this.openTopic(topic)));
+      }
+    }
+    menu.showAtMouseEvent(evt);
+  }
+  createTopicFromIssue(issue) {
+    var _a;
+    const active = this.sprintService.getActiveSprint();
+    const sprintId = (_a = active == null ? void 0 : active.id) != null ? _a : "";
+    const modal = new SprintTopicModal(
+      this.app,
+      this.topicService,
+      sprintId,
+      (topic) => {
+        new import_obsidian20.Notice(`Topic created: ${topic.title}`);
+      },
+      void 0,
+      this.sprintService,
+      {
+        title: issue.summary || issue.key,
+        jira: issue.key,
+        priority: mapJiraPriority(issue.priority)
+      }
+    );
+    modal.open();
+  }
+  linkIssueToTopic(issue, candidateTopics) {
+    if (candidateTopics.length === 0) {
+      new import_obsidian20.Notice("Every topic is already linked to this issue.");
+      return;
+    }
+    new TopicSuggestModal(this.app, candidateTopics, async (topic) => {
+      var _a;
+      const seen = new Set(topic.jira);
+      if (seen.has(issue.key)) {
+        new import_obsidian20.Notice(`${topic.title} already linked to ${issue.key}.`);
+        return;
+      }
+      const merged = [...topic.jira, issue.key];
+      try {
+        await this.topicService.updateTopicFrontmatter(topic.filePath, {
+          jira: merged.join(", ")
+        });
+        new import_obsidian20.Notice(`Linked ${issue.key} \u2192 ${topic.title}`);
+      } catch (err) {
+        console.error("[JIRA Dashboard] link-to-topic failed:", err);
+        new import_obsidian20.Notice(`Failed to link: ${(_a = err.message) != null ? _a : err}`);
+      }
+    }).open();
   }
   isOverdue(dueDate) {
     const d = /* @__PURE__ */ new Date(dueDate + "T00:00:00");
@@ -8155,7 +8275,10 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
         // cache-invalidation side effect that saveSettings() runs, or every
         // section toggle would wipe the dashboard result set.
         () => this.saveData(this.data),
-        () => this.scanner.getAllTopics()
+        () => this.scanner.getAllTopics(),
+        this.sprintTopicService,
+        this.sprintService,
+        (cb) => this.scanner.onTopicsChange(cb)
       )
     );
     const refs = this.scanner.registerEvents();

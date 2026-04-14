@@ -134,6 +134,9 @@ export default class TaskBuJoPlugin extends Plugin {
 				// section toggle would wipe the dashboard result set.
 				() => this.saveData(this.data),
 				() => this.scanner.getAllTopics(),
+				this.sprintTopicService,
+				this.sprintService,
+				(cb) => this.scanner.onTopicsChange(cb),
 			)
 		);
 

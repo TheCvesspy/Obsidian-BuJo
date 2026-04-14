@@ -1,7 +1,39 @@
-import { ItemView, WorkspaceLeaf, debounce, TFile } from 'obsidian';
-import { JiraDashboardIssue, PluginSettings, SprintTopic } from '../types';
+import { ItemView, WorkspaceLeaf, debounce, TFile, Menu, Notice, FuzzySuggestModal, App } from 'obsidian';
+import { JiraDashboardIssue, PluginSettings, SprintTopic, Priority } from '../types';
 import { VIEW_TYPE_JIRA_DASHBOARD, SEARCH_DEBOUNCE_MS } from '../constants';
 import { JiraDashboardService } from '../services/jiraDashboardService';
+import { SprintTopicService } from '../services/sprintTopicService';
+import { SprintService } from '../services/sprintService';
+import { SprintTopicModal } from './SprintTopicModal';
+
+/** Map a JIRA priority name to the topic Priority enum. Called on a best-effort
+ *  basis when seeding a new topic from a JIRA issue — JIRA has 5 levels, we have 3. */
+function mapJiraPriority(jiraPriority: string | null): Priority {
+	if (!jiraPriority) return Priority.None;
+	const k = jiraPriority.toLowerCase();
+	if (k.includes('highest') || k === 'high') return Priority.High;
+	if (k.includes('medium')) return Priority.Medium;
+	if (k.includes('low') || k.includes('lowest')) return Priority.Low;
+	return Priority.None;
+}
+
+/** Fuzzy picker over all topics — used by "Link to existing topic…". */
+class TopicSuggestModal extends FuzzySuggestModal<SprintTopic> {
+	constructor(
+		app: App,
+		private topics: SprintTopic[],
+		private onChoose: (topic: SprintTopic) => void,
+	) {
+		super(app);
+		this.setPlaceholder('Search topics to link…');
+	}
+	getItems(): SprintTopic[] { return this.topics; }
+	getItemText(t: SprintTopic): string {
+		const keys = t.jira.length > 0 ? ` [${t.jira.join(', ')}]` : '';
+		return `${t.title}${keys}`;
+	}
+	onChooseItem(t: SprintTopic): void { this.onChoose(t); }
+}
 
 interface SectionDef {
 	id: string;
@@ -88,6 +120,13 @@ export class JiraDashboardView extends ItemView {
 		private getSettings: () => PluginSettings,
 		private saveSettings: () => Promise<void>,
 		private getAllTopics: () => SprintTopic[],
+		private topicService: SprintTopicService,
+		private sprintService: SprintService,
+		/** Scanner hook so we can subscribe to topic changes and re-render chip rows
+		 *  once a newly-created / re-linked topic lands on disk. Returns an unsubscribe
+		 *  function (or void — the scanner currently exposes no off() API, so we just
+		 *  null out the handle on close). */
+		private onTopicsChanged: (cb: () => void) => void,
 	) {
 		super(leaf);
 		this.debouncedSearch = debounce((value: string) => {
@@ -121,6 +160,13 @@ export class JiraDashboardView extends ItemView {
 		// Subscribe to service events — re-render whenever the cache changes
 		this.listenerHandle = () => this.renderContent();
 		this.dashboardService.on(this.listenerHandle);
+
+		// Re-render on topic changes so newly-created or re-linked topics surface
+		// their chip immediately. Scanner has no unsubscribe API, so the closure
+		// no-ops after onClose() nulls contentContainer.
+		this.onTopicsChanged(() => {
+			if (this.contentContainer) this.renderContent();
+		});
 
 		// Trigger a fetch on open if enabled and stale
 		if (this.dashboardService.isEnabled() && this.dashboardService.isStale()) {
@@ -387,6 +433,13 @@ export class JiraDashboardView extends ItemView {
 		row.addClass(`task-bujo-jira-row-status-${issue.statusCategory}`);
 		if (issue.flagged) row.addClass('is-flagged');
 
+		// Right-click context menu — lets the user create a topic seeded by this
+		// issue, or add this key to an existing topic's jira[] list.
+		row.addEventListener('contextmenu', (evt) => {
+			evt.preventDefault();
+			this.openRowContextMenu(evt, issue, topicIndex.get(issue.key) ?? []);
+		});
+
 		// Left — issue type icon + key
 		const leftEl = row.createDiv({ cls: 'task-bujo-jira-dashboard-row-left' });
 		if (issue.issueTypeIconUrl) {
@@ -503,6 +556,94 @@ export class JiraDashboardView extends ItemView {
 				this.openTopic(topic);
 			});
 		}
+	}
+
+	// ── JIRA → Topic actions ──────────────────────────────────────
+	//
+	// The dashboard is read-only against JIRA, but it's a natural launch point
+	// for topic creation/linking since the user is already looking at the issue.
+	// Both flows go through the normal topic-write path (createTopic / updateTopicFrontmatter)
+	// so they participate in the scanner's file-watch → onTopicsChange → re-render cycle.
+
+	private openRowContextMenu(evt: MouseEvent, issue: JiraDashboardIssue, linkedTopics: SprintTopic[]): void {
+		const menu = new Menu();
+
+		menu.addItem(item => item
+			.setTitle('Create topic from this issue')
+			.setIcon('plus')
+			.onClick(() => this.createTopicFromIssue(issue)));
+
+		// Disable "Link to existing topic" if every vault topic already has this key.
+		const allTopics = this.getAllTopics();
+		const linkableTopics = allTopics.filter(t => !t.jira.includes(issue.key));
+
+		menu.addItem(item => {
+			item.setTitle('Link to existing topic…')
+				.setIcon('link')
+				.onClick(() => this.linkIssueToTopic(issue, linkableTopics));
+			if (linkableTopics.length === 0) item.setDisabled(true);
+		});
+
+		// If already linked, surface an "Open linked topic" submenu for quick nav.
+		if (linkedTopics.length > 0) {
+			menu.addSeparator();
+			for (const topic of linkedTopics) {
+				menu.addItem(item => item
+					.setTitle(`Open topic: ${topic.title}`)
+					.setIcon('file-text')
+					.onClick(() => this.openTopic(topic)));
+			}
+		}
+
+		menu.showAtMouseEvent(evt);
+	}
+
+	private createTopicFromIssue(issue: JiraDashboardIssue): void {
+		// Default to the active sprint; fall back to backlog if none is active.
+		const active = this.sprintService.getActiveSprint();
+		const sprintId = active?.id ?? '';
+
+		const modal = new SprintTopicModal(
+			this.app,
+			this.topicService,
+			sprintId,
+			(topic) => {
+				new Notice(`Topic created: ${topic.title}`);
+			},
+			undefined,
+			this.sprintService,
+			{
+				title: issue.summary || issue.key,
+				jira: issue.key,
+				priority: mapJiraPriority(issue.priority),
+			},
+		);
+		modal.open();
+	}
+
+	private linkIssueToTopic(issue: JiraDashboardIssue, candidateTopics: SprintTopic[]): void {
+		if (candidateTopics.length === 0) {
+			new Notice('Every topic is already linked to this issue.');
+			return;
+		}
+		new TopicSuggestModal(this.app, candidateTopics, async (topic) => {
+			// Append the issue key to the topic's existing jira[] list, dedup preserving order.
+			const seen = new Set(topic.jira);
+			if (seen.has(issue.key)) {
+				new Notice(`${topic.title} already linked to ${issue.key}.`);
+				return;
+			}
+			const merged = [...topic.jira, issue.key];
+			try {
+				await this.topicService.updateTopicFrontmatter(topic.filePath, {
+					jira: merged.join(', '),
+				});
+				new Notice(`Linked ${issue.key} → ${topic.title}`);
+			} catch (err) {
+				console.error('[JIRA Dashboard] link-to-topic failed:', err);
+				new Notice(`Failed to link: ${(err as Error).message ?? err}`);
+			}
+		}).open();
 	}
 
 	private isOverdue(dueDate: string): boolean {
