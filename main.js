@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => TaskBuJoPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian22 = require("obsidian");
+var import_obsidian26 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_WORK_TYPES = [
@@ -65,7 +65,17 @@ var DEFAULT_SETTINGS = {
   sprintWorkDaysOnly: false,
   archiveFolderPath: "BuJo/Archive",
   archiveGroupBy: "month",
-  urgencyThresholdDays: 2
+  urgencyThresholdDays: 2,
+  // JIRA module defaults — OFF until explicitly configured
+  jiraEnabled: false,
+  jiraBaseUrl: "",
+  jiraEmail: "",
+  jiraApiToken: "",
+  jiraCacheTtlMinutes: 10,
+  jiraDashboardProjects: [],
+  jiraDashboardTtlMinutes: 10,
+  jiraSprintFieldId: "customfield_10020",
+  jiraDashboardCollapsedSections: {}
 };
 var DEFAULT_PLUGIN_DATA = {
   settings: DEFAULT_SETTINGS,
@@ -79,6 +89,7 @@ var DEFAULT_PLUGIN_DATA = {
 
 // src/constants.ts
 var VIEW_TYPE_TASK_BUJO = "task-bujo-view";
+var VIEW_TYPE_JIRA_DASHBOARD = "task-bujo-jira-dashboard";
 var CHECKBOX_REGEX = /^(\s*)-\s*\[([ x><!-])\]\s+(.*)$/i;
 var HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 var PRIORITY_TAG_REGEX = /#priority\/(high|medium|low)/i;
@@ -87,7 +98,6 @@ var DUE_DATE_REGEX = /@due\s+([\w\d\s\/-]+?)(?=\s+[@#(]|$)/i;
 var MIGRATED_FROM_REGEX = /\s*\(from\s+\[\[([^\]]+)\]\]\)\s*/;
 var WORK_TYPE_REGEX = /#(?:work|w)\/(\S+)/i;
 var PURPOSE_REGEX = /#(?:purpose|p)\/(\S+)/i;
-var EFFORT_REGEX = /#effort\/(S|M|L)/i;
 var SCAN_DEBOUNCE_MS = 300;
 var SEARCH_DEBOUNCE_MS = 200;
 var REFRESH_DEBOUNCE_MS = 100;
@@ -174,10 +184,9 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         ["monthly" /* Monthly */]: "Monthly",
         ["calendar" /* Calendar */]: "Calendar",
         ["sprint" /* Sprint */]: "Sprint",
+        ["topics" /* Topics */]: "Topics",
         ["overdue" /* Overdue */]: "Overdue",
         ["overview" /* Overview */]: "Overview",
-        ["eisenhower" /* Eisenhower */]: "Eisenhower",
-        ["impactEffort" /* ImpactEffort */]: "Impact/Effort",
         ["analytics" /* Analytics */]: "Analytics"
       }).setValue(this.plugin.settings.defaultViewMode).onChange(async (value) => {
         this.plugin.settings.defaultViewMode = value;
@@ -315,6 +324,87 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         }
       })
     );
+    containerEl.createEl("h2", { text: "JIRA Integration" });
+    containerEl.createEl("p", {
+      text: 'Optional module. When enabled, topics with a "jira" frontmatter field (e.g. jira: PROJ-123) will fetch live status and assignee data from your JIRA Cloud instance. Credentials are stored in the plugin data file, alongside your vault.',
+      cls: "setting-item-description"
+    });
+    new import_obsidian.Setting(containerEl).setName("Enable JIRA integration").setDesc("Master switch. When off, no fetches happen and no JIRA UI appears on cards.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.jiraEnabled).onChange(async (value) => {
+        this.plugin.settings.jiraEnabled = value;
+        await this.plugin.saveSettings(false);
+        this.display();
+      })
+    );
+    if (this.plugin.settings.jiraEnabled) {
+      new import_obsidian.Setting(containerEl).setName("JIRA base URL").setDesc("Your Atlassian Cloud URL, e.g. https://mycompany.atlassian.net (no trailing slash).").addText(
+        (text) => text.setPlaceholder("https://mycompany.atlassian.net").setValue(this.plugin.settings.jiraBaseUrl).onChange((value) => {
+          this.plugin.settings.jiraBaseUrl = value.trim().replace(/\/+$/, "");
+          this.debouncedSave(false);
+        })
+      );
+      new import_obsidian.Setting(containerEl).setName("Email").setDesc("Your Atlassian account email (used as the Basic-auth username).").addText(
+        (text) => text.setPlaceholder("you@example.com").setValue(this.plugin.settings.jiraEmail).onChange((value) => {
+          this.plugin.settings.jiraEmail = value.trim();
+          this.debouncedSave(false);
+        })
+      );
+      new import_obsidian.Setting(containerEl).setName("API token").setDesc("Personal API token from id.atlassian.com. Stored in plugin data.json \u2014 as sensitive as the rest of your vault.").addText((text) => {
+        text.inputEl.type = "password";
+        text.setPlaceholder("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022").setValue(this.plugin.settings.jiraApiToken).onChange((value) => {
+          this.plugin.settings.jiraApiToken = value.trim();
+          this.debouncedSave(false);
+        });
+      });
+      new import_obsidian.Setting(containerEl).setName("Cache TTL (minutes)").setDesc("How long to keep fetched issue data before re-hitting the API.").addText(
+        (text) => text.setPlaceholder("10").setValue(String(this.plugin.settings.jiraCacheTtlMinutes)).onChange((value) => {
+          const parsed = parseInt(value, 10);
+          if (!isNaN(parsed) && parsed >= 0) {
+            this.plugin.settings.jiraCacheTtlMinutes = parsed;
+            this.debouncedSave(false);
+          }
+        })
+      );
+      containerEl.createEl("h3", { text: "JIRA Dashboard" });
+      containerEl.createEl("p", {
+        text: "Controls the JIRA Dashboard view \u2014 a read-only list of issues where you are assignee, reporter, or watcher. One JQL round-trip per refresh; no background polling.",
+        cls: "setting-item-description"
+      });
+      new import_obsidian.Setting(containerEl).setName("Dashboard projects").setDesc('Comma-separated JIRA project keys to limit the dashboard search (e.g. "PROJ, DEV"). Leave empty to include all projects you can see.').addText(
+        (text) => text.setPlaceholder("PROJ, DEV").setValue(this.plugin.settings.jiraDashboardProjects.join(", ")).onChange((value) => {
+          this.plugin.settings.jiraDashboardProjects = value.split(",").map((s) => s.trim().toUpperCase()).filter((s) => s.length > 0);
+          this.debouncedSave(false);
+        })
+      );
+      new import_obsidian.Setting(containerEl).setName("Dashboard cache TTL (minutes)").setDesc("How long to cache the dashboard result before auto-refresh (when the view is visible). Separate from the per-issue cache above.").addText(
+        (text) => text.setPlaceholder("10").setValue(String(this.plugin.settings.jiraDashboardTtlMinutes)).onChange((value) => {
+          const parsed = parseInt(value, 10);
+          if (!isNaN(parsed) && parsed >= 0) {
+            this.plugin.settings.jiraDashboardTtlMinutes = parsed;
+            this.debouncedSave(false);
+          }
+        })
+      );
+      new import_obsidian.Setting(containerEl).setName("Sprint custom field ID").setDesc('JIRA custom field ID for the Sprint field. Most Cloud instances use "customfield_10020" \u2014 change only if your JIRA is configured differently.').addText(
+        (text) => text.setPlaceholder("customfield_10020").setValue(this.plugin.settings.jiraSprintFieldId).onChange((value) => {
+          this.plugin.settings.jiraSprintFieldId = value.trim();
+          this.debouncedSave(false);
+        })
+      );
+      new import_obsidian.Setting(containerEl).setName("Test connection").setDesc("Verify your credentials by calling /rest/api/3/myself.").addButton(
+        (btn) => btn.setButtonText("Test connection").onClick(async () => {
+          btn.setDisabled(true);
+          btn.setButtonText("Testing\u2026");
+          try {
+            const result = await this.plugin.jiraService.testConnection();
+            new import_obsidian.Notice(result.ok ? `\u2713 ${result.message}` : `\u2717 ${result.message}`);
+          } finally {
+            btn.setDisabled(false);
+            btn.setButtonText("Test connection");
+          }
+        })
+      );
+    }
   }
   /** Build folder tree from vault and render it */
   renderFolderTree(containerEl) {
@@ -713,12 +803,6 @@ function parseTasksFromContent(content, sourcePath, classifier, workTypes, purpo
       purpose = resolveTagCategory(purposeMatch[1], purposes || []);
       text = text.replace(PURPOSE_REGEX, "");
     }
-    let effort = null;
-    const effortMatch = text.match(EFFORT_REGEX);
-    if (effortMatch) {
-      effort = effortMatch[1].toUpperCase();
-      text = text.replace(EFFORT_REGEX, "");
-    }
     text = text.replace(/\s{2,}/g, " ").trim();
     let category;
     if (inlineTypeTag) {
@@ -745,7 +829,6 @@ function parseTasksFromContent(content, sourcePath, classifier, workTypes, purpo
       migratedFrom,
       workType,
       purpose,
-      effort,
       indentLevel,
       parentId: null,
       childrenIds: [],
@@ -777,6 +860,7 @@ var FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
 var WIKI_LINK_REGEX = /\[\[([^\]]+)\]\]/g;
 var CHECKBOX_REGEX2 = /^[ \t]*-\s*\[([ xX><!-])\]/;
 var H1_REGEX = /^#\s+(.+)/;
+var ISSUE_KEY_REGEX_G = /[A-Z][A-Z0-9]+-\d+/g;
 function parseFrontmatter(content) {
   const match = content.match(FRONTMATTER_REGEX);
   if (!match)
@@ -813,7 +897,7 @@ function extractSection(body, heading) {
   return results;
 }
 function parseTopicFile(content, filePath) {
-  var _a, _b, _c, _d, _e;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
   const fm = parseFrontmatter(content);
   const body = getBody(content);
   let title = (_b = (_a = filePath.split("/").pop()) == null ? void 0 : _a.replace(/\.md$/, "")) != null ? _b : "Untitled";
@@ -852,28 +936,53 @@ function parseTopicFile(content, filePath) {
   const blocked = blockedRaw === "true";
   const sortOrderRaw = parseInt(fm["sortOrder"], 10);
   const sortOrder = isNaN(sortOrderRaw) ? 999 : sortOrderRaw;
+  const impactRaw = (_f = fm["impact"]) == null ? void 0 : _f.toLowerCase();
+  const impact = impactRaw === "critical" ? "critical" : impactRaw === "high" ? "high" : impactRaw === "medium" ? "medium" : impactRaw === "low" ? "low" : null;
+  const effortRaw = (_g = fm["effort"]) == null ? void 0 : _g.toLowerCase();
+  const effort = effortRaw === "xs" ? "xs" : effortRaw === "s" ? "s" : effortRaw === "m" ? "m" : effortRaw === "l" ? "l" : effortRaw === "xl" ? "xl" : null;
+  const dueDateRaw = (_h = fm["dueDate"]) == null ? void 0 : _h.trim();
+  const dueDate = dueDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw) ? dueDateRaw : null;
+  const sprintHistoryRaw = (_j = (_i = fm["sprintHistory"]) == null ? void 0 : _i.trim()) != null ? _j : "";
+  let sprintHistory = sprintHistoryRaw ? sprintHistoryRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const sprintId = fm["sprint"] || null;
+  if (sprintHistory.length === 0 && sprintId) {
+    sprintHistory = [sprintId];
+  }
+  const jiraRaw = (_k = fm["jira"]) != null ? _k : "";
+  const seenKeys = /* @__PURE__ */ new Set();
+  const jira = [];
+  ISSUE_KEY_REGEX_G.lastIndex = 0;
+  let km;
+  while ((km = ISSUE_KEY_REGEX_G.exec(jiraRaw)) !== null) {
+    if (!seenKeys.has(km[0])) {
+      seenKeys.add(km[0]);
+      jira.push(km[0]);
+    }
+  }
   return {
     filePath,
     title,
     status,
-    jira: fm["jira"] || null,
+    jira,
     priority,
     blocked,
-    sprintId: fm["sprint"] || null,
+    sprintId,
     sortOrder,
     linkedPages,
     taskTotal,
-    taskDone
+    taskDone,
+    impact,
+    effort,
+    dueDate,
+    sprintHistory
   };
 }
 function serializeFrontmatter(fields) {
   const lines = ["---"];
   for (const [key, value] of Object.entries(fields)) {
-    if (value === null || value === void 0) {
-      lines.push(`${key}: `);
-    } else {
-      lines.push(`${key}: ${value}`);
-    }
+    if (value === null || value === void 0)
+      continue;
+    lines.push(`${key}: ${value}`);
   }
   lines.push("---");
   return lines.join("\n");
@@ -1957,8 +2066,10 @@ var SprintTopicService = class {
     const sanitized = title.replace(/[\\/:*?"<>|#^[\]]/g, "").replace(/\s+/g, " ").trim();
     return `${this.getTopicsFolderPath()}/${sanitized}.md`;
   }
-  /** Create a new topic file with frontmatter and template sections */
-  async createTopic(title, jira, priority, linkedPages, sprintId) {
+  /** Create a new topic file with frontmatter and template sections.
+   *  `jira` may be a single key or a comma-separated list of keys — stored verbatim
+   *  in the `jira:` frontmatter field; the parser extracts individual keys on read. */
+  async createTopic(title, jira, priority, linkedPages, sprintId, impact = null, effort = null, dueDate = null) {
     const filePath = this.getTopicFilePath(title);
     const folderPath = filePath.substring(0, filePath.lastIndexOf("/"));
     if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian5.TFolder)) {
@@ -1966,11 +2077,15 @@ var SprintTopicService = class {
     }
     const frontmatter = serializeFrontmatter({
       status: "open",
-      jira: jira || "",
+      jira: jira || null,
       priority: priority === "none" /* None */ ? "none" : priority,
       blocked: false,
-      sprint: sprintId,
-      sortOrder: 999
+      sprint: sprintId || null,
+      sortOrder: 999,
+      impact,
+      effort,
+      dueDate,
+      sprintHistory: sprintId || null
     });
     const linkedSection = linkedPages.length > 0 ? linkedPages.map((p) => `- [[${p}]]`).join("\n") : "";
     const content = `${frontmatter}
@@ -1986,7 +2101,8 @@ ${linkedSection}
     await this.vault.create(filePath, content);
     return parseTopicFile(content, filePath);
   }
-  /** Update specific frontmatter fields in a topic file, preserving body content */
+  /** Update specific frontmatter fields in a topic file, preserving body content.
+   *  Passing `null` for a value removes the key from the frontmatter entirely. */
   async updateTopicFrontmatter(filePath, updates) {
     const file = this.vault.getAbstractFileByPath(filePath);
     if (!(file instanceof import_obsidian5.TFile))
@@ -1995,7 +2111,7 @@ ${linkedSection}
     const fm = parseFrontmatter(content);
     for (const [key, value] of Object.entries(updates)) {
       if (value === null || value === void 0) {
-        fm[key] = "";
+        delete fm[key];
       } else {
         fm[key] = String(value);
       }
@@ -2018,21 +2134,66 @@ ${linkedSection}
   async setTopicBlocked(filePath, blocked) {
     await this.updateTopicFrontmatter(filePath, { blocked });
   }
+  /** Set the strategic impact on a topic (null clears the field) */
+  async setTopicImpact(filePath, impact) {
+    await this.updateTopicFrontmatter(filePath, { impact });
+  }
+  /** Set the effort estimate on a topic (null clears the field) */
+  async setTopicEffort(filePath, effort) {
+    await this.updateTopicFrontmatter(filePath, { effort });
+  }
+  /** Set the due date on a topic (null clears the field) */
+  async setTopicDueDate(filePath, dueDate) {
+    await this.updateTopicFrontmatter(filePath, { dueDate });
+  }
   /** Update the sort order of a topic within its column */
   async updateSortOrder(filePath, sortOrder) {
     await this.updateTopicFrontmatter(filePath, { sortOrder });
   }
-  /** Carry a topic forward to a new sprint */
+  /** Carry a topic forward to a new sprint (sprint-close flow). Adds to history. */
   async carryForwardTopic(filePath, newSprintId) {
-    await this.updateTopicFrontmatter(filePath, { sprint: newSprintId });
+    await this.assignTopicToSprint(filePath, newSprintId);
   }
-  /** Archive a topic (mark done, clear sprint) */
+  /** Move a topic to the backlog (clear sprint assignment). Status and history preserved. */
+  async moveTopicToBacklog(filePath) {
+    await this.assignTopicToSprint(filePath, "");
+  }
+  /** Assign a topic to a specific sprint (or pass '' to move to backlog).
+   *  Appends the previous sprint (if any) AND the new sprint to sprintHistory —
+   *  the old one may be missing on legacy topics that were assigned before history
+   *  tracking existed, so we defensively capture it here. History is cumulative:
+   *  moving to backlog does NOT remove anything. */
+  async assignTopicToSprint(filePath, sprintId) {
+    const file = this.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian5.TFile))
+      return;
+    const content = await this.vault.read(file);
+    const fm = parseFrontmatter(content);
+    const oldSprint = (fm["sprint"] || "").trim();
+    const existing = (fm["sprintHistory"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const merged = [...existing];
+    const seen = new Set(existing);
+    for (const s of [oldSprint, sprintId]) {
+      if (s && !seen.has(s)) {
+        merged.push(s);
+        seen.add(s);
+      }
+    }
+    await this.updateTopicFrontmatter(filePath, {
+      sprint: sprintId,
+      sprintHistory: merged.length > 0 ? merged.join(",") : null
+    });
+  }
+  /** Archive a topic (mark done, clear sprint). History is preserved — go through
+   *  assignTopicToSprint so the departing sprint is captured into sprintHistory. */
   async archiveTopic(filePath) {
-    await this.updateTopicFrontmatter(filePath, { status: "done", sprint: "" });
+    await this.assignTopicToSprint(filePath, "");
+    await this.updateTopicFrontmatter(filePath, { status: "done" });
   }
-  /** Cancel a topic (mark done, clear sprint) */
+  /** Cancel a topic (mark done, clear sprint). Same history semantics as archiveTopic. */
   async cancelTopic(filePath) {
-    await this.updateTopicFrontmatter(filePath, { status: "done", sprint: "" });
+    await this.assignTopicToSprint(filePath, "");
+    await this.updateTopicFrontmatter(filePath, { status: "done" });
   }
   /** Get all topics from the topics folder */
   async getAllTopics() {
@@ -2905,8 +3066,533 @@ var ArchiveService = class {
   }
 };
 
+// src/services/jiraService.ts
+var import_obsidian8 = require("obsidian");
+var ISSUE_KEY_REGEX = /[A-Z][A-Z0-9]+-\d+/;
+var JiraService = class {
+  constructor(getSettings) {
+    this.getSettings = getSettings;
+    this.cache = /* @__PURE__ */ new Map();
+    this.inFlight = /* @__PURE__ */ new Map();
+    this.listeners = /* @__PURE__ */ new Set();
+    /** Monotonic version — views can fold into their render fingerprint */
+    this._version = 0;
+  }
+  /** Is the JIRA module currently enabled AND minimally configured? */
+  isEnabled() {
+    const s = this.getSettings();
+    return s.jiraEnabled && !!s.jiraBaseUrl && !!s.jiraEmail && !!s.jiraApiToken;
+  }
+  get version() {
+    return this._version;
+  }
+  /** Extract an issue key from a raw frontmatter `jira` value. Returns null if no key found. */
+  extractIssueKey(raw) {
+    if (!raw)
+      return null;
+    const match = raw.match(ISSUE_KEY_REGEX);
+    return match ? match[0] : null;
+  }
+  /** Extract every JIRA issue key from a raw string. Deduplicated, order-preserving. */
+  extractAllIssueKeys(raw) {
+    if (!raw)
+      return [];
+    const global = new RegExp(ISSUE_KEY_REGEX.source, "g");
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    let m;
+    while ((m = global.exec(raw)) !== null) {
+      if (!seen.has(m[0])) {
+        seen.add(m[0]);
+        out.push(m[0]);
+      }
+    }
+    return out;
+  }
+  /** Get whatever's in the cache right now — may be stale, may be null. Never fetches. */
+  getCached(key) {
+    const state = this.cache.get(key);
+    if (!state)
+      return null;
+    if (state.kind === "fresh" || state.kind === "stale")
+      return state.info;
+    return null;
+  }
+  /** Get cached error state for a key (if the last fetch failed). */
+  getError(key) {
+    const state = this.cache.get(key);
+    return (state == null ? void 0 : state.kind) === "error" ? state.message : null;
+  }
+  /** Is an issue currently being fetched? */
+  isLoading(key) {
+    var _a;
+    return ((_a = this.cache.get(key)) == null ? void 0 : _a.kind) === "loading";
+  }
+  /** Has the cached entry aged past the configured TTL? */
+  isStale(info) {
+    const ttlMs = Math.max(0, this.getSettings().jiraCacheTtlMinutes) * 6e4;
+    return Date.now() - info.fetchedAt > ttlMs;
+  }
+  /**
+   * Ensure `key` is fetched. If the cache is fresh, resolves immediately with
+   * cached info. Otherwise triggers a fetch and resolves when it completes.
+   * Returns null when the module is disabled or the fetch fails.
+   */
+  async ensureFetched(key) {
+    if (!this.isEnabled())
+      return null;
+    const existing = this.cache.get(key);
+    if ((existing == null ? void 0 : existing.kind) === "fresh" && !this.isStale(existing.info)) {
+      return existing.info;
+    }
+    return this.fetchIssue(key);
+  }
+  /** Force a fetch, bypassing TTL. */
+  async fetchIssue(key) {
+    if (!this.isEnabled())
+      return null;
+    const pending = this.inFlight.get(key);
+    if (pending)
+      return pending;
+    this.cache.set(key, { kind: "loading" });
+    const promise = this.doFetch(key);
+    this.inFlight.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlight.delete(key);
+    }
+  }
+  /** Prefetch many keys in parallel. Resolves when all settle. Silences individual errors. */
+  async prefetchMany(keys) {
+    if (!this.isEnabled() || keys.length === 0)
+      return;
+    const deduped = Array.from(new Set(keys.filter(Boolean)));
+    const tasks = deduped.map((k) => this.ensureFetched(k).catch(() => null));
+    await Promise.all(tasks);
+  }
+  /** Wipe the cache — useful when settings change (URL/token). */
+  clearCache() {
+    this.cache.clear();
+    this.inFlight.clear();
+    this.bumpVersion();
+  }
+  // ── Event subscription ────────────────────────────────────────
+  on(listener) {
+    this.listeners.add(listener);
+  }
+  off(listener) {
+    this.listeners.delete(listener);
+  }
+  bumpVersion() {
+    this._version++;
+    for (const l of this.listeners) {
+      try {
+        l();
+      } catch (e) {
+      }
+    }
+  }
+  // ── Settings self-test ────────────────────────────────────────
+  /** Attempt a single authenticated GET against /myself. Used by the settings "Test connection" button.
+   *  Logs raw request/response/error details to the dev console ([JIRA] prefix) for diagnostics. */
+  async testConnection() {
+    var _a, _b, _c;
+    const s = this.getSettings();
+    if (!s.jiraBaseUrl || !s.jiraEmail || !s.jiraApiToken) {
+      return { ok: false, message: "Fill in base URL, email, and API token first." };
+    }
+    if (!/^https?:\/\//i.test(s.jiraBaseUrl)) {
+      return { ok: false, message: `Base URL must start with http:// or https:// (got "${s.jiraBaseUrl}")` };
+    }
+    const req = this.buildRequest(s, "/rest/api/3/myself");
+    console.log("[JIRA] testConnection \u2192", req.url);
+    try {
+      const resp = await (0, import_obsidian8.requestUrl)(req);
+      console.log("[JIRA] testConnection response:", { status: resp.status, headers: resp.headers, body: (_a = resp.text) == null ? void 0 : _a.slice(0, 500) });
+      if (resp.status >= 200 && resp.status < 300) {
+        const name = (_c = (_b = resp.json) == null ? void 0 : _b.displayName) != null ? _c : "unknown user";
+        return { ok: true, message: `Connected as ${name}.` };
+      }
+      return { ok: false, message: this.formatHttpError(resp.status, resp.text, resp.json) };
+    } catch (err) {
+      console.error("[JIRA] testConnection threw:", err);
+      return { ok: false, message: this.formatError(err) };
+    }
+  }
+  // ── Internals ─────────────────────────────────────────────────
+  async doFetch(key) {
+    const s = this.getSettings();
+    const validKey = this.extractIssueKey(key);
+    if (!validKey) {
+      this.cache.set(key, { kind: "error", message: `Invalid issue key: ${key}`, fetchedAt: Date.now() });
+      this.bumpVersion();
+      return null;
+    }
+    try {
+      const resp = await (0, import_obsidian8.requestUrl)(this.buildRequest(
+        s,
+        `/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee`
+      ));
+      if (resp.status < 200 || resp.status >= 300) {
+        this.cache.set(key, { kind: "error", message: `HTTP ${resp.status}`, fetchedAt: Date.now() });
+        this.bumpVersion();
+        return null;
+      }
+      const info = this.parseIssue(validKey, resp.json, s.jiraBaseUrl);
+      this.cache.set(key, { kind: "fresh", info });
+      this.bumpVersion();
+      return info;
+    } catch (err) {
+      this.cache.set(key, { kind: "error", message: this.formatError(err), fetchedAt: Date.now() });
+      this.bumpVersion();
+      return null;
+    }
+  }
+  buildRequest(s, path) {
+    const url = s.jiraBaseUrl.replace(/\/+$/, "") + path;
+    const auth = btoa(`${s.jiraEmail}:${s.jiraApiToken}`);
+    return {
+      url,
+      method: "GET",
+      headers: {
+        "Authorization": `Basic ${auth}`,
+        "Accept": "application/json"
+      },
+      // Prevent requestUrl from throwing on non-2xx — we handle it ourselves
+      throw: false
+    };
+  }
+  parseIssue(key, json, baseUrl) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const fields = (_a = json == null ? void 0 : json.fields) != null ? _a : {};
+    const statusObj = (_b = fields.status) != null ? _b : {};
+    const statusName = (_c = statusObj.name) != null ? _c : "Unknown";
+    const rawCategory = (_e = (_d = statusObj.statusCategory) == null ? void 0 : _d.key) != null ? _e : "unknown";
+    const statusCategory = rawCategory === "new" || rawCategory === "indeterminate" || rawCategory === "done" ? rawCategory : "unknown";
+    const assigneeObj = fields.assignee;
+    const assignee = (_f = assigneeObj == null ? void 0 : assigneeObj.displayName) != null ? _f : null;
+    return {
+      key,
+      summary: (_g = fields.summary) != null ? _g : "",
+      status: statusName,
+      statusCategory,
+      assignee,
+      issueUrl: `${baseUrl.replace(/\/+$/, "")}/browse/${key}`,
+      fetchedAt: Date.now()
+    };
+  }
+  formatError(err) {
+    if (err instanceof Error)
+      return err.message;
+    if (typeof err === "string")
+      return err;
+    if (err && typeof err === "object") {
+      const anyErr = err;
+      const parts = [];
+      if (anyErr.status)
+        parts.push(`status=${anyErr.status}`);
+      if (anyErr.code)
+        parts.push(`code=${anyErr.code}`);
+      if (anyErr.message)
+        parts.push(String(anyErr.message));
+      if (parts.length > 0)
+        return parts.join(" ");
+      try {
+        return JSON.stringify(err);
+      } catch (e) {
+      }
+    }
+    return "Unknown error";
+  }
+  /** Format an HTTP error response, including JIRA's structured errorMessages/errors when present. */
+  formatHttpError(status, text, json) {
+    if (json && typeof json === "object") {
+      const messages = [];
+      if (Array.isArray(json.errorMessages))
+        messages.push(...json.errorMessages.map(String));
+      if (json.errors && typeof json.errors === "object") {
+        for (const [k, v] of Object.entries(json.errors)) {
+          messages.push(`${k}: ${String(v)}`);
+        }
+      }
+      if (messages.length > 0)
+        return `HTTP ${status} \u2014 ${messages.join("; ")}`;
+    }
+    const snippet = (text != null ? text : "").trim().slice(0, 200);
+    return snippet ? `HTTP ${status} \u2014 ${snippet}` : `HTTP ${status}`;
+  }
+};
+
+// src/services/jiraDashboardService.ts
+var import_obsidian9 = require("obsidian");
+var JiraDashboardService = class {
+  constructor(getSettings) {
+    this.getSettings = getSettings;
+    this.state = { kind: "empty" };
+    this.inFlight = null;
+    this.listeners = /* @__PURE__ */ new Set();
+    this._version = 0;
+  }
+  isEnabled() {
+    const s = this.getSettings();
+    return s.jiraEnabled && !!s.jiraBaseUrl && !!s.jiraEmail && !!s.jiraApiToken;
+  }
+  get version() {
+    return this._version;
+  }
+  /** Current cached issues (may be stale). Null if never fetched or errored. */
+  getIssues() {
+    return this.state.kind === "fresh" ? this.state.issues : null;
+  }
+  /** Timestamp of the last successful fetch (ms since epoch), or null. */
+  getFetchedAt() {
+    return this.state.kind === "fresh" || this.state.kind === "error" ? this.state.fetchedAt : null;
+  }
+  /** Error message from the last fetch, or null. */
+  getError() {
+    return this.state.kind === "error" ? this.state.message : null;
+  }
+  isLoading() {
+    return this.state.kind === "loading";
+  }
+  /** Is the cache older than the configured TTL? Empty/error cache is considered stale. */
+  isStale() {
+    if (this.state.kind !== "fresh")
+      return true;
+    const ttlMs = Math.max(0, this.getSettings().jiraDashboardTtlMinutes) * 6e4;
+    return Date.now() - this.state.fetchedAt > ttlMs;
+  }
+  /** Fetch the dashboard result. Deduplicates concurrent calls. */
+  async refresh() {
+    if (!this.isEnabled())
+      return null;
+    if (this.inFlight)
+      return this.inFlight;
+    this.state = { kind: "loading" };
+    this.bump();
+    const p = this.doFetch();
+    this.inFlight = p;
+    try {
+      return await p;
+    } finally {
+      this.inFlight = null;
+    }
+  }
+  /** Wipe the cache and notify listeners. */
+  clearCache() {
+    this.state = { kind: "empty" };
+    this.inFlight = null;
+    this.bump();
+  }
+  // ── Events ────────────────────────────────────────────────────
+  on(listener) {
+    this.listeners.add(listener);
+  }
+  off(listener) {
+    this.listeners.delete(listener);
+  }
+  bump() {
+    this._version++;
+    for (const l of this.listeners) {
+      try {
+        l();
+      } catch (e) {
+      }
+    }
+  }
+  // ── Internals ─────────────────────────────────────────────────
+  async doFetch() {
+    var _a, _b;
+    const s = this.getSettings();
+    const jql = this.buildJql(s);
+    const sprintField = (s.jiraSprintFieldId || "customfield_10020").trim();
+    const fields = [
+      "summary",
+      "status",
+      "priority",
+      "assignee",
+      "reporter",
+      "duedate",
+      "resolutiondate",
+      "updated",
+      "labels",
+      "parent",
+      "issuetype",
+      "timespent",
+      "timeestimate",
+      sprintField,
+      "customfield_10021"
+      // Flagged (Cloud standard)
+    ];
+    const params = new URLSearchParams();
+    params.set("jql", jql);
+    params.set("fields", fields.join(","));
+    params.set("maxResults", "100");
+    console.log("[JIRA Dashboard] JQL:", jql);
+    try {
+      const req = {
+        url: s.jiraBaseUrl.replace(/\/+$/, "") + "/rest/api/3/search/jql?" + params.toString(),
+        method: "GET",
+        headers: {
+          "Authorization": `Basic ${btoa(`${s.jiraEmail}:${s.jiraApiToken}`)}`,
+          "Accept": "application/json",
+          "X-Atlassian-Token": "no-check"
+        },
+        throw: false
+      };
+      const resp = await (0, import_obsidian9.requestUrl)(req);
+      const parsedJson = this.safeParseJson(resp.text);
+      if (resp.status < 200 || resp.status >= 300) {
+        const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
+        console.error("[JIRA Dashboard] HTTP error:", resp.status, (_a = resp.text) == null ? void 0 : _a.slice(0, 500));
+        this.state = { kind: "error", message: msg, fetchedAt: Date.now() };
+        this.bump();
+        return null;
+      }
+      const raw = (_b = parsedJson == null ? void 0 : parsedJson.issues) != null ? _b : [];
+      const issues = raw.map((r) => this.parseIssue(r, s.jiraBaseUrl, sprintField));
+      this.state = { kind: "fresh", issues, fetchedAt: Date.now() };
+      this.bump();
+      return issues;
+    } catch (err) {
+      console.error("[JIRA Dashboard] fetch threw:", err);
+      this.state = { kind: "error", message: this.formatError(err), fetchedAt: Date.now() };
+      this.bump();
+      return null;
+    }
+  }
+  /** Parse body as JSON without throwing on invalid input. */
+  safeParseJson(text) {
+    if (!text)
+      return null;
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return null;
+    }
+  }
+  /** Build the JQL used for the dashboard fetch. */
+  buildJql(s) {
+    const userClause = "(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser())";
+    const projectClause = s.jiraDashboardProjects.length > 0 ? `AND project in (${s.jiraDashboardProjects.map((k) => `"${k.replace(/"/g, "")}"`).join(", ")})` : "";
+    const staleClause = "AND (resolution = Unresolved OR resolutiondate >= -7d)";
+    return `${userClause} ${projectClause} ${staleClause} ORDER BY updated DESC`.replace(/\s+/g, " ").trim();
+  }
+  /** Parse a single issue JSON into the dashboard shape. Tolerant of missing fields. */
+  parseIssue(raw, baseUrl, sprintField) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
+    const fields = (_a = raw == null ? void 0 : raw.fields) != null ? _a : {};
+    const statusObj = (_b = fields.status) != null ? _b : {};
+    const statusName = (_c = statusObj.name) != null ? _c : "Unknown";
+    const rawCategory = (_e = (_d = statusObj.statusCategory) == null ? void 0 : _d.key) != null ? _e : "unknown";
+    const statusCategory = rawCategory === "new" || rawCategory === "indeterminate" || rawCategory === "done" ? rawCategory : "unknown";
+    const priorityObj = (_f = fields.priority) != null ? _f : null;
+    const parent = (_g = fields.parent) != null ? _g : null;
+    const parentKey = (_h = parent == null ? void 0 : parent.key) != null ? _h : null;
+    const parentSummary = (_j = (_i = parent == null ? void 0 : parent.fields) == null ? void 0 : _i.summary) != null ? _j : null;
+    const issueTypeObj = (_k = fields.issuetype) != null ? _k : {};
+    const sprintRaw = fields[sprintField];
+    let sprintName = null;
+    let sprintActive = false;
+    if (Array.isArray(sprintRaw)) {
+      for (const sp of sprintRaw) {
+        if (sp && typeof sp === "object") {
+          const name = sp.name;
+          const state = sp.state;
+          if (state === "active") {
+            sprintName = name != null ? name : sprintName;
+            sprintActive = true;
+            break;
+          }
+          if (!sprintName)
+            sprintName = name != null ? name : null;
+        } else if (typeof sp === "string") {
+          const m = sp.match(/name=([^,\]]+)/);
+          const state = (_l = sp.match(/state=([A-Z]+)/)) == null ? void 0 : _l[1];
+          if (state === "ACTIVE") {
+            sprintName = (_m = m == null ? void 0 : m[1]) != null ? _m : sprintName;
+            sprintActive = true;
+            break;
+          }
+          if (!sprintName && m)
+            sprintName = m[1];
+        }
+      }
+    }
+    let flagged = false;
+    const flaggedField = (_n = fields.customfield_10021) != null ? _n : fields.flagged;
+    if (Array.isArray(flaggedField) && flaggedField.length > 0)
+      flagged = true;
+    else if (flaggedField && typeof flaggedField === "object")
+      flagged = true;
+    const labels = Array.isArray(fields.labels) ? fields.labels.map(String) : [];
+    return {
+      key: raw.key,
+      summary: (_o = fields.summary) != null ? _o : "",
+      status: statusName,
+      statusCategory,
+      issueType: (_p = issueTypeObj.name) != null ? _p : "Task",
+      issueTypeIconUrl: (_q = issueTypeObj.iconUrl) != null ? _q : null,
+      priority: (_r = priorityObj == null ? void 0 : priorityObj.name) != null ? _r : null,
+      priorityIconUrl: (_s = priorityObj == null ? void 0 : priorityObj.iconUrl) != null ? _s : null,
+      assignee: (_u = (_t = fields.assignee) == null ? void 0 : _t.displayName) != null ? _u : null,
+      reporter: (_w = (_v = fields.reporter) == null ? void 0 : _v.displayName) != null ? _w : null,
+      dueDate: (_x = fields.duedate) != null ? _x : null,
+      resolutionDate: (_y = fields.resolutiondate) != null ? _y : null,
+      updatedAt: (_z = fields.updated) != null ? _z : (/* @__PURE__ */ new Date()).toISOString(),
+      labels,
+      parentKey,
+      parentSummary,
+      sprintName,
+      sprintActive,
+      timeSpentSeconds: typeof fields.timespent === "number" ? fields.timespent : null,
+      timeRemainingSeconds: typeof fields.timeestimate === "number" ? fields.timeestimate : null,
+      flagged,
+      issueUrl: `${baseUrl.replace(/\/+$/, "")}/browse/${raw.key}`
+    };
+  }
+  formatError(err) {
+    if (err instanceof Error)
+      return err.message;
+    if (typeof err === "string")
+      return err;
+    if (err && typeof err === "object") {
+      const anyErr = err;
+      const parts = [];
+      if (anyErr.status)
+        parts.push(`status=${anyErr.status}`);
+      if (anyErr.message)
+        parts.push(String(anyErr.message));
+      if (parts.length > 0)
+        return parts.join(" ");
+      try {
+        return JSON.stringify(err);
+      } catch (e) {
+      }
+    }
+    return "Unknown error";
+  }
+  formatHttpError(status, text, json) {
+    if (json && typeof json === "object") {
+      const messages = [];
+      if (Array.isArray(json.errorMessages))
+        messages.push(...json.errorMessages.map(String));
+      if (json.errors && typeof json.errors === "object") {
+        for (const [k, v] of Object.entries(json.errors)) {
+          messages.push(`${k}: ${String(v)}`);
+        }
+      }
+      if (messages.length > 0)
+        return `HTTP ${status} \u2014 ${messages.join("; ")}`;
+    }
+    const snippet = (text != null ? text : "").trim().slice(0, 200);
+    return snippet ? `HTTP ${status} \u2014 ${snippet}` : `HTTP ${status}`;
+  }
+};
+
 // src/ui/TaskBuJoView.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 
 // src/ui/components/ViewSwitcher.ts
 var ViewSwitcher = class {
@@ -2924,10 +3610,9 @@ var ViewSwitcher = class {
       { mode: "monthly" /* Monthly */, label: "Monthly" },
       { mode: "calendar" /* Calendar */, label: "Calendar" },
       { mode: "sprint" /* Sprint */, label: "Sprint" },
+      { mode: "topics" /* Topics */, label: "Topics" },
       { mode: "overdue" /* Overdue */, label: "Overdue" },
       { mode: "overview" /* Overview */, label: "Overview" },
-      { mode: "eisenhower" /* Eisenhower */, label: "Eisenhower" },
-      { mode: "impactEffort" /* ImpactEffort */, label: "Impact/Effort" },
       { mode: "analytics" /* Analytics */, label: "Analytics" }
     ];
     for (const { mode, label } of tabs) {
@@ -3079,7 +3764,7 @@ var GroupHeader = class {
 };
 
 // src/ui/icons.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 var PRIORITY_CLASSES = {
   high: "task-bujo-priority-high",
   medium: "task-bujo-priority-medium",
@@ -3737,6 +4422,159 @@ var MonthlyView = class {
   }
 };
 
+// src/ui/components/TopicCard.ts
+var STATUS_TRANSITIONS = {
+  "open": { left: null, right: "in-progress" },
+  "in-progress": { left: "open", right: "done" },
+  "done": { left: "in-progress", right: null }
+};
+var STATUS_LABELS = {
+  "open": "Open",
+  "in-progress": "In Progress",
+  "done": "Done"
+};
+function renderTopicCard(container, topic, opts) {
+  var _a, _b, _c, _d, _e;
+  const card = container.createDiv({ cls: "task-bujo-kanban-card" });
+  if (opts.draggable) {
+    card.draggable = true;
+    card.dataset.filepath = topic.filePath;
+    card.addEventListener("dragstart", (e) => {
+      if (opts.isDragging)
+        opts.isDragging.value = true;
+      card.addClass("task-bujo-kanban-card-dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.setData("text/plain", topic.filePath);
+        e.dataTransfer.effectAllowed = "move";
+      }
+    });
+    card.addEventListener("dragend", () => {
+      card.removeClass("task-bujo-kanban-card-dragging");
+      if (opts.isDragging)
+        opts.isDragging.value = false;
+    });
+  }
+  const headerEl = card.createDiv({ cls: "task-bujo-kanban-card-header" });
+  if (topic.priority !== "none" /* None */) {
+    const dot = headerEl.createSpan({ cls: "task-bujo-priority-dot" });
+    dot.addClass(`task-bujo-priority-${topic.priority}`);
+  }
+  const titleEl = headerEl.createSpan({ cls: "task-bujo-kanban-card-title", text: topic.title });
+  if (opts.onTitleClick) {
+    titleEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      opts.onTitleClick(topic);
+    });
+  }
+  if (topic.blocked) {
+    headerEl.createSpan({ cls: "task-bujo-kanban-card-blocked", text: "BLOCKED" });
+  }
+  for (const key of topic.jira) {
+    const lookup = (_a = opts.jiraLookup) == null ? void 0 : _a.call(opts, key);
+    const info = (_b = lookup == null ? void 0 : lookup.info) != null ? _b : null;
+    const loading = (_c = lookup == null ? void 0 : lookup.loading) != null ? _c : false;
+    const error = (_d = lookup == null ? void 0 : lookup.error) != null ? _d : null;
+    const jiraRow = card.createDiv({ cls: "task-bujo-kanban-card-jira-row" });
+    const keyEl = jiraRow.createSpan({ cls: "task-bujo-kanban-card-jira", text: key });
+    if (info == null ? void 0 : info.issueUrl) {
+      keyEl.addClass("task-bujo-clickable");
+      keyEl.addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.open(info.issueUrl, "_blank");
+      });
+    }
+    if (loading) {
+      jiraRow.createSpan({ cls: "task-bujo-jira-chip task-bujo-jira-loading", text: "\u2026" });
+    } else if (error) {
+      const errEl = jiraRow.createSpan({
+        cls: "task-bujo-jira-chip task-bujo-jira-error",
+        text: "!"
+      });
+      errEl.setAttribute("title", `JIRA fetch failed: ${error}`);
+    } else if (info) {
+      const statusEl = jiraRow.createSpan({
+        cls: `task-bujo-jira-chip task-bujo-jira-status task-bujo-jira-status-${info.statusCategory}`,
+        text: info.status
+      });
+      statusEl.setAttribute("title", `JIRA status: ${info.status}`);
+      const assigneeLabel = (_e = info.assignee) != null ? _e : "Unassigned";
+      const assigneeEl = jiraRow.createSpan({
+        cls: "task-bujo-jira-chip task-bujo-jira-assignee",
+        text: assigneeLabel
+      });
+      assigneeEl.setAttribute("title", info.assignee ? `Assignee: ${info.assignee}` : "Unassigned");
+      if (info.summary) {
+        const summaryEl = card.createDiv({
+          cls: "task-bujo-kanban-card-jira-summary",
+          text: info.summary
+        });
+        summaryEl.setAttribute("title", info.summary);
+      }
+    }
+  }
+  if (opts.showMatrixMetadata) {
+    const chips = [];
+    if (topic.impact)
+      chips.push(`Impact: ${topic.impact}`);
+    if (topic.effort)
+      chips.push(`Effort: ${topic.effort.toUpperCase()}`);
+    if (topic.dueDate)
+      chips.push(`Due: ${topic.dueDate}`);
+    if (chips.length > 0) {
+      card.createDiv({ cls: "task-bujo-kanban-card-meta", text: chips.join(" \u2022 ") });
+    }
+  }
+  if (topic.linkedPages.length > 0) {
+    const linksText = topic.linkedPages.map((p) => `[[${p}]]`).join(", ");
+    card.createDiv({ cls: "task-bujo-kanban-card-links", text: linksText });
+  }
+  if (topic.taskTotal > 0) {
+    const progressDiv = card.createDiv({ cls: "task-bujo-kanban-card-progress" });
+    const barOuter = progressDiv.createDiv({ cls: "task-bujo-progress-bar" });
+    const barInner = barOuter.createDiv({ cls: "task-bujo-progress-fill" });
+    const pct = Math.round(topic.taskDone / topic.taskTotal * 100);
+    barInner.style.width = `${pct}%`;
+    progressDiv.createSpan({
+      cls: "task-bujo-progress-text",
+      text: `${topic.taskDone}/${topic.taskTotal} tasks`
+    });
+  }
+  const transitions = STATUS_TRANSITIONS[topic.status];
+  const wantsStatusButtons = opts.onStatusChange && (transitions.left || transitions.right);
+  const wantsBlockedButton = opts.onBlockedToggle !== void 0;
+  if (wantsStatusButtons || wantsBlockedButton) {
+    const actionsDiv = card.createDiv({ cls: "task-bujo-kanban-card-actions" });
+    if (wantsStatusButtons && transitions.left) {
+      const leftBtn = actionsDiv.createEl("button", { text: "\u2190" });
+      leftBtn.setAttribute("title", `Move to ${STATUS_LABELS[transitions.left]}`);
+      leftBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        opts.onStatusChange(topic, transitions.left);
+      });
+    }
+    if (wantsStatusButtons && transitions.right) {
+      const rightBtn = actionsDiv.createEl("button", { text: "\u2192" });
+      rightBtn.setAttribute("title", `Move to ${STATUS_LABELS[transitions.right]}`);
+      rightBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        opts.onStatusChange(topic, transitions.right);
+      });
+    }
+    if (wantsBlockedButton) {
+      const blockedBtn = actionsDiv.createEl("button", {
+        text: topic.blocked ? "\u26A0 Unblock" : "\u26A0",
+        cls: topic.blocked ? "task-bujo-kanban-blocked-active" : ""
+      });
+      blockedBtn.setAttribute("title", topic.blocked ? "Remove blocked flag" : "Flag as blocked");
+      blockedBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        opts.onBlockedToggle(topic);
+      });
+    }
+  }
+  return card;
+}
+
 // src/ui/components/SprintView.ts
 var COLUMNS = [
   { status: "open", label: "Open" },
@@ -3749,13 +4587,8 @@ var PRIORITY_ORDER = {
   ["low" /* Low */]: 2,
   ["none" /* None */]: 3
 };
-var STATUS_TRANSITIONS = {
-  "open": { left: null, right: "in-progress" },
-  "in-progress": { left: "open", right: "done" },
-  "done": { left: "in-progress", right: null }
-};
 var SprintView = class {
-  constructor(container, store, sprintService, topicService, topics, settings, onNewSprint, onEndSprint, onNewTopic, onTopicClick, onEditSprint, isDragging, searchQuery = "") {
+  constructor(container, store, sprintService, topicService, topics, settings, onNewSprint, onEndSprint, onNewTopic, onTopicClick, onEditSprint, isDragging, searchQuery = "", jiraService = null) {
     this.container = container;
     this.store = store;
     this.sprintService = sprintService;
@@ -3769,6 +4602,7 @@ var SprintView = class {
     this.onEditSprint = onEditSprint;
     this.isDragging = isDragging;
     this.searchQuery = searchQuery;
+    this.jiraService = jiraService;
     this.el = container.createDiv({ cls: "task-bujo-sprint-view" });
   }
   render() {
@@ -3831,9 +4665,10 @@ var SprintView = class {
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase();
       filteredTopics = filteredTopics.filter(
-        (t) => t.title.toLowerCase().includes(q) || t.jira && t.jira.toLowerCase().includes(q) || t.linkedPages.some((p) => p.toLowerCase().includes(q))
+        (t) => t.title.toLowerCase().includes(q) || t.jira.some((k) => k.toLowerCase().includes(q)) || t.linkedPages.some((p) => p.toLowerCase().includes(q))
       );
     }
+    this.prefetchJiraKeys(filteredTopics);
     const board = this.el.createDiv({ cls: "task-bujo-kanban" });
     for (const col of COLUMNS) {
       const columnTopics = filteredTopics.filter((t) => t.status === col.status).sort((a, b) => this.sortTopics(a, b));
@@ -3891,93 +4726,432 @@ var SprintView = class {
       }
       this.isDragging.value = false;
     });
+    const jiraLookup = this.makeJiraLookup();
     for (const topic of topics) {
-      this.renderTopicCard(body, topic);
+      renderTopicCard(body, topic, {
+        draggable: true,
+        isDragging: this.isDragging,
+        onTitleClick: (t) => this.onTopicClick(t),
+        onStatusChange: async (t, newStatus) => {
+          await this.topicService.setTopicStatus(t.filePath, newStatus);
+        },
+        onBlockedToggle: async (t) => {
+          await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
+        },
+        jiraLookup
+      });
     }
     if (topics.length === 0) {
       body.createDiv({ cls: "task-bujo-kanban-empty", text: "No topics" });
     }
   }
-  renderTopicCard(container, topic) {
-    const card = container.createDiv({ cls: "task-bujo-kanban-card" });
-    card.draggable = true;
-    card.dataset.filepath = topic.filePath;
-    card.addEventListener("dragstart", (e) => {
-      this.isDragging.value = true;
-      card.addClass("task-bujo-kanban-card-dragging");
-      if (e.dataTransfer) {
-        e.dataTransfer.setData("text/plain", topic.filePath);
-        e.dataTransfer.effectAllowed = "move";
+  /** Kick off a prefetch for every JIRA key on every visible topic. No-op if module disabled. */
+  prefetchJiraKeys(topics) {
+    if (!this.jiraService || !this.jiraService.isEnabled())
+      return;
+    const keys = [];
+    for (const t of topics) {
+      for (const k of t.jira)
+        keys.push(k);
+    }
+    if (keys.length > 0) {
+      void this.jiraService.prefetchMany(keys);
+    }
+  }
+  /** Build a per-key JIRA lookup function for TopicCard. Returns null-ish results when disabled. */
+  makeJiraLookup() {
+    const svc = this.jiraService;
+    if (!svc || !svc.isEnabled())
+      return void 0;
+    return (key) => ({
+      info: svc.getCached(key),
+      loading: svc.isLoading(key),
+      error: svc.getError(key)
+    });
+  }
+  destroy() {
+    this.el.empty();
+  }
+};
+
+// src/ui/components/TopicsOverviewView.ts
+var import_obsidian11 = require("obsidian");
+var PRIORITY_ORDER2 = {
+  ["high" /* High */]: 0,
+  ["medium" /* Medium */]: 1,
+  ["low" /* Low */]: 2,
+  ["none" /* None */]: 3
+};
+var IMPACT_ORDER = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3
+};
+var HIGH_IMPACT_SET = /* @__PURE__ */ new Set(["critical", "high"]);
+var SMALL_EFFORT_SET = /* @__PURE__ */ new Set(["xs", "s"]);
+var TopicsOverviewView = class {
+  constructor(container, topics, sprintService, topicService, settings, onTopicClick, onEditTopic, onNewTopic, isDragging, searchQuery = "", jiraService = null) {
+    this.container = container;
+    this.topics = topics;
+    this.sprintService = sprintService;
+    this.topicService = topicService;
+    this.settings = settings;
+    this.onTopicClick = onTopicClick;
+    this.onEditTopic = onEditTopic;
+    this.onNewTopic = onNewTopic;
+    this.isDragging = isDragging;
+    this.searchQuery = searchQuery;
+    this.jiraService = jiraService;
+    this.subMode = "list";
+    this.scope = "all";
+    this.el = container.createDiv({ cls: "task-bujo-topics-overview" });
+  }
+  render() {
+    this.el.empty();
+    const header = this.el.createDiv({ cls: "task-bujo-topics-header" });
+    const modeGroup = header.createDiv({ cls: "task-bujo-topics-modeswitch" });
+    this.renderModeButton(modeGroup, "list", "List");
+    this.renderModeButton(modeGroup, "impactEffort", "Impact / Effort");
+    this.renderModeButton(modeGroup, "eisenhower", "Eisenhower");
+    const scopeGroup = header.createDiv({ cls: "task-bujo-topics-scope" });
+    this.renderScopeButton(scopeGroup, "all", "All");
+    this.renderScopeButton(scopeGroup, "active", "Active sprint");
+    this.renderScopeButton(scopeGroup, "backlog", "Backlog");
+    this.renderScopeButton(scopeGroup, "archived", "Archived");
+    const newBtn = header.createEl("button", { cls: "task-bujo-btn", text: "+ Topic" });
+    newBtn.addEventListener("click", () => this.onNewTopic());
+    const filtered = this.applyFilters(this.topics);
+    this.prefetchJiraKeys(filtered);
+    const body = this.el.createDiv({ cls: "task-bujo-topics-body" });
+    if (filtered.length === 0) {
+      body.createDiv({ cls: "task-bujo-empty", text: "No topics match the current filter." });
+      return;
+    }
+    switch (this.subMode) {
+      case "list":
+        this.renderList(body, filtered);
+        break;
+      case "impactEffort":
+        this.renderImpactEffort(body, filtered);
+        break;
+      case "eisenhower":
+        this.renderEisenhower(body, filtered);
+        break;
+    }
+  }
+  renderModeButton(parent, mode, label) {
+    const btn = parent.createEl("button", {
+      cls: "task-bujo-topics-modebtn",
+      text: label
+    });
+    if (mode === this.subMode)
+      btn.addClass("task-bujo-topics-modebtn-active");
+    btn.addEventListener("click", () => {
+      this.subMode = mode;
+      this.render();
+    });
+  }
+  renderScopeButton(parent, scope, label) {
+    const btn = parent.createEl("button", {
+      cls: "task-bujo-topics-scopebtn",
+      text: label
+    });
+    if (scope === this.scope)
+      btn.addClass("task-bujo-topics-scopebtn-active");
+    btn.addEventListener("click", () => {
+      this.scope = scope;
+      this.render();
+    });
+  }
+  applyFilters(topics) {
+    var _a;
+    const activeSprint = this.sprintService.getActiveSprint();
+    const activeId = (_a = activeSprint == null ? void 0 : activeSprint.id) != null ? _a : null;
+    let filtered = topics.filter((t) => {
+      switch (this.scope) {
+        case "active":
+          return activeId !== null && t.sprintId === activeId;
+        case "backlog":
+          return !t.sprintId;
+        case "archived":
+          return t.status === "done" && !t.sprintId;
+        case "all":
+        default:
+          return true;
       }
     });
-    card.addEventListener("dragend", () => {
-      card.removeClass("task-bujo-kanban-card-dragging");
-      this.isDragging.value = false;
-    });
-    const headerEl = card.createDiv({ cls: "task-bujo-kanban-card-header" });
-    if (topic.priority !== "none" /* None */) {
-      const dot = headerEl.createSpan({ cls: "task-bujo-priority-dot" });
-      dot.addClass(`task-bujo-priority-${topic.priority}`);
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (t) => t.title.toLowerCase().includes(q) || t.jira.some((k) => k.toLowerCase().includes(q)) || t.linkedPages.some((p) => p.toLowerCase().includes(q))
+      );
     }
-    const titleEl = headerEl.createSpan({ cls: "task-bujo-kanban-card-title", text: topic.title });
-    titleEl.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.onTopicClick(topic);
-    });
-    if (topic.blocked) {
-      headerEl.createSpan({ cls: "task-bujo-kanban-card-blocked", text: "BLOCKED" });
-    }
-    if (topic.jira) {
-      card.createDiv({ cls: "task-bujo-kanban-card-jira", text: topic.jira });
-    }
-    if (topic.linkedPages.length > 0) {
-      const linksText = topic.linkedPages.map((p) => `[[${p}]]`).join(", ");
-      card.createDiv({ cls: "task-bujo-kanban-card-links", text: linksText });
-    }
-    if (topic.taskTotal > 0) {
-      const progressDiv = card.createDiv({ cls: "task-bujo-kanban-card-progress" });
-      const barOuter = progressDiv.createDiv({ cls: "task-bujo-progress-bar" });
-      const barInner = barOuter.createDiv({ cls: "task-bujo-progress-fill" });
-      const pct = Math.round(topic.taskDone / topic.taskTotal * 100);
-      barInner.style.width = `${pct}%`;
-      progressDiv.createSpan({
-        cls: "task-bujo-progress-text",
-        text: `${topic.taskDone}/${topic.taskTotal} tasks`
-      });
-    }
-    const transitions = STATUS_TRANSITIONS[topic.status];
-    if (transitions.left || transitions.right) {
-      const actionsDiv = card.createDiv({ cls: "task-bujo-kanban-card-actions" });
-      if (transitions.left) {
-        const leftBtn = actionsDiv.createEl("button", { text: "\u2190" });
-        leftBtn.setAttribute("title", `Move to ${this.getColumnLabel(transitions.left)}`);
-        leftBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          await this.topicService.setTopicStatus(topic.filePath, transitions.left);
-        });
+    return filtered;
+  }
+  // ── List sub-mode ─────────────────────────────────────────────
+  renderList(parent, topics) {
+    const backlog = topics.filter((t) => !t.sprintId);
+    const assigned = topics.filter((t) => !!t.sprintId);
+    const sections = [
+      { label: "Backlog", cls: "task-bujo-topics-list-backlog", topics: backlog, dropAction: { kind: "moveToBacklog" } },
+      { label: "Open", cls: "", topics: assigned.filter((t) => t.status === "open"), dropAction: { kind: "setStatus", status: "open" } },
+      { label: "In Progress", cls: "", topics: assigned.filter((t) => t.status === "in-progress"), dropAction: { kind: "setStatus", status: "in-progress" } },
+      { label: "Done", cls: "", topics: assigned.filter((t) => t.status === "done"), dropAction: { kind: "setStatus", status: "done" } }
+    ];
+    for (const { label, cls, topics: group, dropAction } of sections) {
+      if (group.length === 0 && label === "Backlog" && this.scope === "active")
+        continue;
+      const sectionCls = cls ? `task-bujo-topics-list-section ${cls}` : "task-bujo-topics-list-section";
+      const section = parent.createDiv({ cls: sectionCls });
+      const headerEl = section.createDiv({ cls: "task-bujo-topics-list-header" });
+      headerEl.createSpan({ text: label });
+      headerEl.createSpan({ cls: "task-bujo-topics-list-count", text: `${group.length}` });
+      const cardGrid = section.createDiv({ cls: "task-bujo-topics-list-grid" });
+      this.wireDropZone(cardGrid, dropAction);
+      if (group.length === 0) {
+        section.createDiv({ cls: "task-bujo-empty", text: "No topics" });
+        continue;
       }
-      if (transitions.right) {
-        const rightBtn = actionsDiv.createEl("button", { text: "\u2192" });
-        rightBtn.setAttribute("title", `Move to ${this.getColumnLabel(transitions.right)}`);
-        rightBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          await this.topicService.setTopicStatus(topic.filePath, transitions.right);
-        });
+      const sorted = [...group].sort((a, b) => this.sortByPriorityImpact(a, b));
+      for (const topic of sorted) {
+        this.renderOverviewCard(cardGrid, topic, { draggable: true });
       }
-      const blockedBtn = actionsDiv.createEl("button", {
-        text: topic.blocked ? "\u26A0 Unblock" : "\u26A0",
-        cls: topic.blocked ? "task-bujo-kanban-blocked-active" : ""
-      });
-      blockedBtn.setAttribute("title", topic.blocked ? "Remove blocked flag" : "Flag as blocked");
-      blockedBtn.addEventListener("click", async (e) => {
+    }
+  }
+  /** Wire dragover/drop handlers on a section. The action decides what happens on drop. */
+  wireDropZone(zone, action) {
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (e.dataTransfer)
+        e.dataTransfer.dropEffect = "move";
+      zone.addClass("task-bujo-topics-list-dropzone-active");
+    });
+    zone.addEventListener("dragleave", () => {
+      zone.removeClass("task-bujo-topics-list-dropzone-active");
+    });
+    zone.addEventListener("drop", async (e) => {
+      var _a;
+      e.preventDefault();
+      zone.removeClass("task-bujo-topics-list-dropzone-active");
+      const filePath = (_a = e.dataTransfer) == null ? void 0 : _a.getData("text/plain");
+      if (!filePath)
+        return;
+      const topic = this.topics.find((t) => t.filePath === filePath);
+      if (!topic) {
+        this.isDragging.value = false;
+        return;
+      }
+      try {
+        if (action.kind === "moveToBacklog") {
+          if (!topic.sprintId)
+            return;
+          await this.topicService.moveTopicToBacklog(filePath);
+        } else {
+          const targetStatus = action.status;
+          if (!topic.sprintId) {
+            const active = this.sprintService.getActiveSprint();
+            if (!active) {
+              new import_obsidian11.Notice("No active sprint \u2014 cannot move topic out of backlog. Create a sprint first.");
+              return;
+            }
+            await this.topicService.assignTopicToSprint(filePath, active.id);
+          }
+          if (topic.status !== targetStatus) {
+            await this.topicService.setTopicStatus(filePath, targetStatus);
+          }
+          if (topic.blocked && targetStatus === "done") {
+            await this.topicService.setTopicBlocked(filePath, false);
+          }
+        }
+      } finally {
+        this.isDragging.value = false;
+      }
+    });
+  }
+  // ── Impact/Effort sub-mode ────────────────────────────────────
+  renderImpactEffort(parent, topics) {
+    const quickWins = [];
+    const bigBets = [];
+    const fillIns = [];
+    const timeSinks = [];
+    const inbox = [];
+    for (const topic of topics) {
+      if (!topic.impact || !topic.effort) {
+        inbox.push(topic);
+        continue;
+      }
+      const isHighImpact = HIGH_IMPACT_SET.has(topic.impact);
+      const isSmallEffort = SMALL_EFFORT_SET.has(topic.effort);
+      if (isHighImpact && isSmallEffort)
+        quickWins.push(topic);
+      else if (isHighImpact && !isSmallEffort)
+        bigBets.push(topic);
+      else if (!isHighImpact && isSmallEffort)
+        fillIns.push(topic);
+      else
+        timeSinks.push(topic);
+    }
+    const quadrants = [
+      { key: "quickwins", title: "\u{1F3AF} Quick Wins", subtitle: "High Impact + Small Effort \u2014 Do these first", cls: "task-bujo-topicmx-quickwins", topics: quickWins },
+      { key: "bigbets", title: "\u{1F680} Big Bets", subtitle: "High Impact + Med/Large Effort \u2014 Block deep work", cls: "task-bujo-topicmx-bigbets", topics: bigBets },
+      { key: "fillins", title: "\u{1F4CB} Fill-ins", subtitle: "Low Impact + Small Effort \u2014 Between meetings", cls: "task-bujo-topicmx-fillins", topics: fillIns },
+      { key: "timesinks", title: "\u26A0\uFE0F Time Sinks", subtitle: "Low Impact + Med/Large Effort \u2014 Rethink", cls: "task-bujo-topicmx-timesinks", topics: timeSinks }
+    ];
+    const axisRow = parent.createDiv({ cls: "task-bujo-topicmx-axis-labels" });
+    axisRow.createDiv();
+    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Small Effort (xs, s)" });
+    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Medium / Large Effort (m, l, xl)" });
+    const grid = parent.createDiv({ cls: "task-bujo-topicmx-grid" });
+    for (const q of quadrants) {
+      this.renderQuadrant(grid, q);
+    }
+    this.renderQuadrant(parent, {
+      key: "inbox",
+      title: "\u{1F4E5} Inbox",
+      subtitle: "Missing impact or effort \u2014 needs sizing",
+      cls: "task-bujo-topicmx-inbox",
+      topics: inbox
+    });
+  }
+  // ── Eisenhower sub-mode ───────────────────────────────────────
+  renderEisenhower(parent, topics) {
+    const q1 = [];
+    const q2 = [];
+    const q3 = [];
+    const q4 = [];
+    const unscheduled = [];
+    for (const topic of topics) {
+      if (!topic.dueDate) {
+        unscheduled.push(topic);
+        continue;
+      }
+      const urgent = this.isUrgent(topic);
+      const important = this.isImportant(topic);
+      if (urgent && important)
+        q1.push(topic);
+      else if (!urgent && important)
+        q2.push(topic);
+      else if (urgent && !important)
+        q3.push(topic);
+      else
+        q4.push(topic);
+    }
+    const quadrants = [
+      { key: "q1", title: "\u{1F525} Do Now", subtitle: "Urgent & Important", cls: "task-bujo-topicmx-q1", topics: q1 },
+      { key: "q2", title: "\u{1F3AF} Plan Deep Work", subtitle: "Important, Not Urgent", cls: "task-bujo-topicmx-q2", topics: q2 },
+      { key: "q3", title: "\u{1F91D} Coordinate", subtitle: "Urgent, Not Important", cls: "task-bujo-topicmx-q3", topics: q3 },
+      { key: "q4", title: "\u{1F4E6} Batch Later", subtitle: "Not Urgent, Not Important", cls: "task-bujo-topicmx-q4", topics: q4 }
+    ];
+    const axisRow = parent.createDiv({ cls: "task-bujo-topicmx-axis-labels" });
+    axisRow.createDiv();
+    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Urgent" });
+    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Not Urgent" });
+    const grid = parent.createDiv({ cls: "task-bujo-topicmx-grid" });
+    for (const q of quadrants) {
+      this.renderQuadrant(grid, q);
+    }
+    this.renderQuadrant(parent, {
+      key: "unscheduled",
+      title: "Unscheduled",
+      subtitle: "No due date \u2014 needs scheduling",
+      cls: "task-bujo-topicmx-inbox",
+      topics: unscheduled
+    });
+  }
+  isUrgent(topic) {
+    if (!topic.dueDate)
+      return false;
+    const due = new Date(topic.dueDate);
+    if (isNaN(due.getTime()))
+      return false;
+    const now = /* @__PURE__ */ new Date();
+    now.setHours(0, 0, 0, 0);
+    const diffDays = (due.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24);
+    return diffDays <= this.settings.urgencyThresholdDays;
+  }
+  /** Important = impact {critical, high} when set; else fallback to priority {high, medium}. */
+  isImportant(topic) {
+    if (topic.impact)
+      return HIGH_IMPACT_SET.has(topic.impact);
+    return topic.priority === "high" /* High */ || topic.priority === "medium" /* Medium */;
+  }
+  // ── Shared helpers ────────────────────────────────────────────
+  renderQuadrant(parent, quadrant) {
+    const el = parent.createDiv({ cls: `task-bujo-topicmx-quadrant ${quadrant.cls}` });
+    const header = el.createDiv({ cls: "task-bujo-topicmx-quadrant-header" });
+    const titleArea = header.createDiv();
+    titleArea.createDiv({ cls: "task-bujo-topicmx-quadrant-title", text: quadrant.title });
+    titleArea.createDiv({ cls: "task-bujo-topicmx-quadrant-subtitle", text: quadrant.subtitle });
+    header.createDiv({ cls: "task-bujo-topicmx-quadrant-count", text: String(quadrant.topics.length) });
+    const list = el.createDiv({ cls: "task-bujo-topicmx-quadrant-list" });
+    if (quadrant.topics.length === 0) {
+      list.createDiv({ cls: "task-bujo-empty", text: "No topics" });
+      return;
+    }
+    for (const topic of quadrant.topics) {
+      this.renderOverviewCard(list, topic);
+    }
+  }
+  renderOverviewCard(parent, topic, opts = {}) {
+    var _a;
+    const jiraLookup = this.makeJiraLookup();
+    renderTopicCard(parent, topic, {
+      draggable: (_a = opts.draggable) != null ? _a : false,
+      isDragging: this.isDragging,
+      showMatrixMetadata: true,
+      onTitleClick: (t) => this.onTopicClick(t),
+      onBlockedToggle: async (t) => {
+        await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
+      },
+      jiraLookup
+    });
+    const lastCard = parent.lastElementChild;
+    if (lastCard) {
+      const actions = lastCard.querySelector(".task-bujo-kanban-card-actions") || lastCard.createDiv({ cls: "task-bujo-kanban-card-actions" });
+      const editBtn = actions.createEl("button", { text: "Edit" });
+      editBtn.setAttribute("title", "Edit topic details");
+      editBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        await this.topicService.setTopicBlocked(topic.filePath, !topic.blocked);
+        this.onEditTopic(topic);
       });
     }
   }
-  getColumnLabel(status) {
+  sortByPriorityImpact(a, b) {
     var _a, _b;
-    return (_b = (_a = COLUMNS.find((c) => c.status === status)) == null ? void 0 : _a.label) != null ? _b : status;
+    const aImpact = a.impact ? IMPACT_ORDER[a.impact] : 99;
+    const bImpact = b.impact ? IMPACT_ORDER[b.impact] : 99;
+    if (aImpact !== bImpact)
+      return aImpact - bImpact;
+    const aPrio = (_a = PRIORITY_ORDER2[a.priority]) != null ? _a : 3;
+    const bPrio = (_b = PRIORITY_ORDER2[b.priority]) != null ? _b : 3;
+    if (aPrio !== bPrio)
+      return aPrio - bPrio;
+    return a.title.localeCompare(b.title);
+  }
+  /** Kick off a prefetch for every JIRA key on every visible topic. No-op if module disabled. */
+  prefetchJiraKeys(topics) {
+    if (!this.jiraService || !this.jiraService.isEnabled())
+      return;
+    const keys = [];
+    for (const t of topics) {
+      for (const k of t.jira)
+        keys.push(k);
+    }
+    if (keys.length > 0) {
+      void this.jiraService.prefetchMany(keys);
+    }
+  }
+  /** Build a per-key JIRA lookup function for TopicCard. Returns undefined when disabled. */
+  makeJiraLookup() {
+    const svc = this.jiraService;
+    if (!svc || !svc.isEnabled())
+      return void 0;
+    return (key) => ({
+      info: svc.getCached(key),
+      loading: svc.isLoading(key),
+      error: svc.getError(key)
+    });
   }
   destroy() {
     this.el.empty();
@@ -4411,233 +5585,16 @@ var CalendarView = class {
   }
 };
 
-// src/ui/components/EisenhowerView.ts
-var EisenhowerView = class {
-  constructor(container, store, settings, callbacks, searchQuery, collapsedGroups) {
-    this.store = store;
-    this.settings = settings;
-    this.callbacks = callbacks;
-    this.searchQuery = searchQuery;
-    this.collapsedGroups = collapsedGroups;
-    this.el = container.createDiv({ cls: "task-bujo-eisenhower" });
-  }
-  render() {
-    this.el.empty();
-    let tasks = this.store.getTasks().filter(
-      (t) => t.parentId === null && t.status === " " /* Open */
-    );
-    if (this.searchQuery) {
-      const q = this.searchQuery.toLowerCase();
-      tasks = tasks.filter((t) => t.text.toLowerCase().includes(q));
-    }
-    const q1 = [];
-    const q2 = [];
-    const q3 = [];
-    const q4 = [];
-    const unscheduled = [];
-    for (const task of tasks) {
-      if (!task.dueDate) {
-        unscheduled.push(task);
-        continue;
-      }
-      const urgent = this.isUrgent(task);
-      const important = this.isImportant(task);
-      if (urgent && important)
-        q1.push(task);
-      else if (!urgent && important)
-        q2.push(task);
-      else if (urgent && !important)
-        q3.push(task);
-      else
-        q4.push(task);
-    }
-    const quadrants = [
-      { key: "q1", title: "\u{1F525} Do Now", subtitle: "Urgent & Important", cls: "task-bujo-eisenhower-q1", tasks: q1 },
-      { key: "q2", title: "\u{1F3AF} Plan Deep Work", subtitle: "Important, Not Urgent", cls: "task-bujo-eisenhower-q2", tasks: q2 },
-      { key: "q3", title: "\u{1F91D} Coordinate", subtitle: "Urgent, Not Important", cls: "task-bujo-eisenhower-q3", tasks: q3 },
-      { key: "q4", title: "\u{1F4E6} Batch Later", subtitle: "Not Urgent, Not Important", cls: "task-bujo-eisenhower-q4", tasks: q4 }
-    ];
-    const axisRow = this.el.createDiv({ cls: "task-bujo-eisenhower-axis-labels" });
-    axisRow.createDiv();
-    axisRow.createDiv({ cls: "task-bujo-eisenhower-axis-label", text: "Urgent" });
-    axisRow.createDiv({ cls: "task-bujo-eisenhower-axis-label", text: "Not Urgent" });
-    const grid = this.el.createDiv({ cls: "task-bujo-eisenhower-grid" });
-    for (const q of quadrants) {
-      this.renderQuadrant(grid, q);
-    }
-    const unscheduledQuadrant = {
-      key: "unscheduled",
-      title: "Inbox",
-      subtitle: "No due date \u2014 needs scheduling",
-      cls: "task-bujo-eisenhower-unscheduled",
-      tasks: unscheduled
-    };
-    this.renderQuadrant(this.el, unscheduledQuadrant);
-  }
-  renderQuadrant(container, quadrant) {
-    const el = container.createDiv({ cls: `task-bujo-eisenhower-quadrant ${quadrant.cls}` });
-    const header = el.createDiv({ cls: "task-bujo-eisenhower-quadrant-header" });
-    const titleArea = header.createDiv();
-    titleArea.createDiv({ cls: "task-bujo-eisenhower-quadrant-title", text: quadrant.title });
-    titleArea.createDiv({ cls: "task-bujo-eisenhower-quadrant-subtitle", text: quadrant.subtitle });
-    header.createDiv({ cls: "task-bujo-eisenhower-quadrant-count", text: String(quadrant.tasks.length) });
-    const list = el.createDiv({ cls: "task-bujo-eisenhower-task-list" });
-    if (quadrant.tasks.length === 0) {
-      list.createDiv({ cls: "task-bujo-empty", text: "No tasks" });
-      return;
-    }
-    for (const task of quadrant.tasks) {
-      new TaskItemRow(list, task, this.callbacks);
-    }
-  }
-  isUrgent(task) {
-    if (!task.dueDate)
-      return false;
-    const now = /* @__PURE__ */ new Date();
-    now.setHours(0, 0, 0, 0);
-    const diffMs = task.dueDate.getTime() - now.getTime();
-    const diffDays = diffMs / (1e3 * 60 * 60 * 24);
-    return diffDays <= this.settings.urgencyThresholdDays;
-  }
-  isImportant(task) {
-    return task.priority === "high" /* High */ || task.priority === "medium" /* Medium */;
-  }
-};
-
-// src/ui/components/ImpactEffortView.ts
-var HIGH_IMPACT_PURPOSES = ["Delivery", "Strategy"];
-var LOW_IMPACT_PURPOSES = ["Capability", "Support"];
-function calculateImpact(task) {
-  var _a;
-  const priorityWeight = {
-    ["high" /* High */]: 3,
-    ["medium" /* Medium */]: 2,
-    ["low" /* Low */]: 1,
-    ["none" /* None */]: 0
-  };
-  const pw = (_a = priorityWeight[task.priority]) != null ? _a : 0;
-  let ppw = 0;
-  if (task.purpose) {
-    if (HIGH_IMPACT_PURPOSES.includes(task.purpose))
-      ppw = 2;
-    else if (LOW_IMPACT_PURPOSES.includes(task.purpose))
-      ppw = 1;
-  }
-  const score = pw + ppw;
-  if (score >= 4)
-    return "high";
-  if (score >= 2)
-    return "medium";
-  return "low";
-}
-function getUrgencyBadge(task) {
-  if (!task.dueDate)
-    return null;
-  const now = /* @__PURE__ */ new Date();
-  now.setHours(0, 0, 0, 0);
-  const diffDays = (task.dueDate.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24);
-  if (diffDays < 0)
-    return "\u{1F534}";
-  if (diffDays <= 7)
-    return "\u{1F7E1}";
-  return null;
-}
-var ImpactEffortView = class {
-  constructor(container, store, settings, callbacks, searchQuery, collapsedGroups) {
-    this.store = store;
-    this.settings = settings;
-    this.callbacks = callbacks;
-    this.searchQuery = searchQuery;
-    this.collapsedGroups = collapsedGroups;
-    this.el = container.createDiv({ cls: "task-bujo-impact-effort" });
-  }
-  render() {
-    this.el.empty();
-    let tasks = this.store.getTasks().filter(
-      (t) => t.parentId === null && t.status === " " /* Open */
-    );
-    if (this.searchQuery) {
-      const q = this.searchQuery.toLowerCase();
-      tasks = tasks.filter((t) => t.text.toLowerCase().includes(q));
-    }
-    const quickWins = [];
-    const bigBets = [];
-    const fillIns = [];
-    const timeSinks = [];
-    const inbox = [];
-    for (const task of tasks) {
-      if (!task.effort) {
-        inbox.push(task);
-        continue;
-      }
-      const impact = calculateImpact(task);
-      const isHighImpact = impact === "high" || impact === "medium";
-      const isSmallEffort = task.effort === "S";
-      if (isHighImpact && isSmallEffort)
-        quickWins.push(task);
-      else if (isHighImpact && !isSmallEffort)
-        bigBets.push(task);
-      else if (!isHighImpact && isSmallEffort)
-        fillIns.push(task);
-      else
-        timeSinks.push(task);
-    }
-    const quadrants = [
-      { key: "quickwins", title: "\u{1F3AF} Quick Wins", subtitle: "High Impact + Small Effort \u2014 Do these first", cls: "task-bujo-ie-quickwins", tasks: quickWins },
-      { key: "bigbets", title: "\u{1F680} Big Bets", subtitle: "High Impact + Med/Large Effort \u2014 Block deep work", cls: "task-bujo-ie-bigbets", tasks: bigBets },
-      { key: "fillins", title: "\u{1F4CB} Fill-ins", subtitle: "Low Impact + Small Effort \u2014 Between meetings", cls: "task-bujo-ie-fillins", tasks: fillIns },
-      { key: "timesinks", title: "\u26A0\uFE0F Time Sinks", subtitle: "Low Impact + Med/Large Effort \u2014 Rethink", cls: "task-bujo-ie-timesinks", tasks: timeSinks }
-    ];
-    const axisRow = this.el.createDiv({ cls: "task-bujo-ie-axis-labels" });
-    axisRow.createDiv();
-    axisRow.createDiv({ cls: "task-bujo-ie-axis-label", text: "Small Effort" });
-    axisRow.createDiv({ cls: "task-bujo-ie-axis-label", text: "Medium / Large Effort" });
-    const grid = this.el.createDiv({ cls: "task-bujo-ie-grid" });
-    for (const q of quadrants) {
-      this.renderQuadrant(grid, q);
-    }
-    const inboxQuadrant = {
-      key: "inbox",
-      title: "\u{1F4E5} Inbox",
-      subtitle: "No effort estimate \u2014 needs sizing",
-      cls: "task-bujo-ie-inbox",
-      tasks: inbox
-    };
-    this.renderQuadrant(this.el, inboxQuadrant);
-  }
-  renderQuadrant(container, quadrant) {
-    const el = container.createDiv({ cls: `task-bujo-ie-quadrant ${quadrant.cls}` });
-    const header = el.createDiv({ cls: "task-bujo-ie-quadrant-header" });
-    const titleArea = header.createDiv();
-    titleArea.createDiv({ cls: "task-bujo-ie-quadrant-title", text: quadrant.title });
-    titleArea.createDiv({ cls: "task-bujo-ie-quadrant-subtitle", text: quadrant.subtitle });
-    header.createDiv({ cls: "task-bujo-ie-quadrant-count", text: String(quadrant.tasks.length) });
-    const list = el.createDiv({ cls: "task-bujo-ie-task-list" });
-    if (quadrant.tasks.length === 0) {
-      list.createDiv({ cls: "task-bujo-empty", text: "No tasks" });
-      return;
-    }
-    for (const task of quadrant.tasks) {
-      const row = list.createDiv({ cls: "task-bujo-ie-task-row" });
-      const badge = getUrgencyBadge(task);
-      if (badge) {
-        row.createSpan({ cls: "task-bujo-urgency-badge", text: badge });
-      }
-      new TaskItemRow(row, task, this.callbacks);
-    }
-  }
-};
-
 // src/ui/components/SyntaxReference.ts
-var import_obsidian9 = require("obsidian");
-var SyntaxReferenceModal = class extends import_obsidian9.Modal {
+var import_obsidian12 = require("obsidian");
+var SyntaxReferenceModal = class extends import_obsidian12.Modal {
   constructor(app) {
     super(app);
   }
   /** Try to get the active markdown editor (if any) */
   getActiveEditor() {
     var _a;
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian9.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian12.MarkdownView);
     return (_a = view == null ? void 0 : view.editor) != null ? _a : null;
   }
   /** Insert text at cursor position in the active editor */
@@ -4704,9 +5661,6 @@ var SyntaxReferenceModal = class extends import_obsidian9.Modal {
       ["", ""],
       ["#work/name or #w/CODE", "Work type tag"],
       ["#purpose/name or #p/CODE", "Purpose tag"],
-      ["#effort/S", "Small effort estimate"],
-      ["#effort/M", "Medium effort estimate"],
-      ["#effort/L", "Large effort estimate"],
       ["", ""],
       ["(from [[PageName]])", "Migration source link"],
       ["", ""],
@@ -4772,11 +5726,11 @@ var SyntaxReferenceModal = class extends import_obsidian9.Modal {
 };
 
 // src/ui/components/AddTaskBar.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 
 // src/ui/InsertTaskModal.ts
-var import_obsidian10 = require("obsidian");
-var InsertTaskModal = class extends import_obsidian10.Modal {
+var import_obsidian13 = require("obsidian");
+var InsertTaskModal = class extends import_obsidian13.Modal {
   constructor(app, onSubmit, workTypes = [], purposes = []) {
     super(app);
     this.onSubmit = onSubmit;
@@ -4788,14 +5742,13 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
     this.typeTag = "";
     this.workType = "";
     this.purpose = "";
-    this.effort = "";
     this.description = "";
   }
   onOpen() {
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-insert-modal");
     contentEl.createEl("h2", { text: "Quick Create Task" });
-    new import_obsidian10.Setting(contentEl).setName("Task text").addText((text) => {
+    new import_obsidian13.Setting(contentEl).setName("Task text").addText((text) => {
       text.setPlaceholder("What needs to be done?").onChange((v) => {
         this.text = v;
       });
@@ -4805,7 +5758,7 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian10.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian13.Setting(contentEl).setName("Priority").addDropdown(
       (dd) => dd.addOptions({
         none: "None",
         high: "High",
@@ -4815,23 +5768,13 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
         this.priority = v;
       })
     );
-    new import_obsidian10.Setting(contentEl).setName("Effort").setDesc("For Impact/Effort matrix").addDropdown(
-      (dd) => dd.addOptions({
-        "": "None",
-        "S": "Small",
-        "M": "Medium",
-        "L": "Large"
-      }).onChange((v) => {
-        this.effort = v;
-      })
-    );
-    new import_obsidian10.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian13.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.onChange((v) => {
         this.dueDate = v ? isoToPluginDate(v) : "";
       });
     });
-    new import_obsidian10.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
+    new import_obsidian13.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
       (dd) => dd.addOptions({
         "": "Auto (from heading)",
         "task": "Task",
@@ -4841,7 +5784,7 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
       })
     );
     if (this.workTypes.length > 0) {
-      new import_obsidian10.Setting(contentEl).setName("Work type").addDropdown((dd) => {
+      new import_obsidian13.Setting(contentEl).setName("Work type").addDropdown((dd) => {
         const options = { "": "None" };
         for (const wt of this.workTypes) {
           options[wt.shortCode] = `${wt.name} (${wt.shortCode})`;
@@ -4852,7 +5795,7 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
       });
     }
     if (this.purposes.length > 0) {
-      new import_obsidian10.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
+      new import_obsidian13.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
         const options = { "": "None" };
         for (const p of this.purposes) {
           options[p.shortCode] = `${p.name} (${p.shortCode})`;
@@ -4862,7 +5805,7 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
         });
       });
     }
-    const descSetting = new import_obsidian10.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
+    const descSetting = new import_obsidian13.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
     const descArea = descSetting.controlEl.createEl("textarea", {
       cls: "task-bujo-insert-description",
       attr: { rows: "3", placeholder: "Additional context, notes, links..." }
@@ -4870,7 +5813,7 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
     descArea.addEventListener("input", () => {
       this.description = descArea.value;
     });
-    new import_obsidian10.Setting(contentEl).addButton(
+    new import_obsidian13.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Create").setCta().onClick(() => this.submit())
     );
   }
@@ -4884,7 +5827,6 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
       typeTag: this.typeTag,
       workType: this.workType,
       purpose: this.purpose,
-      effort: this.effort,
       description: this.description.trim()
     });
     this.close();
@@ -4893,7 +5835,7 @@ var InsertTaskModal = class extends import_obsidian10.Modal {
     this.contentEl.empty();
   }
 };
-function buildTaskLine(text, priority, dueDate, typeTag = "", workType = "", purpose = "", effort = "") {
+function buildTaskLine(text, priority, dueDate, typeTag = "", workType = "", purpose = "") {
   const parts = [`- [ ] ${text}`];
   if (priority && priority !== "none")
     parts.push(`#priority/${priority}`);
@@ -4905,12 +5847,10 @@ function buildTaskLine(text, priority, dueDate, typeTag = "", workType = "", pur
     parts.push(`#w/${workType}`);
   if (purpose)
     parts.push(`#p/${purpose}`);
-  if (effort)
-    parts.push(`#effort/${effort}`);
   return parts.join(" ");
 }
-function buildTaskBlock(text, priority, dueDate, typeTag, workType, purpose, effort, description) {
-  const taskLine = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose, effort);
+function buildTaskBlock(text, priority, dueDate, typeTag, workType, purpose, description) {
+  const taskLine = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose);
   if (!description)
     return taskLine;
   const descLines = description.split("\n").map((line) => `    ${line}`).join("\n");
@@ -4979,7 +5919,7 @@ var AddTaskBar = class {
     const dateStr = formatDateISO(today);
     const filePath = `${settings.dailyNotePath}/${dateStr}.md`;
     const existing = this.app.vault.getAbstractFileByPath(filePath);
-    if (existing && existing instanceof import_obsidian11.TFile) {
+    if (existing && existing instanceof import_obsidian14.TFile) {
       const content = await this.app.vault.read(existing);
       const insertAfterHeading = this.findTasksSection(content);
       if (insertAfterHeading !== -1) {
@@ -5030,8 +5970,8 @@ ${taskLine}
 };
 
 // src/ui/SprintModal.ts
-var import_obsidian12 = require("obsidian");
-var SprintModal = class extends import_obsidian12.Modal {
+var import_obsidian15 = require("obsidian");
+var SprintModal = class extends import_obsidian15.Modal {
   constructor(app, sprintService, settings, onSave, editSprint) {
     super(app);
     this.sprintService = sprintService;
@@ -5053,7 +5993,7 @@ var SprintModal = class extends import_obsidian12.Modal {
     contentEl.createEl("h2", {
       text: this.editSprint ? "Edit Sprint" : "Create Sprint"
     });
-    new import_obsidian12.Setting(contentEl).setName("Sprint Name").addText((text) => {
+    new import_obsidian15.Setting(contentEl).setName("Sprint Name").addText((text) => {
       text.setValue(this.name).onChange((value) => {
         this.name = value;
       });
@@ -5063,7 +6003,7 @@ var SprintModal = class extends import_obsidian12.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian12.Setting(contentEl).setName("Start Date").addText((text) => {
+    new import_obsidian15.Setting(contentEl).setName("Start Date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.startDate;
       text.onChange((value) => {
@@ -5071,7 +6011,7 @@ var SprintModal = class extends import_obsidian12.Modal {
         this.updateDuration();
       });
     });
-    new import_obsidian12.Setting(contentEl).setName("End Date").addText((text) => {
+    new import_obsidian15.Setting(contentEl).setName("End Date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.endDate;
       text.onChange((value) => {
@@ -5082,7 +6022,7 @@ var SprintModal = class extends import_obsidian12.Modal {
     this.durationEl = contentEl.createEl("p");
     this.updateDuration();
     this.errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
-    new import_obsidian12.Setting(contentEl).addButton(
+    new import_obsidian15.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(() => this.save())
     );
   }
@@ -5139,8 +6079,8 @@ var SprintModal = class extends import_obsidian12.Modal {
 };
 
 // src/ui/SprintTopicModal.ts
-var import_obsidian13 = require("obsidian");
-var PageSuggestModal = class extends import_obsidian13.FuzzySuggestModal {
+var import_obsidian16 = require("obsidian");
+var PageSuggestModal = class extends import_obsidian16.FuzzySuggestModal {
   constructor(app, onChoose) {
     super(app);
     this.onChoose = onChoose;
@@ -5156,33 +6096,45 @@ var PageSuggestModal = class extends import_obsidian13.FuzzySuggestModal {
     this.onChoose(item);
   }
 };
-var SprintTopicModal = class extends import_obsidian13.Modal {
-  constructor(app, topicService, sprintId, onSave, editTopic) {
+var SprintTopicModal = class extends import_obsidian16.Modal {
+  constructor(app, topicService, sprintId, onSave, editTopic, sprintService) {
     super(app);
     this.topicService = topicService;
     this.sprintId = sprintId;
     this.onSave = onSave;
     this.editTopic = editTopic;
+    this.sprintService = sprintService;
     this.title = "";
     this.jira = "";
     this.priority = "none" /* None */;
     this.linkedPages = [];
+    this.impact = null;
+    this.effort = null;
+    this.dueDate = "";
+    /** '' = Backlog (no sprint assigned). Otherwise a sprint id. */
+    this.chosenSprintId = "";
     this.chipsContainer = null;
   }
   onOpen() {
-    var _a;
+    var _a, _b;
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-topic-modal");
     if (this.editTopic) {
       this.title = this.editTopic.title;
-      this.jira = (_a = this.editTopic.jira) != null ? _a : "";
+      this.jira = this.editTopic.jira.join(", ");
       this.priority = this.editTopic.priority;
       this.linkedPages = [...this.editTopic.linkedPages];
+      this.impact = this.editTopic.impact;
+      this.effort = this.editTopic.effort;
+      this.dueDate = (_a = this.editTopic.dueDate) != null ? _a : "";
+      this.chosenSprintId = (_b = this.editTopic.sprintId) != null ? _b : "";
+    } else {
+      this.chosenSprintId = this.sprintId;
     }
     contentEl.createEl("h2", {
       text: this.editTopic ? "Edit Topic" : "New Sprint Topic"
     });
-    new import_obsidian13.Setting(contentEl).setName("Title").addText((text) => {
+    new import_obsidian16.Setting(contentEl).setName("Title").addText((text) => {
       text.setPlaceholder("Topic title").setValue(this.title).onChange((value) => {
         this.title = value;
       });
@@ -5192,12 +6144,38 @@ var SprintTopicModal = class extends import_obsidian13.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian13.Setting(contentEl).setName("JIRA Ticket").setDesc("Optional JIRA ticket reference").addText(
-      (text) => text.setPlaceholder("PROJ-123").setValue(this.jira).onChange((value) => {
+    new import_obsidian16.Setting(contentEl).setName("JIRA Ticket(s)").setDesc("Optional. One or more JIRA keys, comma-separated (e.g. PROJ-1, PROJ-2).").addText(
+      (text) => text.setPlaceholder("PROJ-123, PROJ-124").setValue(this.jira).onChange((value) => {
         this.jira = value;
       })
     );
-    new import_obsidian13.Setting(contentEl).setName("Priority").addDropdown(
+    if (this.sprintService) {
+      const sprints = this.sprintService.getSprints();
+      const options = { "": "(Backlog)" };
+      for (const s of sprints) {
+        const suffix = s.status === "active" ? " \xB7 active" : s.status === "completed" ? " \xB7 completed" : "";
+        options[s.id] = `${s.name}${suffix}`;
+      }
+      new import_obsidian16.Setting(contentEl).setName("Sprint").setDesc("Assign to a sprint, or leave in Backlog").addDropdown(
+        (dropdown) => dropdown.addOptions(options).setValue(this.chosenSprintId).onChange((value) => {
+          this.chosenSprintId = value;
+        })
+      );
+      if (this.editTopic && this.editTopic.sprintHistory.length > 0) {
+        const historySetting = new import_obsidian16.Setting(contentEl).setName("Sprint history").setDesc("All sprints this topic has been assigned to (in order)");
+        const listEl = historySetting.settingEl.createDiv({ cls: "task-bujo-topic-sprint-history" });
+        for (const sprintId of this.editTopic.sprintHistory) {
+          const sprint = sprints.find((s) => s.id === sprintId);
+          const label = sprint ? `${sprint.name} (${sprint.startDate} \u2192 ${sprint.endDate})` : `${sprintId} \xB7 deleted`;
+          const chip = listEl.createDiv({ cls: "task-bujo-topic-sprint-history-chip" });
+          chip.setText(label);
+          if (sprintId === this.editTopic.sprintId) {
+            chip.addClass("task-bujo-topic-sprint-history-current");
+          }
+        }
+      }
+    }
+    new import_obsidian16.Setting(contentEl).setName("Priority").addDropdown(
       (dropdown) => dropdown.addOptions({
         ["none" /* None */]: "None",
         ["low" /* Low */]: "Low",
@@ -5207,7 +6185,43 @@ var SprintTopicModal = class extends import_obsidian13.Modal {
         this.priority = value;
       })
     );
-    const linkedSetting = new import_obsidian13.Setting(contentEl).setName("Linked Pages").addButton(
+    new import_obsidian16.Setting(contentEl).setName("Impact").setDesc("Strategic impact \u2014 drives Impact/Effort and Eisenhower matrices").addDropdown(
+      (dropdown) => {
+        var _a2;
+        return dropdown.addOptions({
+          "": "None",
+          "critical": "Critical",
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low"
+        }).setValue((_a2 = this.impact) != null ? _a2 : "").onChange((value) => {
+          this.impact = value || null;
+        });
+      }
+    );
+    new import_obsidian16.Setting(contentEl).setName("Effort").setDesc("Size estimate \u2014 drives Impact/Effort matrix quadrant").addDropdown(
+      (dropdown) => {
+        var _a2;
+        return dropdown.addOptions({
+          "": "None",
+          "xs": "XS",
+          "s": "S",
+          "m": "M",
+          "l": "L",
+          "xl": "XL"
+        }).setValue((_a2 = this.effort) != null ? _a2 : "").onChange((value) => {
+          this.effort = value || null;
+        });
+      }
+    );
+    new import_obsidian16.Setting(contentEl).setName("Due date").setDesc("Optional \u2014 drives Eisenhower urgency").addText((text) => {
+      text.inputEl.type = "date";
+      text.setValue(this.dueDate);
+      text.onChange((value) => {
+        this.dueDate = value;
+      });
+    });
+    const linkedSetting = new import_obsidian16.Setting(contentEl).setName("Linked Pages").addButton(
       (btn) => btn.setButtonText("+ Add Page").onClick(() => {
         new PageSuggestModal(this.app, (file) => {
           const pageName = file.path.replace(/\.md$/, "");
@@ -5221,7 +6235,7 @@ var SprintTopicModal = class extends import_obsidian13.Modal {
     this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: "task-bujo-page-chips" });
     this.renderChips();
     const errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
-    new import_obsidian13.Setting(contentEl).addButton(
+    new import_obsidian16.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
         errorEl.empty();
         if (!this.title.trim()) {
@@ -5233,18 +6247,54 @@ var SprintTopicModal = class extends import_obsidian13.Modal {
     );
   }
   async save() {
+    var _a, _b;
     if (!this.title.trim())
       return;
+    const dueDateTrimmed = this.dueDate.trim();
+    const dueDateValue = dueDateTrimmed && /^\d{4}-\d{2}-\d{2}$/.test(dueDateTrimmed) ? dueDateTrimmed : null;
     if (this.editTopic) {
-      await this.topicService.updateTopicFrontmatter(this.editTopic.filePath, {
+      const fmUpdates = {
         jira: this.jira || "",
-        priority: this.priority === "none" /* None */ ? "none" : this.priority
-      });
+        priority: this.priority === "none" /* None */ ? "none" : this.priority,
+        impact: this.impact,
+        effort: this.effort,
+        dueDate: dueDateValue
+      };
+      await this.topicService.updateTopicFrontmatter(this.editTopic.filePath, fmUpdates);
+      let newHistory = this.editTopic.sprintHistory;
+      const sprintChanged = this.sprintService && this.chosenSprintId !== ((_a = this.editTopic.sprintId) != null ? _a : "");
+      if (sprintChanged) {
+        await this.topicService.assignTopicToSprint(this.editTopic.filePath, this.chosenSprintId);
+        const seen = new Set(newHistory);
+        const merged = [...newHistory];
+        for (const s of [(_b = this.editTopic.sprintId) != null ? _b : "", this.chosenSprintId]) {
+          if (s && !seen.has(s)) {
+            merged.push(s);
+            seen.add(s);
+          }
+        }
+        newHistory = merged;
+      }
+      const JIRA_KEY_RE = /[A-Z][A-Z0-9]+-\d+/g;
+      const jiraKeys = [];
+      const seenKeys = /* @__PURE__ */ new Set();
+      let jm;
+      while ((jm = JIRA_KEY_RE.exec(this.jira)) !== null) {
+        if (!seenKeys.has(jm[0])) {
+          seenKeys.add(jm[0]);
+          jiraKeys.push(jm[0]);
+        }
+      }
       const updated = {
         ...this.editTopic,
-        jira: this.jira || null,
+        jira: jiraKeys,
         priority: this.priority,
-        linkedPages: this.linkedPages
+        linkedPages: this.linkedPages,
+        impact: this.impact,
+        effort: this.effort,
+        dueDate: dueDateValue,
+        sprintId: this.sprintService ? this.chosenSprintId || null : this.editTopic.sprintId,
+        sprintHistory: newHistory
       };
       this.onSave(updated);
     } else {
@@ -5253,7 +6303,10 @@ var SprintTopicModal = class extends import_obsidian13.Modal {
         this.jira.trim() || null,
         this.priority,
         this.linkedPages,
-        this.sprintId
+        this.chosenSprintId,
+        this.impact,
+        this.effort,
+        dueDateValue
       );
       this.onSave(topic);
     }
@@ -5286,8 +6339,8 @@ var SprintTopicModal = class extends import_obsidian13.Modal {
 };
 
 // src/ui/SprintCloseModal.ts
-var import_obsidian14 = require("obsidian");
-var SprintCloseModal = class extends import_obsidian14.Modal {
+var import_obsidian17 = require("obsidian");
+var SprintCloseModal = class extends import_obsidian17.Modal {
   constructor(app, sprint, topics, sprintService, topicService, onComplete) {
     super(app);
     this.sprint = sprint;
@@ -5332,8 +6385,8 @@ var SprintCloseModal = class extends import_obsidian14.Modal {
       dot.addClass(`task-bujo-priority-${topic.priority}`);
     }
     headerRow.createSpan({ text: topic.title });
-    if (topic.jira) {
-      headerRow.createSpan({ cls: "task-bujo-kanban-card-jira", text: ` ${topic.jira}` });
+    if (topic.jira.length > 0) {
+      headerRow.createSpan({ cls: "task-bujo-kanban-card-jira", text: ` ${topic.jira.join(", ")}` });
     }
     if (topic.blocked) {
       headerRow.createSpan({ cls: "task-bujo-kanban-card-blocked", text: "BLOCKED" });
@@ -5438,8 +6491,8 @@ var SprintCloseModal = class extends import_obsidian14.Modal {
 };
 
 // src/ui/SubtaskConfirmModal.ts
-var import_obsidian15 = require("obsidian");
-var SubtaskConfirmModal = class extends import_obsidian15.Modal {
+var import_obsidian18 = require("obsidian");
+var SubtaskConfirmModal = class extends import_obsidian18.Modal {
   constructor(app, task, openChildCount, actionLabel = "Complete") {
     super(app);
     this.task = task;
@@ -5502,8 +6555,8 @@ var SubtaskConfirmModal = class extends import_obsidian15.Modal {
 };
 
 // src/ui/TaskBuJoView.ts
-var TaskBuJoView = class extends import_obsidian16.ItemView {
-  constructor(leaf, store, writer, sprintService, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
+var TaskBuJoView = class extends import_obsidian19.ItemView {
+  constructor(leaf, store, writer, sprintService, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
     super(leaf);
     this.store = store;
     this.writer = writer;
@@ -5514,6 +6567,7 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
     this.analyticsService = analyticsService;
     this.monthlyAnalyticsService = monthlyAnalyticsService;
     this.monthlyNoteService = monthlyNoteService;
+    this.jiraService = jiraService;
     this.settings = settings;
     this.getData = getData;
     this.onSaveSnapshot = onSaveSnapshot;
@@ -5521,6 +6575,7 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
     this.searchQuery = "";
     this.toolbar = null;
     this.storeCallback = null;
+    this.jiraCallback = null;
     this.refreshTimer = null;
     this.collapsedGroups = /* @__PURE__ */ new Set();
     this.lastStoreVersion = -1;
@@ -5575,6 +6630,8 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
     });
     this.storeCallback = () => this.scheduleRefresh();
     this.store.on(this.storeCallback);
+    this.jiraCallback = () => this.scheduleRefresh();
+    this.jiraService.on(this.jiraCallback);
     this.refresh();
   }
   get taskCallbacks() {
@@ -5603,7 +6660,7 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
         let leaf = null;
         this.app.workspace.iterateAllLeaves((l) => {
           var _a;
-          if (!leaf && l.view instanceof import_obsidian16.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
+          if (!leaf && l.view instanceof import_obsidian19.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
             leaf = l;
           }
         });
@@ -5636,7 +6693,7 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
     }, REFRESH_DEBOUNCE_MS);
   }
   refresh() {
-    const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.store.version}`;
+    const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.store.version}|${this.jiraService.version}`;
     if (fingerprint === this.lastViewFingerprint)
       return;
     this.lastViewFingerprint = fingerprint;
@@ -5689,7 +6746,25 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
           (topic) => this.onTopicClick(topic),
           (sprint) => this.onEditSprint(sprint),
           this.isDragging,
-          this.searchQuery
+          this.searchQuery,
+          this.jiraService
+        );
+        view.render();
+        break;
+      }
+      case "topics" /* Topics */: {
+        const view = new TopicsOverviewView(
+          this.contentContainer,
+          this.scanner.getAllTopics(),
+          this.sprintService,
+          this.sprintTopicService,
+          this.settings,
+          (topic) => this.onTopicClick(topic),
+          (topic) => this.onEditTopicDetails(topic),
+          () => this.onNewBacklogTopic(),
+          this.isDragging,
+          this.searchQuery,
+          this.jiraService
         );
         view.render();
         break;
@@ -5701,16 +6776,6 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
       }
       case "overview" /* Overview */: {
         const view = new OverviewView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
-        view.render();
-        break;
-      }
-      case "eisenhower" /* Eisenhower */: {
-        const view = new EisenhowerView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
-        view.render();
-        break;
-      }
-      case "impactEffort" /* ImpactEffort */: {
-        const view = new ImpactEffortView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
         view.render();
         break;
       }
@@ -5750,14 +6815,39 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
     ).open();
   }
   onNewTopic() {
+    var _a;
     const activeSprint = this.sprintService.getActiveSprint();
-    if (!activeSprint)
-      return;
     new SprintTopicModal(
       this.app,
       this.sprintTopicService,
-      activeSprint.id,
-      (_topic) => this.refresh()
+      (_a = activeSprint == null ? void 0 : activeSprint.id) != null ? _a : "",
+      (_topic) => this.refresh(),
+      void 0,
+      this.sprintService
+    ).open();
+  }
+  /** Create a topic without auto-assigning it to a sprint (backlog mode). */
+  onNewBacklogTopic() {
+    new SprintTopicModal(
+      this.app,
+      this.sprintTopicService,
+      "",
+      // empty sprintId → backlog topic
+      (_topic) => this.refresh(),
+      void 0,
+      this.sprintService
+    ).open();
+  }
+  /** Open the edit modal for an existing topic (used by TopicsOverviewView). */
+  onEditTopicDetails(topic) {
+    var _a;
+    new SprintTopicModal(
+      this.app,
+      this.sprintTopicService,
+      (_a = topic.sprintId) != null ? _a : "",
+      (_topic) => this.refresh(),
+      topic,
+      this.sprintService
     ).open();
   }
   async onTopicClick(topic) {
@@ -5781,12 +6871,463 @@ var TaskBuJoView = class extends import_obsidian16.ItemView {
       this.store.off(this.storeCallback);
       this.storeCallback = null;
     }
+    if (this.jiraCallback) {
+      this.jiraService.off(this.jiraCallback);
+      this.jiraCallback = null;
+    }
+  }
+};
+
+// src/ui/JiraDashboardView.ts
+var import_obsidian20 = require("obsidian");
+var JiraDashboardView = class extends import_obsidian20.ItemView {
+  constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics) {
+    super(leaf);
+    this.dashboardService = dashboardService;
+    this.getSettings = getSettings;
+    this.saveSettings = saveSettings;
+    this.getAllTopics = getAllTopics;
+    this.searchQuery = "";
+    this.listenerHandle = null;
+    this.contentContainer = null;
+    this.headerMetaEl = null;
+    this.refreshBtnEl = null;
+    /** Active sections — evaluated in order; each issue appears in at most one
+     *  (the first matching), keeping rows from duplicating across sections. */
+    this.sections = [
+      {
+        id: "blocked",
+        label: "Blocked / Flagged",
+        description: "Issues you need to unblock or that someone has flagged.",
+        filter: (i) => i.flagged
+      },
+      {
+        id: "in-progress",
+        label: "In Progress",
+        description: "Anything you're actively working on (status category = indeterminate).",
+        filter: (i) => i.statusCategory === "indeterminate"
+      },
+      {
+        id: "current-sprint",
+        label: "In Current Sprint",
+        description: "Issues in an active sprint that aren't already shown above.",
+        filter: (i) => i.sprintActive
+      },
+      {
+        id: "reported",
+        label: "Reported by Me",
+        description: "Issues where you are the reporter but not assignee.",
+        // The JQL already returns everything matching assignee/reporter/watcher.
+        // Filter to reporter-only here — but since we don't know currentUser's account
+        // from the API response, approximate via "assignee != reporter" shown once the
+        // core sections have captured assigned work.
+        filter: () => true,
+        // see buildBuckets() — this section is backfilled below
+        defaultCollapsed: true
+      },
+      {
+        id: "recently-done",
+        label: "Recently Done",
+        description: "Resolved within the last 7 days.",
+        filter: (i) => i.statusCategory === "done",
+        defaultCollapsed: true
+      }
+    ];
+    this.debouncedSearch = (0, import_obsidian20.debounce)((value) => {
+      this.searchQuery = value;
+      this.renderContent();
+    }, SEARCH_DEBOUNCE_MS, false);
+  }
+  getViewType() {
+    return VIEW_TYPE_JIRA_DASHBOARD;
+  }
+  getDisplayText() {
+    return "JIRA Dashboard";
+  }
+  getIcon() {
+    return "layout-dashboard";
+  }
+  async onOpen() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.addClass("task-bujo-container");
+    containerEl.addClass("task-bujo-jira-dashboard-container");
+    this.renderHeader(containerEl);
+    this.contentContainer = containerEl.createDiv({ cls: "task-bujo-content task-bujo-jira-dashboard-content" });
+    this.listenerHandle = () => this.renderContent();
+    this.dashboardService.on(this.listenerHandle);
+    if (this.dashboardService.isEnabled() && this.dashboardService.isStale()) {
+      this.dashboardService.refresh();
+    }
+    this.renderContent();
+  }
+  async onClose() {
+    if (this.listenerHandle) {
+      this.dashboardService.off(this.listenerHandle);
+      this.listenerHandle = null;
+    }
+  }
+  /** Called by Obsidian when the view becomes visible again (pane focus / tab switch).
+   *  We use it as a hook to auto-refresh if the cache has gone stale. */
+  onResize() {
+    if (this.dashboardService.isEnabled() && this.dashboardService.isStale() && !this.dashboardService.isLoading()) {
+      this.dashboardService.refresh();
+    }
+  }
+  // ── Rendering ─────────────────────────────────────────────────
+  renderHeader(containerEl) {
+    const header = containerEl.createDiv({ cls: "task-bujo-jira-dashboard-header" });
+    const titleRow = header.createDiv({ cls: "task-bujo-jira-dashboard-title-row" });
+    titleRow.createEl("h3", { text: "JIRA Dashboard", cls: "task-bujo-jira-dashboard-title" });
+    this.headerMetaEl = titleRow.createSpan({ cls: "task-bujo-jira-dashboard-meta" });
+    const actions = titleRow.createDiv({ cls: "task-bujo-jira-dashboard-actions" });
+    this.refreshBtnEl = actions.createEl("button", {
+      cls: "task-bujo-btn task-bujo-jira-dashboard-refresh",
+      text: "Refresh"
+    });
+    this.refreshBtnEl.addEventListener("click", () => {
+      if (!this.dashboardService.isEnabled())
+        return;
+      this.dashboardService.refresh();
+    });
+    const searchRow = header.createDiv({ cls: "task-bujo-jira-dashboard-search-row" });
+    const searchInput = searchRow.createEl("input", {
+      cls: "task-bujo-jira-dashboard-search",
+      type: "text",
+      placeholder: "Filter by key, summary, assignee, label\u2026"
+    });
+    searchInput.addEventListener("input", () => this.debouncedSearch(searchInput.value));
+  }
+  renderContent() {
+    var _a;
+    if (!this.contentContainer)
+      return;
+    this.updateHeaderMeta();
+    this.contentContainer.empty();
+    if (!this.dashboardService.isEnabled()) {
+      this.contentContainer.createDiv({
+        cls: "task-bujo-empty",
+        text: "JIRA integration is disabled. Enable it in plugin settings."
+      });
+      return;
+    }
+    const err = this.dashboardService.getError();
+    if (err) {
+      const errEl = this.contentContainer.createDiv({ cls: "task-bujo-jira-dashboard-error" });
+      errEl.createSpan({ text: `Failed to load dashboard: ${err}` });
+      return;
+    }
+    const issues = this.dashboardService.getIssues();
+    if (issues === null) {
+      this.contentContainer.createDiv({
+        cls: "task-bujo-empty",
+        text: this.dashboardService.isLoading() ? "Loading JIRA issues\u2026" : "No data yet. Click Refresh."
+      });
+      return;
+    }
+    const filtered = this.applySearch(issues, this.searchQuery);
+    const buckets = this.buildBuckets(filtered);
+    const topicIndex = this.buildTopicIndex();
+    for (const section of this.sections) {
+      const bucket = (_a = buckets.get(section.id)) != null ? _a : [];
+      if (bucket.length === 0 && section.id === "reported")
+        continue;
+      this.renderSection(this.contentContainer, section, bucket, topicIndex);
+    }
+  }
+  updateHeaderMeta() {
+    var _a, _b;
+    if (!this.headerMetaEl)
+      return;
+    this.headerMetaEl.empty();
+    if (this.dashboardService.isLoading()) {
+      this.headerMetaEl.setText("Loading\u2026");
+      (_a = this.refreshBtnEl) == null ? void 0 : _a.setAttribute("disabled", "true");
+      return;
+    }
+    (_b = this.refreshBtnEl) == null ? void 0 : _b.removeAttribute("disabled");
+    const ts = this.dashboardService.getFetchedAt();
+    if (ts === null) {
+      this.headerMetaEl.setText("Never fetched");
+      return;
+    }
+    const ageSec = Math.max(0, Math.floor((Date.now() - ts) / 1e3));
+    const label = this.formatAge(ageSec);
+    const stale = this.dashboardService.isStale() ? " \xB7 stale" : "";
+    this.headerMetaEl.setText(`Refreshed ${label} ago${stale}`);
+  }
+  formatAge(seconds) {
+    if (seconds < 60)
+      return `${seconds}s`;
+    if (seconds < 3600)
+      return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400)
+      return `${Math.floor(seconds / 3600)}h`;
+    return `${Math.floor(seconds / 86400)}d`;
+  }
+  applySearch(issues, query) {
+    const q = query.trim().toLowerCase();
+    if (!q)
+      return issues;
+    return issues.filter((i) => {
+      var _a, _b, _c, _d, _e, _f;
+      const hay = [
+        i.key,
+        i.summary,
+        i.status,
+        (_a = i.assignee) != null ? _a : "",
+        (_b = i.reporter) != null ? _b : "",
+        (_c = i.parentKey) != null ? _c : "",
+        (_d = i.parentSummary) != null ? _d : "",
+        (_e = i.sprintName) != null ? _e : "",
+        (_f = i.priority) != null ? _f : "",
+        i.issueType,
+        ...i.labels
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  /** Assign each issue to exactly one section. Section priority is declaration order,
+   *  except the "Reported by Me" section which only catches issues that didn't land
+   *  in any other section (reporter-only, not in progress, not in active sprint, not done). */
+  buildBuckets(issues) {
+    const out = /* @__PURE__ */ new Map();
+    for (const s of this.sections)
+      out.set(s.id, []);
+    const ctx = { currentUserName: null, now: Date.now() };
+    for (const issue of issues) {
+      let placed = false;
+      for (const section of this.sections) {
+        if (section.id === "reported")
+          continue;
+        if (section.filter(issue, ctx)) {
+          out.get(section.id).push(issue);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        out.get("reported").push(issue);
+      }
+    }
+    for (const [, bucket] of out) {
+      bucket.sort((a, b) => this.compareIssues(a, b));
+    }
+    return out;
+  }
+  compareIssues(a, b) {
+    if (a.flagged !== b.flagged)
+      return a.flagged ? -1 : 1;
+    const pRank = (p) => {
+      if (!p)
+        return 99;
+      const k = p.toLowerCase();
+      if (k.includes("highest"))
+        return 0;
+      if (k.includes("high"))
+        return 1;
+      if (k.includes("medium"))
+        return 2;
+      if (k.includes("low") && !k.includes("lowest"))
+        return 3;
+      if (k.includes("lowest"))
+        return 4;
+      return 99;
+    };
+    const pa = pRank(a.priority), pb = pRank(b.priority);
+    if (pa !== pb)
+      return pa - pb;
+    if (a.dueDate && b.dueDate) {
+      if (a.dueDate !== b.dueDate)
+        return a.dueDate < b.dueDate ? -1 : 1;
+    } else if (a.dueDate && !b.dueDate)
+      return -1;
+    else if (!a.dueDate && b.dueDate)
+      return 1;
+    return (b.updatedAt || "").localeCompare(a.updatedAt || "");
+  }
+  /** Build a forward index {jiraKey → SprintTopic[]} from the scanner's topic cache.
+   *  Cheap: one pass over all topics; each topic contributes to 0..N keys. */
+  buildTopicIndex() {
+    const index = /* @__PURE__ */ new Map();
+    for (const topic of this.getAllTopics()) {
+      for (const key of topic.jira) {
+        const list = index.get(key);
+        if (list)
+          list.push(topic);
+        else
+          index.set(key, [topic]);
+      }
+    }
+    return index;
+  }
+  async openTopic(topic) {
+    const file = this.app.vault.getAbstractFileByPath(topic.filePath);
+    if (!(file instanceof import_obsidian20.TFile))
+      return;
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(file);
+    this.app.workspace.revealLeaf(leaf);
+  }
+  renderSection(container, section, issues, topicIndex) {
+    const settings = this.getSettings();
+    const stickyState = settings.jiraDashboardCollapsedSections[section.id];
+    const collapsed = stickyState != null ? stickyState : !!section.defaultCollapsed;
+    const sectionEl = container.createDiv({ cls: "task-bujo-jira-dashboard-section" });
+    if (collapsed)
+      sectionEl.addClass("is-collapsed");
+    const header = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-header" });
+    const chevron = header.createSpan({ cls: "task-bujo-jira-dashboard-section-chevron", text: collapsed ? "\u25B6" : "\u25BC" });
+    header.createSpan({ cls: "task-bujo-jira-dashboard-section-label", text: section.label });
+    header.createSpan({ cls: "task-bujo-jira-dashboard-section-count", text: `${issues.length}` });
+    header.addEventListener("click", async () => {
+      const cur = sectionEl.hasClass("is-collapsed");
+      sectionEl.toggleClass("is-collapsed", !cur);
+      chevron.setText(!cur ? "\u25B6" : "\u25BC");
+      const s = this.getSettings();
+      s.jiraDashboardCollapsedSections[section.id] = !cur;
+      await this.saveSettings();
+    });
+    const body = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-body" });
+    if (issues.length === 0) {
+      body.createDiv({ cls: "task-bujo-empty task-bujo-jira-dashboard-section-empty", text: "No issues." });
+      return;
+    }
+    for (const issue of issues) {
+      this.renderIssueRow(body, issue, topicIndex);
+    }
+  }
+  renderIssueRow(container, issue, topicIndex) {
+    var _a;
+    const row = container.createDiv({ cls: "task-bujo-jira-dashboard-row" });
+    row.addClass(`task-bujo-jira-row-status-${issue.statusCategory}`);
+    if (issue.flagged)
+      row.addClass("is-flagged");
+    const leftEl = row.createDiv({ cls: "task-bujo-jira-dashboard-row-left" });
+    if (issue.issueTypeIconUrl) {
+      const img = leftEl.createEl("img", {
+        cls: "task-bujo-jira-dashboard-icon",
+        attr: { src: issue.issueTypeIconUrl, alt: issue.issueType, title: issue.issueType }
+      });
+      img.setAttribute("width", "16");
+      img.setAttribute("height", "16");
+    }
+    const keyEl = leftEl.createEl("a", {
+      cls: "task-bujo-jira-dashboard-key",
+      text: issue.key,
+      attr: { href: issue.issueUrl, target: "_blank", rel: "noopener" }
+    });
+    keyEl.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.open(issue.issueUrl, "_blank");
+    });
+    const summaryEl = row.createDiv({ cls: "task-bujo-jira-dashboard-summary" });
+    const summaryLink = summaryEl.createEl("a", {
+      cls: "task-bujo-jira-dashboard-summary-link",
+      text: issue.summary,
+      attr: { href: issue.issueUrl, target: "_blank", rel: "noopener" }
+    });
+    summaryLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.open(issue.issueUrl, "_blank");
+    });
+    if (issue.parentKey) {
+      const parentEl = summaryEl.createDiv({ cls: "task-bujo-jira-dashboard-parent" });
+      parentEl.createSpan({ text: "\u2191 " });
+      parentEl.createSpan({ cls: "task-bujo-jira-dashboard-parent-key", text: issue.parentKey });
+      if (issue.parentSummary) {
+        parentEl.createSpan({ cls: "task-bujo-jira-dashboard-parent-summary", text: ` \u2014 ${issue.parentSummary}` });
+      }
+    }
+    const metaEl = row.createDiv({ cls: "task-bujo-jira-dashboard-meta-row" });
+    const statusChip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-status" });
+    statusChip.addClass(`task-bujo-jira-dashboard-status-${issue.statusCategory}`);
+    statusChip.setText(issue.status);
+    if (issue.priority) {
+      const priChip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-priority" });
+      if (issue.priorityIconUrl) {
+        const img = priChip.createEl("img", {
+          cls: "task-bujo-jira-dashboard-priority-icon",
+          attr: { src: issue.priorityIconUrl, alt: issue.priority }
+        });
+        img.setAttribute("width", "12");
+        img.setAttribute("height", "12");
+      }
+      priChip.createSpan({ text: issue.priority });
+    }
+    if (issue.flagged) {
+      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-flagged", text: "\u2691 Flagged" });
+    }
+    if (issue.assignee) {
+      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-assignee", text: `\u{1F464} ${issue.assignee}` });
+    } else {
+      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-assignee is-unassigned", text: "Unassigned" });
+    }
+    if (issue.dueDate) {
+      const overdue = this.isOverdue(issue.dueDate);
+      const chip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-due", text: `\u{1F4C5} ${issue.dueDate}` });
+      if (overdue)
+        chip.addClass("is-overdue");
+    }
+    if (issue.sprintName) {
+      const chip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-sprint", text: `\u{1F3C3} ${issue.sprintName}` });
+      if (issue.sprintActive)
+        chip.addClass("is-active");
+    }
+    const timeLabel = this.formatTime(issue.timeSpentSeconds, issue.timeRemainingSeconds);
+    if (timeLabel) {
+      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-time", text: timeLabel });
+    }
+    for (const label of issue.labels.slice(0, 5)) {
+      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-label", text: `#${label}` });
+    }
+    if (issue.labels.length > 5) {
+      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-label is-more", text: `+${issue.labels.length - 5}` });
+    }
+    const linkedTopics = (_a = topicIndex.get(issue.key)) != null ? _a : [];
+    for (const topic of linkedTopics) {
+      const chip = metaEl.createSpan({
+        cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-topic",
+        text: `\u2194 ${topic.title}`
+      });
+      chip.setAttribute("aria-label", `Open topic: ${topic.filePath}`);
+      chip.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openTopic(topic);
+      });
+    }
+  }
+  isOverdue(dueDate) {
+    const d = /* @__PURE__ */ new Date(dueDate + "T00:00:00");
+    if (isNaN(d.getTime()))
+      return false;
+    const today = /* @__PURE__ */ new Date();
+    today.setHours(0, 0, 0, 0);
+    return d.getTime() < today.getTime();
+  }
+  /** Format time as "2h spent / 4h left" — omits zero sides. Returns '' if both unknown. */
+  formatTime(spent, remaining) {
+    const fmt = (sec) => {
+      if (sec < 60)
+        return `${sec}s`;
+      if (sec < 3600)
+        return `${Math.round(sec / 60)}m`;
+      const h = sec / 3600;
+      return h >= 10 ? `${Math.round(h)}h` : `${h.toFixed(1)}h`;
+    };
+    const parts = [];
+    if (spent && spent > 0)
+      parts.push(`\u23F1 ${fmt(spent)} spent`);
+    if (remaining && remaining > 0)
+      parts.push(`${fmt(remaining)} left`);
+    return parts.join(" / ");
   }
 };
 
 // src/ui/MigrationModal.ts
-var import_obsidian17 = require("obsidian");
-var MigrationModal = class extends import_obsidian17.Modal {
+var import_obsidian21 = require("obsidian");
+var MigrationModal = class extends import_obsidian21.Modal {
   constructor(app, migrationService, dailyNotes, store, reviewData, onComplete) {
     super(app);
     this.migrationService = migrationService;
@@ -6136,8 +7677,8 @@ var MigrationModal = class extends import_obsidian17.Modal {
 };
 
 // src/ui/WeeklyReviewModal.ts
-var import_obsidian18 = require("obsidian");
-var WeeklyReviewModal = class extends import_obsidian18.Modal {
+var import_obsidian22 = require("obsidian");
+var WeeklyReviewModal = class extends import_obsidian22.Modal {
   constructor(app, analyticsService, settings, weeklyHistory, onSaveSnapshot, precomputedStats) {
     super(app);
     this.analyticsService = analyticsService;
@@ -6215,8 +7756,8 @@ var WeeklyReviewModal = class extends import_obsidian18.Modal {
 };
 
 // src/ui/MonthlyMigrationModal.ts
-var import_obsidian19 = require("obsidian");
-var MonthlyMigrationModal = class extends import_obsidian19.Modal {
+var import_obsidian23 = require("obsidian");
+var MonthlyMigrationModal = class extends import_obsidian23.Modal {
   constructor(app, migrationService, store, reviewData, onComplete) {
     super(app);
     this.migrationService = migrationService;
@@ -6366,8 +7907,8 @@ var MonthlyMigrationModal = class extends import_obsidian19.Modal {
 };
 
 // src/ui/MonthlyReviewModal.ts
-var import_obsidian20 = require("obsidian");
-var MonthlyReviewModal = class extends import_obsidian20.Modal {
+var import_obsidian24 = require("obsidian");
+var MonthlyReviewModal = class extends import_obsidian24.Modal {
   constructor(app, monthlyAnalytics, monthlyNotes, store, settings, monthlyHistory, onSaveSnapshot) {
     super(app);
     this.monthlyAnalytics = monthlyAnalytics;
@@ -6483,8 +8024,8 @@ var MonthlyReviewModal = class extends import_obsidian20.Modal {
 };
 
 // src/ui/DueDateModal.ts
-var import_obsidian21 = require("obsidian");
-var DueDateModal = class extends import_obsidian21.Modal {
+var import_obsidian25 = require("obsidian");
+var DueDateModal = class extends import_obsidian25.Modal {
   constructor(app, currentDate, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -6495,7 +8036,7 @@ var DueDateModal = class extends import_obsidian21.Modal {
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-due-modal");
     contentEl.createEl("h3", { text: "Set Due Date" });
-    new import_obsidian21.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian25.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.isoValue;
       text.onChange((v) => {
@@ -6509,7 +8050,7 @@ var DueDateModal = class extends import_obsidian21.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    const btnContainer = new import_obsidian21.Setting(contentEl);
+    const btnContainer = new import_obsidian25.Setting(contentEl);
     btnContainer.addButton(
       (btn) => btn.setButtonText("Set").setCta().onClick(() => {
         this.onSubmit(this.value.trim());
@@ -6529,7 +8070,7 @@ var DueDateModal = class extends import_obsidian21.Modal {
 };
 
 // src/main.ts
-var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
+var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
   async onload() {
     var _a, _b, _c, _d;
     const saved = await this.loadData();
@@ -6539,6 +8080,10 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
     this.data.lastWeeklyReviewWeek = (_b = this.data.lastWeeklyReviewWeek) != null ? _b : null;
     this.data.lastMonthlyMigrationMonth = (_c = this.data.lastMonthlyMigrationMonth) != null ? _c : null;
     this.data.monthlyHistory = (_d = this.data.monthlyHistory) != null ? _d : [];
+    const staleModes = ["eisenhower", "impactEffort"];
+    if (staleModes.includes(this.data.settings.defaultViewMode)) {
+      this.data.settings.defaultViewMode = "topics" /* Topics */;
+    }
     this.settings = this.data.settings;
     this.store = new TaskStore();
     this.writer = new TaskWriter(this.app.vault);
@@ -6571,6 +8116,8 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
       () => this.data
     );
     this.archiveService = new ArchiveService(this.app.vault, this.store, () => this.settings);
+    this.jiraService = new JiraService(() => this.settings);
+    this.jiraDashboardService = new JiraDashboardService(() => this.settings);
     this.scanner.onChange(() => {
       this.store.setTasks(this.scanner.getAllTasks());
       this.updateStatusBar();
@@ -6591,15 +8138,30 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
         this.analyticsService,
         this.monthlyAnalyticsService,
         this.monthlyNoteService,
+        this.jiraService,
         this.settings,
         () => this.data,
         (snapshot) => this.saveWeeklySnapshot(snapshot),
         (snapshot) => this.saveMonthlySnapshot(snapshot)
       )
     );
+    this.registerView(
+      VIEW_TYPE_JIRA_DASHBOARD,
+      (leaf) => new JiraDashboardView(
+        leaf,
+        this.jiraDashboardService,
+        () => this.settings,
+        // Sticky UI-state saves (collapsed sections) must not trigger the
+        // cache-invalidation side effect that saveSettings() runs, or every
+        // section toggle would wipe the dashboard result set.
+        () => this.saveData(this.data),
+        () => this.scanner.getAllTopics()
+      )
+    );
     const refs = this.scanner.registerEvents();
     refs.forEach((ref) => this.registerEvent(ref));
     this.addRibbonIcon("check-square", "Open BuJo", () => this.activateView());
+    this.addRibbonIcon("layout-dashboard", "Open JIRA Dashboard", () => this.activateJiraDashboard());
     this.statusBarEl = this.addStatusBarItem();
     this.statusBarEl.setText("BuJo ...");
     this.addCommand({
@@ -6611,6 +8173,16 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
       id: "open-bujo-new-tab",
       name: "Open in New Tab",
       callback: () => this.activateView(true)
+    });
+    this.addCommand({
+      id: "open-jira-dashboard",
+      name: "Open JIRA Dashboard",
+      callback: () => this.activateJiraDashboard()
+    });
+    this.addCommand({
+      id: "refresh-jira-dashboard",
+      name: "Refresh JIRA Dashboard",
+      callback: () => this.jiraDashboardService.refresh()
     });
     this.addCommand({
       id: "run-daily-migration",
@@ -6648,9 +8220,9 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
       callback: async () => {
         const result = await this.archiveService.archiveCompleted();
         if (result.archived === 0) {
-          new import_obsidian22.Notice("No completed tasks to archive.");
+          new import_obsidian26.Notice("No completed tasks to archive.");
         } else {
-          new import_obsidian22.Notice(`Archived ${result.archived} task(s) to ${result.files.length} file(s).`);
+          new import_obsidian26.Notice(`Archived ${result.archived} task(s) to ${result.files.length} file(s).`);
         }
       }
     });
@@ -6660,8 +8232,8 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
       hotkeys: [{ modifiers: ["Mod", "Shift"], key: "t" }],
       callback: () => {
         new InsertTaskModal(this.app, async (result) => {
-          const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
-          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian22.MarkdownView);
+          const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
+          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian26.MarkdownView);
           if (activeView == null ? void 0 : activeView.editor) {
             const editor = activeView.editor;
             const cursor = editor.getCursor();
@@ -6670,7 +8242,7 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
             editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
           } else {
             await this.dailyNoteService.addRawTaskLine(block, /* @__PURE__ */ new Date());
-            new import_obsidian22.Notice("Task added to today's daily note");
+            new import_obsidian26.Notice("Task added to today's daily note");
           }
         }, this.settings.workTypes, this.settings.purposes).open();
       }
@@ -6680,7 +8252,7 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
         menu.addItem((item) => {
           item.setTitle("BuJo: Quick create task").setIcon("check-square").onClick(() => {
             new InsertTaskModal(this.app, (result) => {
-              const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
+              const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
               const cursor2 = editor.getCursor();
               editor.replaceRange(block + "\n", { line: cursor2.line + 1, ch: 0 });
               const insertedLines = block.split("\n").length;
@@ -6757,6 +8329,20 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
     if (leaf)
       workspace.revealLeaf(leaf);
   }
+  async activateJiraDashboard() {
+    const { workspace } = this.app;
+    let leaf = null;
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
+    if (leaves.length > 0) {
+      leaf = leaves[0];
+    } else {
+      leaf = workspace.getLeaf(true);
+      if (leaf)
+        await leaf.setViewState({ type: VIEW_TYPE_JIRA_DASHBOARD, active: true });
+    }
+    if (leaf)
+      workspace.revealLeaf(leaf);
+  }
   checkMigration() {
     if (this.settings.migrationPromptOnStartup && this.migrationService.needsMigration()) {
       this.showMigrationModal();
@@ -6804,6 +8390,7 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
     await this.saveData(this.data);
   }
   async saveSettings(requiresRescan = true) {
+    var _a, _b;
     this.data.settings = this.settings;
     await this.saveData(this.data);
     if (requiresRescan) {
@@ -6811,6 +8398,8 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
       await this.scanner.fullScan();
       this.store.setTasks(this.scanner.getAllTasks());
     }
+    (_a = this.jiraService) == null ? void 0 : _a.clearCache();
+    (_b = this.jiraDashboardService) == null ? void 0 : _b.clearCache();
     this.updateStatusBar();
   }
   checkMonthlyMigration() {
@@ -6857,6 +8446,7 @@ var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
   }
   onunload() {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_TASK_BUJO);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
     this.scanner.destroy();
   }
 };

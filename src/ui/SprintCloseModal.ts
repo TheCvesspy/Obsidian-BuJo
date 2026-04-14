@@ -68,8 +68,8 @@ export class SprintCloseModal extends Modal {
 
 		headerRow.createSpan({ text: topic.title });
 
-		if (topic.jira) {
-			headerRow.createSpan({ cls: 'task-bujo-kanban-card-jira', text: ` ${topic.jira}` });
+		if (topic.jira.length > 0) {
+			headerRow.createSpan({ cls: 'task-bujo-kanban-card-jira', text: ` ${topic.jira.join(', ')}` });
 		}
 
 		if (topic.blocked) {

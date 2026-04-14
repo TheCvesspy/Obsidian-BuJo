@@ -9,7 +9,6 @@ export interface InsertTaskResult {
 	typeTag: string;
 	workType: string;
 	purpose: string;
-	effort: string;
 	description: string;
 }
 
@@ -20,7 +19,6 @@ export class InsertTaskModal extends Modal {
 	private typeTag = '';
 	private workType = '';
 	private purpose = '';
-	private effort = '';
 	private description = '';
 
 	constructor(
@@ -49,7 +47,7 @@ export class InsertTaskModal extends Modal {
 				setTimeout(() => text.inputEl.focus(), 50);
 			});
 
-		// Row: Priority + Effort + Due date
+		// Row: Priority + Due date
 		new Setting(contentEl)
 			.setName('Priority')
 			.addDropdown(dd => dd
@@ -60,19 +58,6 @@ export class InsertTaskModal extends Modal {
 					low: 'Low',
 				})
 				.onChange(v => { this.priority = v; })
-			);
-
-		new Setting(contentEl)
-			.setName('Effort')
-			.setDesc('For Impact/Effort matrix')
-			.addDropdown(dd => dd
-				.addOptions({
-					'': 'None',
-					'S': 'Small',
-					'M': 'Medium',
-					'L': 'Large',
-				})
-				.onChange(v => { this.effort = v; })
 			);
 
 		new Setting(contentEl)
@@ -145,7 +130,6 @@ export class InsertTaskModal extends Modal {
 			typeTag: this.typeTag,
 			workType: this.workType,
 			purpose: this.purpose,
-			effort: this.effort,
 			description: this.description.trim(),
 		});
 		this.close();
@@ -157,20 +141,19 @@ export class InsertTaskModal extends Modal {
 }
 
 /** Build a formatted task line from parts (without description) */
-export function buildTaskLine(text: string, priority: string, dueDate: string, typeTag: string = '', workType: string = '', purpose: string = '', effort: string = ''): string {
+export function buildTaskLine(text: string, priority: string, dueDate: string, typeTag: string = '', workType: string = '', purpose: string = ''): string {
 	const parts = [`- [ ] ${text}`];
 	if (priority && priority !== 'none') parts.push(`#priority/${priority}`);
 	if (dueDate) parts.push(`@due ${dueDate}`);
 	if (typeTag) parts.push(`#type/${typeTag}`);
 	if (workType) parts.push(`#w/${workType}`);
 	if (purpose) parts.push(`#p/${purpose}`);
-	if (effort) parts.push(`#effort/${effort}`);
 	return parts.join(' ');
 }
 
 /** Build a complete task block: task line + indented description lines */
-export function buildTaskBlock(text: string, priority: string, dueDate: string, typeTag: string, workType: string, purpose: string, effort: string, description: string): string {
-	const taskLine = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose, effort);
+export function buildTaskBlock(text: string, priority: string, dueDate: string, typeTag: string, workType: string, purpose: string, description: string): string {
+	const taskLine = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose);
 	if (!description) return taskLine;
 
 	const descLines = description.split('\n').map(line => `    ${line}`).join('\n');

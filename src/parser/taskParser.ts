@@ -1,5 +1,5 @@
 import { TaskItem, TaskStatus, Priority, ItemCategory } from '../types';
-import { CHECKBOX_REGEX, HEADING_REGEX, PRIORITY_TAG_REGEX, TYPE_TAG_REGEX, DUE_DATE_REGEX, MIGRATED_FROM_REGEX, WORK_TYPE_REGEX, PURPOSE_REGEX, EFFORT_REGEX } from '../constants';
+import { CHECKBOX_REGEX, HEADING_REGEX, PRIORITY_TAG_REGEX, TYPE_TAG_REGEX, DUE_DATE_REGEX, MIGRATED_FROM_REGEX, WORK_TYPE_REGEX, PURPOSE_REGEX } from '../constants';
 import { HeadingClassifier } from './headingClassifier';
 import { parseDueDate } from './dateParser';
 import { TagCategory } from '../types';
@@ -182,14 +182,6 @@ export function parseTasksFromContent(
 			text = text.replace(PURPOSE_REGEX, '');
 		}
 
-		// Extract effort tag: #effort/S, #effort/M, #effort/L
-		let effort: 'S' | 'M' | 'L' | null = null;
-		const effortMatch = text.match(EFFORT_REGEX);
-		if (effortMatch) {
-			effort = effortMatch[1].toUpperCase() as 'S' | 'M' | 'L';
-			text = text.replace(EFFORT_REGEX, '');
-		}
-
 		// Clean up display text
 		text = text.replace(/\s{2,}/g, ' ').trim();
 
@@ -220,7 +212,6 @@ export function parseTasksFromContent(
 			migratedFrom,
 			workType,
 			purpose,
-			effort,
 			indentLevel,
 			parentId: null,
 			childrenIds: [],

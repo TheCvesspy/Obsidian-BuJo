@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, TFolder } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting, TFolder } from 'obsidian';
 import {
     PluginSettings,
     FolderState,
@@ -10,10 +10,14 @@ import {
 } from './types';
 import { getEffectiveState } from './utils/pathUtils';
 import { SETTINGS_DEBOUNCE_MS } from './constants';
+import { JiraService } from './services/jiraService';
+import { JiraDashboardService } from './services/jiraDashboardService';
 
 interface TaskBuJoPlugin {
     settings: PluginSettings;
     saveSettings(requiresRescan?: boolean): Promise<void>;
+    jiraService: JiraService;
+    jiraDashboardService: JiraDashboardService;
 }
 
 /** Recursive folder tree node */
@@ -104,10 +108,9 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                         [BuJoViewMode.Monthly]: 'Monthly',
                         [BuJoViewMode.Calendar]: 'Calendar',
                         [BuJoViewMode.Sprint]: 'Sprint',
+                        [BuJoViewMode.Topics]: 'Topics',
                         [BuJoViewMode.Overdue]: 'Overdue',
                         [BuJoViewMode.Overview]: 'Overview',
-                        [BuJoViewMode.Eisenhower]: 'Eisenhower',
-                        [BuJoViewMode.ImpactEffort]: 'Impact/Effort',
                         [BuJoViewMode.Analytics]: 'Analytics',
                     })
                     .setValue(this.plugin.settings.defaultViewMode)
@@ -383,6 +386,156 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                         }
                     })
             );
+
+        // ── JIRA Integration ─────────────────────────────────────
+        containerEl.createEl('h2', { text: 'JIRA Integration' });
+        containerEl.createEl('p', {
+            text: 'Optional module. When enabled, topics with a "jira" frontmatter field (e.g. jira: PROJ-123) will fetch live status and assignee data from your JIRA Cloud instance. Credentials are stored in the plugin data file, alongside your vault.',
+            cls: 'setting-item-description',
+        });
+
+        new Setting(containerEl)
+            .setName('Enable JIRA integration')
+            .setDesc('Master switch. When off, no fetches happen and no JIRA UI appears on cards.')
+            .addToggle(toggle =>
+                toggle
+                    .setValue(this.plugin.settings.jiraEnabled)
+                    .onChange(async value => {
+                        this.plugin.settings.jiraEnabled = value;
+                        await this.plugin.saveSettings(false);
+                        // Re-render settings pane so conditional fields show/hide
+                        this.display();
+                    })
+            );
+
+        if (this.plugin.settings.jiraEnabled) {
+            new Setting(containerEl)
+                .setName('JIRA base URL')
+                .setDesc('Your Atlassian Cloud URL, e.g. https://mycompany.atlassian.net (no trailing slash).')
+                .addText(text =>
+                    text
+                        .setPlaceholder('https://mycompany.atlassian.net')
+                        .setValue(this.plugin.settings.jiraBaseUrl)
+                        .onChange(value => {
+                            this.plugin.settings.jiraBaseUrl = value.trim().replace(/\/+$/, '');
+                            this.debouncedSave(false);
+                        })
+                );
+
+            new Setting(containerEl)
+                .setName('Email')
+                .setDesc('Your Atlassian account email (used as the Basic-auth username).')
+                .addText(text =>
+                    text
+                        .setPlaceholder('you@example.com')
+                        .setValue(this.plugin.settings.jiraEmail)
+                        .onChange(value => {
+                            this.plugin.settings.jiraEmail = value.trim();
+                            this.debouncedSave(false);
+                        })
+                );
+
+            new Setting(containerEl)
+                .setName('API token')
+                .setDesc('Personal API token from id.atlassian.com. Stored in plugin data.json — as sensitive as the rest of your vault.')
+                .addText(text => {
+                    text.inputEl.type = 'password';
+                    text
+                        .setPlaceholder('••••••••')
+                        .setValue(this.plugin.settings.jiraApiToken)
+                        .onChange(value => {
+                            this.plugin.settings.jiraApiToken = value.trim();
+                            this.debouncedSave(false);
+                        });
+                });
+
+            new Setting(containerEl)
+                .setName('Cache TTL (minutes)')
+                .setDesc('How long to keep fetched issue data before re-hitting the API.')
+                .addText(text =>
+                    text
+                        .setPlaceholder('10')
+                        .setValue(String(this.plugin.settings.jiraCacheTtlMinutes))
+                        .onChange(value => {
+                            const parsed = parseInt(value, 10);
+                            if (!isNaN(parsed) && parsed >= 0) {
+                                this.plugin.settings.jiraCacheTtlMinutes = parsed;
+                                this.debouncedSave(false);
+                            }
+                        })
+                );
+
+            // ── JIRA Dashboard sub-section ──────────────────────
+            containerEl.createEl('h3', { text: 'JIRA Dashboard' });
+            containerEl.createEl('p', {
+                text: 'Controls the JIRA Dashboard view — a read-only list of issues where you are assignee, reporter, or watcher. One JQL round-trip per refresh; no background polling.',
+                cls: 'setting-item-description',
+            });
+
+            new Setting(containerEl)
+                .setName('Dashboard projects')
+                .setDesc('Comma-separated JIRA project keys to limit the dashboard search (e.g. "PROJ, DEV"). Leave empty to include all projects you can see.')
+                .addText(text =>
+                    text
+                        .setPlaceholder('PROJ, DEV')
+                        .setValue(this.plugin.settings.jiraDashboardProjects.join(', '))
+                        .onChange(value => {
+                            this.plugin.settings.jiraDashboardProjects = value
+                                .split(',')
+                                .map(s => s.trim().toUpperCase())
+                                .filter(s => s.length > 0);
+                            this.debouncedSave(false);
+                        })
+                );
+
+            new Setting(containerEl)
+                .setName('Dashboard cache TTL (minutes)')
+                .setDesc('How long to cache the dashboard result before auto-refresh (when the view is visible). Separate from the per-issue cache above.')
+                .addText(text =>
+                    text
+                        .setPlaceholder('10')
+                        .setValue(String(this.plugin.settings.jiraDashboardTtlMinutes))
+                        .onChange(value => {
+                            const parsed = parseInt(value, 10);
+                            if (!isNaN(parsed) && parsed >= 0) {
+                                this.plugin.settings.jiraDashboardTtlMinutes = parsed;
+                                this.debouncedSave(false);
+                            }
+                        })
+                );
+
+            new Setting(containerEl)
+                .setName('Sprint custom field ID')
+                .setDesc('JIRA custom field ID for the Sprint field. Most Cloud instances use "customfield_10020" — change only if your JIRA is configured differently.')
+                .addText(text =>
+                    text
+                        .setPlaceholder('customfield_10020')
+                        .setValue(this.plugin.settings.jiraSprintFieldId)
+                        .onChange(value => {
+                            this.plugin.settings.jiraSprintFieldId = value.trim();
+                            this.debouncedSave(false);
+                        })
+                );
+
+            new Setting(containerEl)
+                .setName('Test connection')
+                .setDesc('Verify your credentials by calling /rest/api/3/myself.')
+                .addButton(btn =>
+                    btn
+                        .setButtonText('Test connection')
+                        .onClick(async () => {
+                            btn.setDisabled(true);
+                            btn.setButtonText('Testing…');
+                            try {
+                                const result = await this.plugin.jiraService.testConnection();
+                                new Notice(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);
+                            } finally {
+                                btn.setDisabled(false);
+                                btn.setButtonText('Test connection');
+                            }
+                        })
+                );
+        }
     }
 
     /** Build folder tree from vault and render it */

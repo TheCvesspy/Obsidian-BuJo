@@ -1182,10 +1182,84 @@
     white-space: nowrap;
 }
 
+.task-bujo-kanban-card-jira-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 2px;
+}
+
 .task-bujo-kanban-card-jira {
     font-size: 11px;
     color: var(--text-accent);
+    font-weight: 600;
+}
+
+.task-bujo-kanban-card-jira.task-bujo-clickable {
+    cursor: pointer;
+    text-decoration: none;
+}
+.task-bujo-kanban-card-jira.task-bujo-clickable:hover {
+    text-decoration: underline;
+}
+
+.task-bujo-kanban-card-jira-summary {
+    font-size: 11px;
+    color: var(--text-muted);
     margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-bujo-jira-chip {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    white-space: nowrap;
+    line-height: 1.4;
+    border: 1px solid var(--background-modifier-border);
+    background-color: var(--background-secondary);
+    color: var(--text-normal);
+}
+
+.task-bujo-jira-assignee {
+    color: var(--text-muted);
+}
+
+.task-bujo-jira-loading {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.task-bujo-jira-error {
+    background-color: var(--color-red, #e55);
+    color: #fff;
+    border-color: transparent;
+    font-weight: 700;
+}
+
+/* Status-category colors — match JIRA's coarse New / In Progress / Done */
+.task-bujo-jira-status-new {
+    background-color: rgba(128, 128, 128, 0.25);
+    color: var(--text-normal);
+    border-color: transparent;
+}
+.task-bujo-jira-status-indeterminate {
+    background-color: rgba(59, 130, 246, 0.25);
+    color: var(--text-normal);
+    border-color: transparent;
+}
+.task-bujo-jira-status-done {
+    background-color: rgba(34, 197, 94, 0.3);
+    color: var(--text-normal);
+    border-color: transparent;
+}
+.task-bujo-jira-status-unknown {
+    background-color: var(--background-secondary);
+    color: var(--text-muted);
 }
 
 .task-bujo-kanban-card-links {
@@ -1317,6 +1391,30 @@
 
 .task-bujo-page-chip-remove:hover {
     color: var(--text-error, var(--color-red, #e03e3e));
+}
+
+/* Sprint history list shown in topic edit modal */
+.task-bujo-topic-sprint-history {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+    width: 100%;
+}
+
+.task-bujo-topic-sprint-history-chip {
+    font-size: 12px;
+    padding: 4px 8px;
+    background: var(--background-secondary);
+    border-left: 3px solid var(--background-modifier-border);
+    border-radius: 4px;
+    color: var(--text-muted);
+}
+
+.task-bujo-topic-sprint-history-current {
+    border-left-color: var(--interactive-accent);
+    color: var(--text-normal);
+    font-weight: 500;
 }
 
 /* Responsive: stack kanban columns on narrow panes */
@@ -2215,23 +2313,122 @@
     gap: 2px;
 }
 
-/* ─── Eisenhower Matrix ─── */
+/* ─── Topics Overview ─────────────────────────────────────── */
 
-.task-bujo-eisenhower {
+.task-bujo-topics-overview {
     padding: 8px;
     height: 100%;
     display: flex;
     flex-direction: column;
+    gap: 8px;
 }
 
-.task-bujo-eisenhower-axis-labels {
+.task-bujo-topics-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-topics-modeswitch,
+.task-bujo-topics-scope {
+    display: inline-flex;
+    gap: 2px;
+    background: var(--background-secondary);
+    padding: 2px;
+    border-radius: 6px;
+}
+
+.task-bujo-topics-modebtn,
+.task-bujo-topics-scopebtn {
+    background: transparent;
+    border: none;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.task-bujo-topics-modebtn:hover,
+.task-bujo-topics-scopebtn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-topics-modebtn-active,
+.task-bujo-topics-scopebtn-active {
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.task-bujo-topics-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.task-bujo-topics-list-section {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.task-bujo-topics-list-backlog {
+    border-top: 3px solid var(--color-orange, #e68a00);
+}
+
+.task-bujo-topics-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.task-bujo-topics-list-count {
+    font-size: 11px;
+    background: var(--background-modifier-hover);
+    border-radius: 10px;
+    padding: 1px 8px;
+}
+
+.task-bujo-topics-list-grid {
     display: grid;
-    grid-template-columns: 40px 1fr 1fr;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 6px;
+    min-height: 40px;
+    border: 2px dashed transparent;
+    border-radius: 6px;
+    padding: 2px;
+    transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.task-bujo-topics-list-dropzone-active {
+    border-color: var(--interactive-accent);
+    background-color: var(--background-modifier-hover);
+}
+
+/* ─── Topic Matrix (Impact/Effort + Eisenhower) ───────────── */
+
+.task-bujo-topicmx-axis-labels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
     margin-bottom: 4px;
 }
 
-.task-bujo-eisenhower-axis-label {
+.task-bujo-topicmx-axis-label {
     text-align: center;
     font-size: 11px;
     font-weight: 600;
@@ -2239,16 +2436,15 @@
     text-transform: uppercase;
 }
 
-.task-bujo-eisenhower-grid {
+.task-bujo-topicmx-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: 1fr 1fr;
     gap: 8px;
-    flex: 1;
     min-height: 400px;
 }
 
-.task-bujo-eisenhower-quadrant {
+.task-bujo-topicmx-quadrant {
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
     padding: 8px;
@@ -2257,60 +2453,19 @@
     flex-direction: column;
 }
 
-.task-bujo-eisenhower-q1 {
-    border-top: 3px solid var(--color-red, #e03e3e);
-}
+/* Impact/Effort quadrant accents */
+.task-bujo-topicmx-quickwins { border-top: 3px solid var(--color-green, #08b94e); }
+.task-bujo-topicmx-bigbets { border-top: 3px solid var(--interactive-accent, #4a8af4); }
+.task-bujo-topicmx-fillins { border-top: 3px solid var(--color-yellow, #d9a200); }
+.task-bujo-topicmx-timesinks { border-top: 3px solid var(--color-red, #e03e3e); }
 
-.task-bujo-eisenhower-q2 {
-    border-top: 3px solid var(--interactive-accent, #4a8af4);
-}
+/* Eisenhower quadrant accents */
+.task-bujo-topicmx-q1 { border-top: 3px solid var(--color-red, #e03e3e); }
+.task-bujo-topicmx-q2 { border-top: 3px solid var(--interactive-accent, #4a8af4); }
+.task-bujo-topicmx-q3 { border-top: 3px solid var(--color-yellow, #d9a200); }
+.task-bujo-topicmx-q4 { border-top: 3px solid var(--text-muted, #999); }
 
-.task-bujo-eisenhower-q3 {
-    border-top: 3px solid var(--color-yellow, #d9a200);
-}
-
-.task-bujo-eisenhower-q4 {
-    border-top: 3px solid var(--text-muted, #999);
-}
-
-.task-bujo-eisenhower-quadrant-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.task-bujo-eisenhower-quadrant-title {
-    font-weight: 600;
-    font-size: 12px;
-    text-transform: uppercase;
-}
-
-.task-bujo-eisenhower-quadrant-count {
-    font-size: 11px;
-    color: var(--text-muted);
-    background: var(--background-modifier-hover);
-    border-radius: 10px;
-    padding: 1px 8px;
-}
-
-.task-bujo-eisenhower-quadrant-subtitle {
-    font-size: 10px;
-    color: var(--text-muted);
-    font-style: italic;
-}
-
-.task-bujo-eisenhower-task-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: 1;
-}
-
-.task-bujo-eisenhower-unscheduled {
-    border-top: 3px solid var(--color-orange, #e68a00);
+.task-bujo-topicmx-inbox {
     margin-top: 8px;
     border: 1px solid var(--background-modifier-border);
     border-top: 3px solid var(--color-orange, #e68a00);
@@ -2322,65 +2477,7 @@
     max-height: 300px;
 }
 
-/* ── Impact / Effort View ─────────────────────────────────── */
-
-.task-bujo-impact-effort {
-    padding: 8px;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
-
-.task-bujo-ie-axis-labels {
-    display: grid;
-    grid-template-columns: 40px 1fr 1fr;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.task-bujo-ie-axis-label {
-    text-align: center;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-}
-
-.task-bujo-ie-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 1fr;
-    gap: 8px;
-    flex: 1;
-    min-height: 400px;
-}
-
-.task-bujo-ie-quadrant {
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    padding: 8px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-}
-
-.task-bujo-ie-quickwins {
-    border-top: 3px solid var(--color-green, #08b94e);
-}
-
-.task-bujo-ie-bigbets {
-    border-top: 3px solid var(--interactive-accent, #4a8af4);
-}
-
-.task-bujo-ie-fillins {
-    border-top: 3px solid var(--color-yellow, #d9a200);
-}
-
-.task-bujo-ie-timesinks {
-    border-top: 3px solid var(--color-red, #e03e3e);
-}
-
-.task-bujo-ie-quadrant-header {
+.task-bujo-topicmx-quadrant-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -2389,13 +2486,13 @@
     border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-ie-quadrant-title {
+.task-bujo-topicmx-quadrant-title {
     font-weight: 600;
     font-size: 12px;
     text-transform: uppercase;
 }
 
-.task-bujo-ie-quadrant-count {
+.task-bujo-topicmx-quadrant-count {
     font-size: 11px;
     color: var(--text-muted);
     background: var(--background-modifier-hover);
@@ -2403,38 +2500,313 @@
     padding: 1px 8px;
 }
 
-.task-bujo-ie-quadrant-subtitle {
+.task-bujo-topicmx-quadrant-subtitle {
     font-size: 10px;
     color: var(--text-muted);
     font-style: italic;
 }
 
-.task-bujo-ie-task-list {
+.task-bujo-topicmx-quadrant-list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    flex: 1;
-}
-
-.task-bujo-ie-task-row {
-    display: flex;
-    align-items: center;
     gap: 4px;
+    flex: 1;
 }
 
-.task-bujo-urgency-badge {
+/* Metadata chips row on topic cards (used in overview / matrix views) */
+.task-bujo-kanban-card-meta {
     font-size: 10px;
-    flex-shrink: 0;
+    color: var(--text-muted);
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
 }
 
-.task-bujo-ie-inbox {
-    margin-top: 8px;
-    border: 1px solid var(--background-modifier-border);
-    border-top: 3px solid var(--color-orange, #e68a00);
-    border-radius: 8px;
-    padding: 8px;
-    overflow-y: auto;
+/* ── JIRA Dashboard ──────────────────────────────────────────── */
+
+.task-bujo-jira-dashboard-container {
+    padding: 0;
+}
+
+.task-bujo-jira-dashboard-header {
+    padding: 12px 16px 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
     display: flex;
     flex-direction: column;
-    max-height: 300px;
+    gap: 8px;
+}
+
+.task-bujo-jira-dashboard-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.task-bujo-jira-dashboard-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.task-bujo-jira-dashboard-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex: 1;
+}
+
+.task-bujo-jira-dashboard-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.task-bujo-jira-dashboard-refresh {
+    font-size: 12px;
+    padding: 4px 10px;
+}
+
+.task-bujo-jira-dashboard-search-row {
+    display: flex;
+}
+
+.task-bujo-jira-dashboard-search {
+    flex: 1;
+    padding: 5px 8px;
+    font-size: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.task-bujo-jira-dashboard-content {
+    padding: 8px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+}
+
+.task-bujo-jira-dashboard-error {
+    padding: 10px 12px;
+    background: var(--background-modifier-error);
+    color: var(--text-on-accent);
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* Section */
+.task-bujo-jira-dashboard-section {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--background-secondary);
+}
+
+.task-bujo-jira-dashboard-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--background-secondary-alt);
+    transition: background 120ms ease;
+}
+
+.task-bujo-jira-dashboard-section-header:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-jira-dashboard-section-chevron {
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 12px;
+    display: inline-block;
+}
+
+.task-bujo-jira-dashboard-section-label {
+    font-weight: 600;
+    font-size: 13px;
+    flex: 1;
+}
+
+.task-bujo-jira-dashboard-section-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--background-modifier-hover);
+    border-radius: 10px;
+    padding: 1px 8px;
+}
+
+.task-bujo-jira-dashboard-section.is-collapsed .task-bujo-jira-dashboard-section-body {
+    display: none;
+}
+
+.task-bujo-jira-dashboard-section-body {
+    display: flex;
+    flex-direction: column;
+}
+
+.task-bujo-jira-dashboard-section-empty {
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* Row */
+.task-bujo-jira-dashboard-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 2px 10px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--background-modifier-border);
+    transition: background 100ms ease;
+}
+
+.task-bujo-jira-dashboard-row:first-child {
+    border-top: none;
+}
+
+.task-bujo-jira-dashboard-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.task-bujo-jira-dashboard-row.is-flagged {
+    border-left: 3px solid var(--text-error);
+    padding-left: 9px;
+}
+
+.task-bujo-jira-dashboard-row-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    grid-row: 1 / span 2;
+    min-width: 80px;
+}
+
+.task-bujo-jira-dashboard-icon {
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.task-bujo-jira-dashboard-key {
+    font-family: var(--font-monospace);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-accent);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.task-bujo-jira-dashboard-key:hover {
+    text-decoration: underline;
+}
+
+.task-bujo-jira-dashboard-summary {
+    min-width: 0;
+}
+
+.task-bujo-jira-dashboard-summary-link {
+    font-size: 13px;
+    color: var(--text-normal);
+    text-decoration: none;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-jira-dashboard-summary-link:hover {
+    color: var(--text-accent);
+    text-decoration: underline;
+}
+
+.task-bujo-jira-dashboard-parent {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-jira-dashboard-parent-key {
+    font-family: var(--font-monospace);
+    font-weight: 600;
+}
+
+.task-bujo-jira-dashboard-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+}
+
+.task-bujo-jira-dashboard-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    white-space: nowrap;
+}
+
+.task-bujo-jira-dashboard-status-new {
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+}
+
+.task-bujo-jira-dashboard-status-indeterminate {
+    background: rgba(64, 128, 255, 0.2);
+    color: var(--text-accent);
+}
+
+.task-bujo-jira-dashboard-status-done {
+    background: rgba(64, 192, 96, 0.18);
+    color: var(--text-success, var(--text-accent));
+}
+
+.task-bujo-jira-dashboard-flagged {
+    background: rgba(255, 64, 64, 0.18);
+    color: var(--text-error);
+    font-weight: 600;
+}
+
+.task-bujo-jira-dashboard-priority-icon {
+    vertical-align: middle;
+}
+
+.task-bujo-jira-dashboard-assignee.is-unassigned {
+    font-style: italic;
+    opacity: 0.7;
+}
+
+.task-bujo-jira-dashboard-due.is-overdue {
+    background: rgba(255, 64, 64, 0.18);
+    color: var(--text-error);
+    font-weight: 600;
+}
+
+.task-bujo-jira-dashboard-sprint.is-active {
+    background: rgba(64, 160, 255, 0.18);
+    color: var(--text-accent);
+}
+
+.task-bujo-jira-dashboard-topic {
+    background: rgba(160, 96, 255, 0.15);
+    color: var(--text-accent);
+    cursor: pointer;
+}
+
+.task-bujo-jira-dashboard-topic:hover {
+    background: rgba(160, 96, 255, 0.28);
+    text-decoration: underline;
+}
+
+.task-bujo-jira-dashboard-label.is-more {
+    opacity: 0.6;
 }

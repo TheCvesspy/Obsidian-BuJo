@@ -2,7 +2,9 @@ import { PluginSettings, Sprint, SprintTopic, TopicStatus, Priority } from '../.
 import { TaskStore } from '../../services/taskStore';
 import { SprintService } from '../../services/sprintService';
 import { SprintTopicService } from '../../services/sprintTopicService';
+import { JiraService } from '../../services/jiraService';
 import { workDaysRemaining, totalWorkDays } from '../../utils/workDayUtils';
+import { renderTopicCard } from './TopicCard';
 
 const COLUMNS: { status: TopicStatus; label: string }[] = [
 	{ status: 'open', label: 'Open' },
@@ -15,12 +17,6 @@ const PRIORITY_ORDER: Record<string, number> = {
 	[Priority.Medium]: 1,
 	[Priority.Low]: 2,
 	[Priority.None]: 3,
-};
-
-const STATUS_TRANSITIONS: Record<TopicStatus, { left: TopicStatus | null; right: TopicStatus | null }> = {
-	'open': { left: null, right: 'in-progress' },
-	'in-progress': { left: 'open', right: 'done' },
-	'done': { left: 'in-progress', right: null },
 };
 
 export class SprintView {
@@ -40,6 +36,7 @@ export class SprintView {
 		private onEditSprint: (sprint: Sprint) => void,
 		private isDragging: { value: boolean },
 		private searchQuery: string = '',
+		private jiraService: JiraService | null = null,
 	) {
 		this.el = container.createDiv({ cls: 'task-bujo-sprint-view' });
 	}
@@ -115,10 +112,14 @@ export class SprintView {
 			const q = this.searchQuery.toLowerCase();
 			filteredTopics = filteredTopics.filter(t =>
 				t.title.toLowerCase().includes(q) ||
-				(t.jira && t.jira.toLowerCase().includes(q)) ||
+				t.jira.some(k => k.toLowerCase().includes(q)) ||
 				t.linkedPages.some(p => p.toLowerCase().includes(q))
 			);
 		}
+
+		// Kick off JIRA prefetch for all keys visible on the board (no-op if module disabled).
+		// Results arrive asynchronously and trigger a re-render via JiraService events.
+		this.prefetchJiraKeys(filteredTopics);
 
 		// Kanban board
 		const board = this.el.createDiv({ cls: 'task-bujo-kanban' });
@@ -194,8 +195,20 @@ export class SprintView {
 		});
 
 		// Render topic cards
+		const jiraLookup = this.makeJiraLookup();
 		for (const topic of topics) {
-			this.renderTopicCard(body, topic);
+			renderTopicCard(body, topic, {
+				draggable: true,
+				isDragging: this.isDragging,
+				onTitleClick: (t) => this.onTopicClick(t),
+				onStatusChange: async (t, newStatus) => {
+					await this.topicService.setTopicStatus(t.filePath, newStatus);
+				},
+				onBlockedToggle: async (t) => {
+					await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
+				},
+				jiraLookup,
+			});
 		}
 
 		// Empty state
@@ -204,105 +217,28 @@ export class SprintView {
 		}
 	}
 
-	private renderTopicCard(container: HTMLElement, topic: SprintTopic): void {
-		const card = container.createDiv({ cls: 'task-bujo-kanban-card' });
-		card.draggable = true;
-		card.dataset.filepath = topic.filePath;
-
-		// Drag events
-		card.addEventListener('dragstart', (e) => {
-			this.isDragging.value = true;
-			card.addClass('task-bujo-kanban-card-dragging');
-			if (e.dataTransfer) {
-				e.dataTransfer.setData('text/plain', topic.filePath);
-				e.dataTransfer.effectAllowed = 'move';
-			}
-		});
-		card.addEventListener('dragend', () => {
-			card.removeClass('task-bujo-kanban-card-dragging');
-			this.isDragging.value = false;
-		});
-
-		// Card header: priority dot + title + blocked badge
-		const headerEl = card.createDiv({ cls: 'task-bujo-kanban-card-header' });
-
-		if (topic.priority !== Priority.None) {
-			const dot = headerEl.createSpan({ cls: 'task-bujo-priority-dot' });
-			dot.addClass(`task-bujo-priority-${topic.priority}`);
+	/** Kick off a prefetch for every JIRA key on every visible topic. No-op if module disabled. */
+	private prefetchJiraKeys(topics: SprintTopic[]): void {
+		if (!this.jiraService || !this.jiraService.isEnabled()) return;
+		const keys: string[] = [];
+		for (const t of topics) {
+			for (const k of t.jira) keys.push(k);
 		}
-
-		const titleEl = headerEl.createSpan({ cls: 'task-bujo-kanban-card-title', text: topic.title });
-		titleEl.addEventListener('click', (e) => {
-			e.stopPropagation();
-			this.onTopicClick(topic);
-		});
-
-		if (topic.blocked) {
-			headerEl.createSpan({ cls: 'task-bujo-kanban-card-blocked', text: 'BLOCKED' });
-		}
-
-		// JIRA ticket
-		if (topic.jira) {
-			card.createDiv({ cls: 'task-bujo-kanban-card-jira', text: topic.jira });
-		}
-
-		// Linked pages
-		if (topic.linkedPages.length > 0) {
-			const linksText = topic.linkedPages.map(p => `[[${p}]]`).join(', ');
-			card.createDiv({ cls: 'task-bujo-kanban-card-links', text: linksText });
-		}
-
-		// Task progress bar
-		if (topic.taskTotal > 0) {
-			const progressDiv = card.createDiv({ cls: 'task-bujo-kanban-card-progress' });
-			const barOuter = progressDiv.createDiv({ cls: 'task-bujo-progress-bar' });
-			const barInner = barOuter.createDiv({ cls: 'task-bujo-progress-fill' });
-			const pct = Math.round((topic.taskDone / topic.taskTotal) * 100);
-			barInner.style.width = `${pct}%`;
-			progressDiv.createSpan({
-				cls: 'task-bujo-progress-text',
-				text: `${topic.taskDone}/${topic.taskTotal} tasks`,
-			});
-		}
-
-		// Action buttons (move left/right)
-		const transitions = STATUS_TRANSITIONS[topic.status];
-		if (transitions.left || transitions.right) {
-			const actionsDiv = card.createDiv({ cls: 'task-bujo-kanban-card-actions' });
-
-			if (transitions.left) {
-				const leftBtn = actionsDiv.createEl('button', { text: '\u2190' });
-				leftBtn.setAttribute('title', `Move to ${this.getColumnLabel(transitions.left)}`);
-				leftBtn.addEventListener('click', async (e) => {
-					e.stopPropagation();
-					await this.topicService.setTopicStatus(topic.filePath, transitions.left!);
-				});
-			}
-
-			if (transitions.right) {
-				const rightBtn = actionsDiv.createEl('button', { text: '\u2192' });
-				rightBtn.setAttribute('title', `Move to ${this.getColumnLabel(transitions.right)}`);
-				rightBtn.addEventListener('click', async (e) => {
-					e.stopPropagation();
-					await this.topicService.setTopicStatus(topic.filePath, transitions.right!);
-				});
-			}
-
-			// Blocked toggle
-			const blockedBtn = actionsDiv.createEl('button', {
-				text: topic.blocked ? '\u26A0 Unblock' : '\u26A0',
-				cls: topic.blocked ? 'task-bujo-kanban-blocked-active' : '',
-			});
-			blockedBtn.setAttribute('title', topic.blocked ? 'Remove blocked flag' : 'Flag as blocked');
-			blockedBtn.addEventListener('click', async (e) => {
-				e.stopPropagation();
-				await this.topicService.setTopicBlocked(topic.filePath, !topic.blocked);
-			});
+		if (keys.length > 0) {
+			// Fire and forget; JiraService emits events when data lands and the view re-renders.
+			void this.jiraService.prefetchMany(keys);
 		}
 	}
 
-	private getColumnLabel(status: TopicStatus): string {
-		return COLUMNS.find(c => c.status === status)?.label ?? status;
+	/** Build a per-key JIRA lookup function for TopicCard. Returns null-ish results when disabled. */
+	private makeJiraLookup() {
+		const svc = this.jiraService;
+		if (!svc || !svc.isEnabled()) return undefined;
+		return (key: string) => ({
+			info: svc.getCached(key),
+			loading: svc.isLoading(key),
+			error: svc.getError(key),
+		});
 	}
 
 	destroy(): void {

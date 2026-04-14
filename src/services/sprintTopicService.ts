@@ -1,5 +1,5 @@
 import { Vault, TFile, TFolder } from 'obsidian';
-import { SprintTopic, TopicStatus, Priority, PluginSettings } from '../types';
+import { SprintTopic, TopicStatus, Priority, PluginSettings, TopicImpact, TopicEffort } from '../types';
 import { parseTopicFile, parseFrontmatter, serializeFrontmatter } from '../parser/topicParser';
 
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
@@ -24,13 +24,18 @@ export class SprintTopicService {
 		return `${this.getTopicsFolderPath()}/${sanitized}.md`;
 	}
 
-	/** Create a new topic file with frontmatter and template sections */
+	/** Create a new topic file with frontmatter and template sections.
+	 *  `jira` may be a single key or a comma-separated list of keys — stored verbatim
+	 *  in the `jira:` frontmatter field; the parser extracts individual keys on read. */
 	async createTopic(
 		title: string,
 		jira: string | null,
 		priority: Priority,
 		linkedPages: string[],
 		sprintId: string,
+		impact: TopicImpact | null = null,
+		effort: TopicEffort | null = null,
+		dueDate: string | null = null,
 	): Promise<SprintTopic> {
 		const filePath = this.getTopicFilePath(title);
 
@@ -40,26 +45,44 @@ export class SprintTopicService {
 			await this.ensureFolderExists(folderPath);
 		}
 
+		// Null-valued keys are omitted by serializeFrontmatter — keeps YAML clean.
+		// sprintHistory mirrors the initial sprint assignment (empty if backlog).
 		const frontmatter = serializeFrontmatter({
 			status: 'open',
-			jira: jira || '',
+			jira: jira || null,
 			priority: priority === Priority.None ? 'none' : priority,
 			blocked: false,
-			sprint: sprintId,
+			sprint: sprintId || null,
 			sortOrder: 999,
+			impact,
+			effort,
+			dueDate,
+			sprintHistory: sprintId || null,
 		});
 
 		const linkedSection = linkedPages.length > 0
 			? linkedPages.map(p => `- [[${p}]]`).join('\n')
 			: '';
 
+		// Frontmatter fields recognized by the plugin:
+		//   status: open | in-progress | done
+		//   priority: none | low | medium | high
+		//   blocked: true | false
+		//   sprint: <sprint-id> (empty for backlog)
+		//   sortOrder: <number> (Kanban column ordering)
+		//   impact: critical | high | medium | low  (Impact/Effort + Eisenhower matrix)
+		//   effort: xs | s | m | l | xl             (Impact/Effort matrix)
+		//   dueDate: YYYY-MM-DD                     (Eisenhower urgency)
+		//   jira: <ticket>
+		//   sprintHistory: <id1>,<id2>,...          (cumulative — every sprint this topic was in)
 		const content = `${frontmatter}\n# ${title}\n\n## Linked Pages\n${linkedSection}\n\n## Tasks\n\n## Notes\n`;
 
 		await this.vault.create(filePath, content);
 		return parseTopicFile(content, filePath);
 	}
 
-	/** Update specific frontmatter fields in a topic file, preserving body content */
+	/** Update specific frontmatter fields in a topic file, preserving body content.
+	 *  Passing `null` for a value removes the key from the frontmatter entirely. */
 	async updateTopicFrontmatter(
 		filePath: string,
 		updates: Partial<Record<string, string | number | boolean | null>>,
@@ -70,16 +93,16 @@ export class SprintTopicService {
 		const content = await this.vault.read(file);
 		const fm = parseFrontmatter(content);
 
-		// Apply updates
+		// Apply updates: null deletes the key, anything else stringifies.
 		for (const [key, value] of Object.entries(updates)) {
 			if (value === null || value === undefined) {
-				fm[key] = '';
+				delete fm[key];
 			} else {
 				fm[key] = String(value);
 			}
 		}
 
-		// Rebuild frontmatter
+		// Rebuild frontmatter (empty-string values are retained — legacy callers rely on that)
 		const fmLines = ['---'];
 		for (const [key, value] of Object.entries(fm)) {
 			fmLines.push(`${key}: ${value}`);
@@ -103,24 +126,79 @@ export class SprintTopicService {
 		await this.updateTopicFrontmatter(filePath, { blocked });
 	}
 
+	/** Set the strategic impact on a topic (null clears the field) */
+	async setTopicImpact(filePath: string, impact: TopicImpact | null): Promise<void> {
+		await this.updateTopicFrontmatter(filePath, { impact });
+	}
+
+	/** Set the effort estimate on a topic (null clears the field) */
+	async setTopicEffort(filePath: string, effort: TopicEffort | null): Promise<void> {
+		await this.updateTopicFrontmatter(filePath, { effort });
+	}
+
+	/** Set the due date on a topic (null clears the field) */
+	async setTopicDueDate(filePath: string, dueDate: string | null): Promise<void> {
+		await this.updateTopicFrontmatter(filePath, { dueDate });
+	}
+
 	/** Update the sort order of a topic within its column */
 	async updateSortOrder(filePath: string, sortOrder: number): Promise<void> {
 		await this.updateTopicFrontmatter(filePath, { sortOrder });
 	}
 
-	/** Carry a topic forward to a new sprint */
+	/** Carry a topic forward to a new sprint (sprint-close flow). Adds to history. */
 	async carryForwardTopic(filePath: string, newSprintId: string): Promise<void> {
-		await this.updateTopicFrontmatter(filePath, { sprint: newSprintId });
+		await this.assignTopicToSprint(filePath, newSprintId);
 	}
 
-	/** Archive a topic (mark done, clear sprint) */
+	/** Move a topic to the backlog (clear sprint assignment). Status and history preserved. */
+	async moveTopicToBacklog(filePath: string): Promise<void> {
+		await this.assignTopicToSprint(filePath, '');
+	}
+
+	/** Assign a topic to a specific sprint (or pass '' to move to backlog).
+	 *  Appends the previous sprint (if any) AND the new sprint to sprintHistory —
+	 *  the old one may be missing on legacy topics that were assigned before history
+	 *  tracking existed, so we defensively capture it here. History is cumulative:
+	 *  moving to backlog does NOT remove anything. */
+	async assignTopicToSprint(filePath: string, sprintId: string): Promise<void> {
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return;
+
+		const content = await this.vault.read(file);
+		const fm = parseFrontmatter(content);
+		const oldSprint = (fm['sprint'] || '').trim();
+		const existing = (fm['sprintHistory'] || '')
+			.split(',')
+			.map(s => s.trim())
+			.filter(Boolean);
+
+		const merged: string[] = [...existing];
+		const seen = new Set(existing);
+		for (const s of [oldSprint, sprintId]) {
+			if (s && !seen.has(s)) {
+				merged.push(s);
+				seen.add(s);
+			}
+		}
+
+		await this.updateTopicFrontmatter(filePath, {
+			sprint: sprintId,
+			sprintHistory: merged.length > 0 ? merged.join(',') : null,
+		});
+	}
+
+	/** Archive a topic (mark done, clear sprint). History is preserved — go through
+	 *  assignTopicToSprint so the departing sprint is captured into sprintHistory. */
 	async archiveTopic(filePath: string): Promise<void> {
-		await this.updateTopicFrontmatter(filePath, { status: 'done', sprint: '' });
+		await this.assignTopicToSprint(filePath, '');
+		await this.updateTopicFrontmatter(filePath, { status: 'done' });
 	}
 
-	/** Cancel a topic (mark done, clear sprint) */
+	/** Cancel a topic (mark done, clear sprint). Same history semantics as archiveTopic. */
 	async cancelTopic(filePath: string): Promise<void> {
-		await this.updateTopicFrontmatter(filePath, { status: 'done', sprint: '' });
+		await this.assignTopicToSprint(filePath, '');
+		await this.updateTopicFrontmatter(filePath, { status: 'done' });
 	}
 
 	/** Get all topics from the topics folder */

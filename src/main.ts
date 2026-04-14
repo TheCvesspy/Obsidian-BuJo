@@ -1,6 +1,6 @@
 import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice } from 'obsidian';
-import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot } from './types';
-import { VIEW_TYPE_TASK_BUJO, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
+import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, BuJoViewMode } from './types';
+import { VIEW_TYPE_TASK_BUJO, VIEW_TYPE_JIRA_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
 import { TaskBuJoSettingTab } from './settings';
 import { VaultScanner } from './services/vaultScanner';
 import { TaskStore } from './services/taskStore';
@@ -14,7 +14,10 @@ import { MonthlyNoteService } from './services/monthlyNoteService';
 import { MonthlyMigrationService } from './services/monthlyMigrationService';
 import { MonthlyAnalyticsService } from './services/monthlyAnalyticsService';
 import { ArchiveService } from './services/archiveService';
+import { JiraService } from './services/jiraService';
+import { JiraDashboardService } from './services/jiraDashboardService';
 import { TaskBuJoView } from './ui/TaskBuJoView';
+import { JiraDashboardView } from './ui/JiraDashboardView';
 import { MigrationModal } from './ui/MigrationModal';
 import { WeeklyReviewModal } from './ui/WeeklyReviewModal';
 import { MonthlyMigrationModal } from './ui/MonthlyMigrationModal';
@@ -40,6 +43,8 @@ export default class TaskBuJoPlugin extends Plugin {
 	private monthlyMigrationService: MonthlyMigrationService;
 	private monthlyAnalyticsService: MonthlyAnalyticsService;
 	private archiveService: ArchiveService;
+	jiraService: JiraService;
+	jiraDashboardService: JiraDashboardService;
 	private statusBarEl: HTMLElement;
 
 	async onload(): Promise<void> {
@@ -51,6 +56,14 @@ export default class TaskBuJoPlugin extends Plugin {
 		this.data.lastWeeklyReviewWeek = this.data.lastWeeklyReviewWeek ?? null;
 		this.data.lastMonthlyMigrationMonth = this.data.lastMonthlyMigrationMonth ?? null;
 		this.data.monthlyHistory = this.data.monthlyHistory ?? [];
+
+		// Migrate removed view modes: Eisenhower and ImpactEffort (task-level) were repurposed
+		// for Topics. Rewrite stale defaultViewMode values so users don't land on a missing case.
+		const staleModes = ['eisenhower', 'impactEffort'];
+		if (staleModes.includes(this.data.settings.defaultViewMode as string)) {
+			this.data.settings.defaultViewMode = BuJoViewMode.Topics;
+		}
+
 		this.settings = this.data.settings;
 
 		this.store = new TaskStore();
@@ -84,6 +97,8 @@ export default class TaskBuJoPlugin extends Plugin {
 			() => this.data,
 		);
 		this.archiveService = new ArchiveService(this.app.vault, this.store, () => this.settings);
+		this.jiraService = new JiraService(() => this.settings);
+		this.jiraDashboardService = new JiraDashboardService(() => this.settings);
 
 		this.scanner.onChange(() => {
 			this.store.setTasks(this.scanner.getAllTasks());
@@ -101,6 +116,7 @@ export default class TaskBuJoPlugin extends Plugin {
 				this.sprintTopicService, this.scanner,
 				this.migrationService, this.analyticsService,
 				this.monthlyAnalyticsService, this.monthlyNoteService,
+				this.jiraService,
 				this.settings,
 				() => this.data,
 				(snapshot) => this.saveWeeklySnapshot(snapshot),
@@ -108,10 +124,24 @@ export default class TaskBuJoPlugin extends Plugin {
 			)
 		);
 
+		this.registerView(VIEW_TYPE_JIRA_DASHBOARD, (leaf) =>
+			new JiraDashboardView(
+				leaf,
+				this.jiraDashboardService,
+				() => this.settings,
+				// Sticky UI-state saves (collapsed sections) must not trigger the
+				// cache-invalidation side effect that saveSettings() runs, or every
+				// section toggle would wipe the dashboard result set.
+				() => this.saveData(this.data),
+				() => this.scanner.getAllTopics(),
+			)
+		);
+
 		const refs = this.scanner.registerEvents();
 		refs.forEach(ref => this.registerEvent(ref));
 
 		this.addRibbonIcon('check-square', 'Open BuJo', () => this.activateView());
+		this.addRibbonIcon('layout-dashboard', 'Open JIRA Dashboard', () => this.activateJiraDashboard());
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.setText('BuJo ...');
@@ -126,6 +156,18 @@ export default class TaskBuJoPlugin extends Plugin {
 			id: 'open-bujo-new-tab',
 			name: 'Open in New Tab',
 			callback: () => this.activateView(true),
+		});
+
+		this.addCommand({
+			id: 'open-jira-dashboard',
+			name: 'Open JIRA Dashboard',
+			callback: () => this.activateJiraDashboard(),
+		});
+
+		this.addCommand({
+			id: 'refresh-jira-dashboard',
+			name: 'Refresh JIRA Dashboard',
+			callback: () => this.jiraDashboardService.refresh(),
 		});
 
 		this.addCommand({
@@ -184,7 +226,7 @@ export default class TaskBuJoPlugin extends Plugin {
 			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 't' }],
 			callback: () => {
 				new InsertTaskModal(this.app, async (result) => {
-					const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
+					const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
 
 					// Try to insert at active editor cursor
 					const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -212,7 +254,7 @@ export default class TaskBuJoPlugin extends Plugin {
 						.setIcon('check-square')
 						.onClick(() => {
 							new InsertTaskModal(this.app, (result) => {
-								const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
+								const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
 								const cursor = editor.getCursor();
 								editor.replaceRange(block + '\n', { line: cursor.line + 1, ch: 0 });
 								const insertedLines = block.split('\n').length;
@@ -310,6 +352,19 @@ export default class TaskBuJoPlugin extends Plugin {
 		if (leaf) workspace.revealLeaf(leaf);
 	}
 
+	async activateJiraDashboard(): Promise<void> {
+		const { workspace } = this.app;
+		let leaf: WorkspaceLeaf | null = null;
+		const leaves = workspace.getLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
+		if (leaves.length > 0) {
+			leaf = leaves[0];
+		} else {
+			leaf = workspace.getLeaf(true);
+			if (leaf) await leaf.setViewState({ type: VIEW_TYPE_JIRA_DASHBOARD, active: true });
+		}
+		if (leaf) workspace.revealLeaf(leaf);
+	}
+
 	private checkMigration(): void {
 		if (this.settings.migrationPromptOnStartup && this.migrationService.needsMigration()) {
 			this.showMigrationModal();
@@ -376,6 +431,10 @@ export default class TaskBuJoPlugin extends Plugin {
 			await this.scanner.fullScan();
 			this.store.setTasks(this.scanner.getAllTasks());
 		}
+		// JIRA cache is keyed by URL/token, so any settings save could have invalidated it.
+		// Cheap to clear; worst case views re-fetch the next time they render.
+		this.jiraService?.clearCache();
+		this.jiraDashboardService?.clearCache();
 		this.updateStatusBar();
 	}
 
@@ -431,6 +490,7 @@ export default class TaskBuJoPlugin extends Plugin {
 
 	onunload(): void {
 		this.app.workspace.detachLeavesOfType(VIEW_TYPE_TASK_BUJO);
+		this.app.workspace.detachLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
 		this.scanner.destroy();
 	}
 }

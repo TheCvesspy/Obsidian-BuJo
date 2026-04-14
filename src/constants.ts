@@ -1,4 +1,5 @@
 export const VIEW_TYPE_TASK_BUJO = 'task-bujo-view';
+export const VIEW_TYPE_JIRA_DASHBOARD = 'task-bujo-jira-dashboard';
 
 /** Regex to match a checkbox line: - [ ] text, - [x] text, - [>] text, etc. */
 export const CHECKBOX_REGEX = /^(\s*)-\s*\[([ x><!-])\]\s+(.*)$/i;
@@ -23,9 +24,6 @@ export const WORK_TYPE_REGEX = /#(?:work|w)\/(\S+)/i;
 
 /** Regex to match purpose tags: #purpose/name or #p/CODE */
 export const PURPOSE_REGEX = /#(?:purpose|p)\/(\S+)/i;
-
-/** Regex to match effort tags: #effort/S, #effort/M, #effort/L */
-export const EFFORT_REGEX = /#effort\/(S|M|L)/i;
 
 /** Debounce delay for vault file change events (ms) */
 export const SCAN_DEBOUNCE_MS = 300;

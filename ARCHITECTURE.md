@@ -25,6 +25,9 @@
 12. [Performance Optimizations](#12-performance-optimizations)
 13. [Constants Reference](#13-constants-reference)
 14. [Build & Release](#14-build--release)
+15. [Topics & Sprint Prioritization](#15-topics--sprint-prioritization)
+16. [JIRA Integration (Optional Module)](#16-jira-integration-optional-module)
+17. [JIRA Dashboard (read-only personal dashboard)](#17-jira-dashboard-read-only-personal-dashboard)
 
 ---
 
@@ -74,8 +77,9 @@
   - `onunload()`: detaches views, destroys scanner
 
 #### `src/types.ts` (~210 lines) — Type Definitions & Defaults
-- **Enums**: `TaskStatus`, `ItemCategory`, `Priority`, `GroupMode`, `BuJoViewMode` (includes `Calendar`, `Eisenhower`, `ImpactEffort`)
-- **Interfaces**: `TaskItem` (includes `description`, `effort` fields), `Sprint`, `TagCategory`, `PluginSettings` (includes archive settings, `urgencyThresholdDays`), `WeeklySnapshot`, `PluginData`
+- **Enums**: `TaskStatus`, `ItemCategory`, `Priority`, `GroupMode`, `BuJoViewMode` (includes `Calendar`, `Topics`). The old task-level `Eisenhower` / `ImpactEffort` modes were removed — those matrices now apply to Topics.
+- **Interfaces**: `TaskItem` (includes `description`), `Sprint`, `SprintTopic` (includes `impact`, `effort`, `dueDate`, `sprintHistory[]`), `TagCategory`, `PluginSettings` (includes archive settings, `urgencyThresholdDays` — now used by the Topic Eisenhower sub-mode), `WeeklySnapshot`, `PluginData`
+- **Type aliases**: `TopicImpact = 'critical' | 'high' | 'medium' | 'low'`, `TopicEffort = 'xs' | 's' | 'm' | 'l' | 'xl'`
 - **Type aliases**: `FolderState`, `StoreEventType`, `StoreEventCallback`
 - **Constants**: `DEFAULT_WORK_TYPES`, `DEFAULT_PURPOSES`, `DEFAULT_SETTINGS`, `DEFAULT_PLUGIN_DATA`
 
@@ -163,6 +167,21 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 - CRUD for sprints, auto-creates next if `autoStartNextSprint` is enabled
 - Sprint IDs: `sprint-{Date.now()}`
 
+#### `sprintTopicService.ts` (~230 lines) — Topic CRUD & Frontmatter
+- **Class**: `SprintTopicService`
+- CRUD for topic files in `{sprintTopicsPath}/` + frontmatter field setters
+- Key methods: `createTopic(title, jira, priority, linkedPages, sprintId, impact?, effort?, dueDate?)`, `setTopicStatus`, `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `updateSortOrder`
+- **Central sprint-change helper**: `assignTopicToSprint(filePath, sprintId)` — reads current `sprint` + `sprintHistory`, merges old+new into history, writes atomically. Every sprint-change path routes through this (including `moveTopicToBacklog`, `carryForwardTopic`, `archiveTopic`, `cancelTopic`) so history is never lost
+- `updateTopicFrontmatter(filePath, updates)` — generic updater; `null` deletes the key, everything else stringifies
+- See §15 for full schema and prioritization semantics
+
+#### `src/parser/topicParser.ts` (~150 lines) — Topic Frontmatter Parser
+- **Exports**: `parseTopicFile(content, filePath) → SprintTopic`, `parseFrontmatter(content)`, `serializeFrontmatter(fields)`
+- Tolerates missing optional keys (`impact`, `effort`, `dueDate`, `sprintHistory`) → `null` / `[]`
+- Validates enum-like keys against allowed values; unknown strings parse to `null`
+- `serializeFrontmatter` **omits** keys whose value is `null`/`undefined` (keeps YAML tidy)
+- `sprintHistory` stored as comma-separated IDs; when empty but `sprint` is set, parser returns `[sprintId]` as an in-memory backfill for legacy topics
+
 #### `archiveService.ts` (~170 lines) — Task Archiving
 - **Class**: `ArchiveService`
 - **Method**: `archiveCompleted()` → `Promise<ArchiveResult>` — archives all Done/Cancelled tasks
@@ -198,9 +217,15 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 - "Save Snapshot & Close" persists to `PluginData`
 
 #### `InsertTaskModal.ts` (~170 lines) — Quick Create Task Modal (Editor)
-- Fields: text, priority, effort (S/M/L), date picker, type tag, work type, purpose, description (textarea)
+- Fields: text, priority, date picker, type tag, work type, purpose, description (textarea)
 - **Exported**: `buildTaskLine()` — constructs markdown checkbox line; `buildTaskBlock()` — task line + indented description lines
 - **Interface**: `InsertTaskResult` — typed result object passed to callback
+
+#### `SprintTopicModal.ts` (~260 lines) — Create/Edit Topic Modal
+- Fields: title, JIRA, **Sprint** dropdown (`(Backlog)` + all sprints), priority, impact (critical/high/medium/low), effort (xs/s/m/l/xl), due date, linked pages (fuzzy page picker)
+- **Sprint history** panel (edit mode only) — read-only list of every sprint the topic has been assigned to, with name + date range. Current sprint is accent-highlighted
+- Sprint changes route through `SprintTopicService.assignTopicToSprint` so `sprintHistory` captures old + new sprint atomically
+- Takes optional `SprintService` ref — when omitted, Sprint picker and history panel are hidden (safe for legacy callers)
 
 #### `DueDateModal.ts` (~61 lines) — Due Date Picker Modal
 - Date input with Set/Remove buttons, Enter key support
@@ -219,19 +244,19 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 | `DailyView.ts` | ~92 | 4 sections: Overdue / Carried Over / Due Today / Unscheduled |
 | `WeeklyView.ts` | ~86 | 7-day calendar (Mon–Sun) with per-day progress bars |
 | `CalendarView.ts` | ~190 | Month grid with day cells, priority-colored task dots, click-to-expand detail panel |
-| `SprintView.ts` | ~112 | Active sprint header, progress bar, grouped tasks |
+| `SprintView.ts` | ~215 | Active sprint Kanban (Open/In Progress/Done columns) with drag-and-drop. Delegates card rendering to `TopicCard` |
+| `TopicsOverviewView.ts` | ~410 | Top-level Topics tab: scope-filtered list of all topics with three sub-modes (List, Impact/Effort, Eisenhower). Drag-and-drop between Backlog ↔ status sections in List mode |
+| `TopicCard.ts` | ~145 | Shared topic card renderer used by both `SprintView` and `TopicsOverviewView`. Options: draggable, click handlers, matrix-metadata chip row |
 | `OpenPointsView.ts` | ~65 | Open points grouped by page + uncategorized section |
 | `OverdueView.ts` | ~56 | Overdue tasks with configurable grouping |
-| `EisenhowerView.ts` | ~115 | 2×2 Eisenhower matrix (Do Now/Plan Deep Work/Coordinate/Batch Later) |
-| `ImpactEffortView.ts` | ~150 | 2×2 Impact×Effort matrix (Quick Wins/Big Bets/Fill-ins/Time Sinks) with urgency badges |
 | `AnalyticsView.ts` | ~147 | Summary cards, bar charts, 8-week trend table |
 | `TaskList.ts` | ~49 | Renders `Map<string, TaskItem[]>` with `GroupHeader` + `TaskItemRow` |
 | `TaskItemRow.ts` | ~120 | Checkbox + status marker + priority dot + text + description toggle + due badge + source link |
 | `Toolbar.ts` | ~87 | Search input (debounced) + group mode buttons |
-| `ViewSwitcher.ts` | ~57 | 10-tab bar |
+| `ViewSwitcher.ts` | ~57 | 9-tab bar (Daily / Weekly / Monthly / Calendar / Sprint / Topics / Overdue / Overview / Analytics) |
 | `GroupHeader.ts` | ~69 | Collapsible header with chevron, label, count badge |
 | `AddTaskBar.ts` | ~130 | Inline quick-add form (text + priority + date) |
-| `SyntaxReference.ts` | ~90 | Modal with full syntax table, NL date examples, work types, purposes, effort tags |
+| `SyntaxReference.ts` | ~90 | Modal with full syntax table, NL date examples, work types, purposes |
 
 ### Utility Layer (`src/utils/`)
 
@@ -308,7 +333,7 @@ Markdown Files in Vault
 | `weekStartDay` | `number` | `1` (Monday) | First day of week (0=Sun…6=Sat) |
 | `archiveFolderPath` | `string` | `'BuJo/Archive'` | Folder for archived completed tasks |
 | `archiveGroupBy` | `'month' \| 'source'` | `'month'` | How archived tasks are grouped into files |
-| `urgencyThresholdDays` | `number` | `2` | Days before due date to consider "urgent" in Eisenhower view |
+| `urgencyThresholdDays` | `number` | `2` | Days before due date to consider "urgent" in the Topics → Eisenhower sub-mode |
 
 ### Default Work Types
 | Name | Short Code |
@@ -369,11 +394,10 @@ Markdown Files in Vault
 | **Weekly** | `BuJoViewMode.Weekly` | 7-day calendar (Mon–Sun) with per-day task lists and progress bars (done/total %). |
 | **Monthly** | `BuJoViewMode.Monthly` | Goals progress, stats cards, month navigation, trends table, save snapshot. |
 | **Calendar** | `BuJoViewMode.Calendar` | Month grid with priority-colored task dots per day. Click a day to expand task detail below. Today highlighting. Month navigation + "Today" button. Respects `weekStartDay` setting. |
-| **Sprint** | `BuJoViewMode.Sprint` | Active sprint header (name, dates, days remaining), Kanban board (Open/In Progress/Done), drag-and-drop. |
+| **Sprint** | `BuJoViewMode.Sprint` | Active sprint header (name, dates, days remaining), Kanban board (Open/In Progress/Done), drag-and-drop. Cards rendered via shared `TopicCard`. |
+| **Topics** | `BuJoViewMode.Topics` | Top-level Topic browser across **all** sprints and backlog. Scope chips: All / Active sprint / Backlog / Archived. Three sub-modes: **List** (grouped by Backlog + Open/In Progress/Done, drag-and-drop between sections), **Impact/Effort** (Quick Wins / Big Bets / Fill-ins / Time Sinks + Inbox), **Eisenhower** (Do Now / Plan Deep Work / Coordinate / Batch Later + Unscheduled). See §15. |
 | **Overdue** | `BuJoViewMode.Overdue` | Open tasks with past due dates. Supports all group modes. |
 | **Overview** | `BuJoViewMode.Overview` | All Tasks + Open Points sub-tabs, grouped by mode. |
-| **Eisenhower** | `BuJoViewMode.Eisenhower` | 2×2 Eisenhower matrix for daily triage. Urgency = overdue or due within configurable `urgencyThresholdDays` (default 2). Importance = High/Medium priority. Tasks without due dates shown in Inbox. Quadrants: Do Now (urgent+important), Plan Deep Work (important), Coordinate (urgent), Batch Later (neither). |
-| **Impact/Effort** | `BuJoViewMode.ImpactEffort` | 2×2 Impact×Effort matrix for strategic planning. Requires `#effort/S\|M\|L` tag. Impact auto-calculated from priority weight + purpose weight. Quadrants: Quick Wins (high impact + small effort), Big Bets (high impact + med/large effort), Fill-ins (low impact + small effort), Time Sinks (low impact + med/large effort). Inbox for unestimated tasks. Urgency badges (overdue/due this week) overlay on tasks. |
 | **Analytics** | `BuJoViewMode.Analytics` | Summary cards, work type/purpose bar charts, 8-week trend table + chart. |
 
 **Grouping** (Sprint, Overdue & Overview views only): By Page / By Priority / By Due Date
@@ -403,8 +427,9 @@ Markdown Files in Vault
 | `@due {natural}` | `@due tomorrow`, `@due next friday`, `@due in 3 days` | Natural language due date |
 | `#work/{name}` or `#w/{code}` | `#w/DW` | Work type tag |
 | `#purpose/{name}` or `#p/{code}` | `#p/D` | Purpose tag |
-| `#effort/{size}` | `#effort/S`, `#effort/M`, `#effort/L` | Effort estimate (Small/Medium/Large) for Impact×Effort matrix |
 | `(from [[PageName]])` | `(from [[2026-03-15]])` | Migration source (auto-generated) |
+
+> **Note**: The task-level `#effort/S|M|L` tag was removed when the Impact/Effort matrix was moved off tasks onto topics. Existing tags in user files become plain text. Effort estimation now lives on topic frontmatter (`effort: xs|s|m|l|xl`) — see §15.
 
 ### Natural Language Date Formats
 
@@ -679,7 +704,239 @@ node release.mjs [major|minor|patch]
 - Copies `main.js`, `styles.css`, `manifest.json` to `_release/`
 
 ### Styles
-`styles.css` (~1,500 lines) uses Obsidian CSS variables (`var(--text-muted)`, `var(--background-modifier-border)`, etc.) for full theme compatibility. All components are styled with `.task-bujo-*` class prefix. Includes dedicated sections for Calendar grid, Eisenhower matrix, Impact×Effort matrix, and task description toggles.
+`styles.css` (~1,700 lines) uses Obsidian CSS variables (`var(--text-muted)`, `var(--background-modifier-border)`, etc.) for full theme compatibility. All components are styled with `.task-bujo-*` class prefix. Includes dedicated sections for Calendar grid, Topic matrices (`.task-bujo-topicmx-*` — both Impact/Effort and Eisenhower share the quadrant layout), Topics list view with drop-zone highlighting (`.task-bujo-topics-list-*`), sprint-history chips (`.task-bujo-topic-sprint-history-*`), and task description toggles.
+
+---
+
+## 15. Topics & Sprint Prioritization
+
+Topics are the strategic layer above individual tasks: each topic is a markdown file in `{sprintTopicsPath}/` (default `BuJo/Sprints/Topics/`) with YAML frontmatter and sections for linked pages, tasks, and notes. A topic can be assigned to a sprint or left in the **Backlog**; it can also carry Impact/Effort/Due-Date metadata used by the two prioritization matrices.
+
+### Frontmatter schema
+
+| Key | Type | Required | Notes |
+|-----|------|----------|-------|
+| `status` | `open \| in-progress \| done` | yes | Column in the Sprint Kanban and the Topics List sub-mode |
+| `priority` | `none \| low \| medium \| high` | yes | Priority dot; used as Eisenhower fallback when `impact` is unset |
+| `blocked` | `true \| false` | yes | Renders a BLOCKED badge on the card; auto-cleared when moved to Done |
+| `sprint` | sprint ID or empty | yes | Empty = Backlog. Every `sprint-close`, `carryForward`, `archive`, `cancel`, and drag-drop routes through `SprintTopicService.assignTopicToSprint` |
+| `sortOrder` | number | yes | Manual Kanban column ordering (default `999` = end) |
+| `impact` | `critical \| high \| medium \| low` | no | Strategic weight. Drives Impact/Effort quadrant (High = {critical, high}) and Eisenhower importance |
+| `effort` | `xs \| s \| m \| l \| xl` | no | Size estimate. Drives Impact/Effort quadrant (Small = {xs, s}) |
+| `dueDate` | `YYYY-MM-DD` | no | Eisenhower urgency signal — urgent when within `urgencyThresholdDays` |
+| `jira` | string | no | Displayed as ticket chip on the card |
+| `sprintHistory` | comma-separated IDs | no | Append-only log of every sprint this topic has been assigned to |
+
+Missing optional keys parse to `null` / `[]`. The serializer **omits null-valued keys** so topics with no matrix metadata keep a clean YAML header.
+
+### Topics tab sub-modes
+
+- **List** — sections: Backlog (no sprint) + Open / In Progress / Done. Empty Backlog is hidden when the scope filter is "Active sprint". Drag-and-drop:
+  - Drop onto a status section → `setTopicStatus`. If dragged from Backlog, also `assignTopicToSprint(active)` first.
+  - Drop onto Backlog → `moveTopicToBacklog` (clears `sprint`, preserves status).
+  - Blocked → Done auto-clears the blocked flag.
+  - If no active sprint exists when moving out of Backlog, a Notice explains and nothing is written.
+- **Impact / Effort** — 2×2 grid. Quadrant assignment:
+  - `highImpact = impact ∈ {critical, high}`, `smallEffort = effort ∈ {xs, s}`
+  - Quick Wins (high + small), Big Bets (high + med/large), Fill-ins (low + small), Time Sinks (low + med/large)
+  - Topics missing either field land in an **Inbox** below the grid.
+- **Eisenhower** — 2×2 grid using `dueDate` for urgency and (`impact` ?? fallback to `priority`) for importance:
+  - urgent = due within `urgencyThresholdDays`
+  - important = `impact ∈ {critical, high}` if `impact` is set, else `priority ∈ {high, medium}`
+  - Topics without `dueDate` go to an **Unscheduled** bucket.
+
+### Scope filter
+
+Chip row in the Topics header scopes every sub-mode:
+
+| Chip | Predicate |
+|------|-----------|
+| All | (everything) |
+| Active sprint | `sprintId === activeSprint.id` |
+| Backlog | `!sprintId` |
+| Archived | `status === 'done' && !sprintId` |
+
+### Sprint history
+
+`sprintHistory` is a cumulative list of every sprint a topic has been assigned to, in insertion order. All write paths that change the `sprint` frontmatter field go through **one helper** (`SprintTopicService.assignTopicToSprint`) that:
+
+1. Reads the current `sprint` and `sprintHistory` from frontmatter.
+2. Merges both the departing sprint (from step 1) and the new `sprintId` into history, de-duplicating.
+3. Writes `sprint` + `sprintHistory` atomically via `updateTopicFrontmatter`.
+
+This means moving a topic Backlog → Sprint A → Backlog → Sprint B produces `sprintHistory: A,B` — nothing is lost on backlog passes. `archiveTopic` and `cancelTopic` go through the same helper before setting `status: done`, so sprint membership is preserved on archival.
+
+**Legacy topics** (frontmatter has `sprint: X` but no `sprintHistory`): the parser synthesizes `[X]` in memory so the current sprint still shows in the modal's history panel. Persisted history remains empty until the next reassignment, at which point the departing sprint is captured automatically. Historical sprints before tracking began are not reconstructed — this is expected.
+
+### Service API surface (`SprintTopicService`)
+
+| Method | What it writes |
+|--------|----------------|
+| `createTopic(…, sprintId, impact, effort, dueDate)` | Creates file with full frontmatter; `sprintHistory` seeded to `sprintId` when non-empty |
+| `setTopicStatus`, `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `updateSortOrder` | Single-field setters — pass `null` to clear optional fields |
+| `assignTopicToSprint(filePath, sprintId)` | **Canonical sprint-change entrypoint.** Handles history merge. `''` moves to Backlog |
+| `moveTopicToBacklog(filePath)` | Thin wrapper over `assignTopicToSprint(filePath, '')` |
+| `carryForwardTopic(filePath, newSprintId)` | Sprint-close flow — delegates to `assignTopicToSprint` |
+| `archiveTopic`, `cancelTopic` | `assignTopicToSprint('')` then `setTopicStatus('done')` — history preserved |
+| `updateTopicFrontmatter(filePath, updates)` | Generic updater. `null`/`undefined` values **delete** the key; everything else stringifies |
+
+### Settings migration
+
+`main.ts` rewrites any persisted `defaultViewMode` of `'eisenhower'` or `'impactEffort'` (the pre-refactor task-level modes) to `BuJoViewMode.Topics` on load, so users who had those pinned land on the replacement view instead of hitting a missing switch case.
+
+---
+
+## 16. JIRA Integration (Optional Module)
+
+An optional module that enriches topics with live status and assignee data from a configured JIRA Cloud instance. Fully gated by `settings.jiraEnabled` — when off, no fetches happen and no JIRA UI is rendered.
+
+### Module boundary
+
+- **Entry point**: `src/services/jiraService.ts` (`JiraService`). A single instance owned by the plugin, constructed with a `getSettings` callback so it always reads live config.
+- **Everything is in-memory** — issue data is never persisted. The cache is wiped on any `saveSettings()` call (URL/token may have changed).
+- **Views never talk to the JIRA API directly** — they call `jiraService.prefetchMany()` on render and read back `getCached(key)` / `isLoading(key)` / `getError(key)` synchronously. Updates arrive via the service's event bus.
+
+### Settings fields (in `PluginSettings`)
+
+| Field | Default | Description |
+|---|---|---|
+| `jiraEnabled` | `false` | Master switch. When false, every method on `JiraService` is a no-op. |
+| `jiraBaseUrl` | `''` | Atlassian Cloud URL, e.g. `https://mycompany.atlassian.net` (no trailing slash). |
+| `jiraEmail` | `''` | Atlassian account email (Basic-auth username). |
+| `jiraApiToken` | `''` | Personal API token (password-masked in settings, plain text on disk). |
+| `jiraCacheTtlMinutes` | `10` | How long to keep fetched issue data before re-hitting the API. |
+
+`JiraService.isEnabled()` returns true only when the toggle is on **and** all three credential fields are non-empty.
+
+### Fetch lifecycle
+
+1. A view renders, calls `jiraService.prefetchMany(keys)` for every visible topic's `jira` frontmatter value.
+2. `extractIssueKey()` pulls the first `[A-Z][A-Z0-9]+-\d+` match — the `jira:` field can be a bare key, a full URL, or any text containing a key.
+3. For each new/stale key, a `GET /rest/api/3/issue/{key}?fields=summary,status,assignee` is fired via Obsidian's `requestUrl()` (bypasses CORS). `throw: false` lets non-2xx responses surface as structured `{kind: 'error'}` cache entries instead of uncaught rejections.
+4. In-flight requests are tracked in an `inFlight: Map<key, Promise>` so simultaneous calls for the same key share one network round-trip.
+5. On completion (success, HTTP error, or thrown exception), the cache entry transitions to `fresh` / `error`, the monotonic `version` counter bumps, and registered listeners are notified.
+
+### View integration
+
+`SprintView` and `TopicsOverviewView` both receive a nullable `JiraService` through their constructor. Each defines two helpers:
+
+- `prefetchJiraKeys(topics)` — called once per render, no-op when disabled.
+- `jiraOptsFor(topic)` — returns `{ jiraInfo, jiraLoading, jiraError }` spread into `TopicCard` options.
+
+`TaskBuJoView.refresh()` folds `jiraService.version` into the render fingerprint, so JIRA-only cache mutations (fresh fetches, TTL expiry, clears on settings save) actually trigger a rebuild. The view subscribes to `JiraService.on()` in `onOpen()` and unsubscribes in `onClose()` — both are debounced through the same `scheduleRefresh` path the task store uses.
+
+### TopicCard rendering
+
+When `opts.jiraInfo` is provided, `TopicCard` renders a horizontal row containing:
+
+- The **issue key** (clickable — opens `info.issueUrl` via `window.open()` in a new tab).
+- A **status chip** with a class derived from `info.statusCategory` (`new` → grey, `indeterminate` → blue, `done` → green, `unknown` → muted).
+- An **assignee chip** (`info.assignee ?? 'Unassigned'`).
+
+Below the row, the issue **summary** is shown as a one-line muted subtitle (ellipsised on overflow).
+
+While a fetch is pending, a subtle `…` chip appears. On the last-fetch error, a red `!` chip appears; the error message is in the chip's `title` attribute.
+
+### Security posture
+
+- The API token is stored in the plugin's `data.json`, the same location as every other vault-scoped setting. There is no at-rest encryption — the password-masked input exists only to prevent over-the-shoulder leaks during editing.
+- `btoa(email:token)` is used for Basic auth (Electron/Chromium provides it natively). No third-party HTTP libraries are pulled in.
+- No vault data or topic contents are ever sent to JIRA — the integration is strictly a one-way read of public-to-you issue metadata.
+
+### Self-test
+
+The settings tab includes a `Test connection` button that calls `jiraService.testConnection()`, which hits `GET /rest/api/3/myself`. Result surfaces as a `Notice` (display name on success, HTTP status or exception message on failure) — no view-state side effects.
+
+### Disabling the module
+
+Turning `jiraEnabled` off immediately:
+- Causes every `JiraService` method to return null/false on the next call.
+- Hides the chip row on the next `TopicCard` render (the `jiraInfo` lookup short-circuits to `{}`).
+- The cache is cleared at the moment `saveSettings()` runs, freeing whatever issue data was held.
+
+The topic's `jira:` frontmatter value itself is **never touched** — disabling the module just stops the enrichment. Re-enabling restores live data on the next render.
+
+### Multi-key topics (many-to-many link with JIRA)
+
+`SprintTopic.jira` is `string[]` on the model. The topic frontmatter accepts either a single key (`jira: PROJ-1`) or a comma-separated list (`jira: PROJ-1, PROJ-2`). `topicParser.ts` runs a global `[A-Z][A-Z0-9]+-\d+/g` regex against the raw value, deduplicating and preserving insertion order — so legacy single-key topics parse transparently into a one-element array.
+
+`TopicCard` renders one JIRA row per element in `topic.jira[]`. Each row has its own cached state (fresh / loading / error), fetched independently by `prefetchMany()`. The **inverse direction** — one JIRA issue appearing under many topics — is exploited by the JIRA Dashboard (§17) via a forward index built from `scanner.getAllTopics()`.
+
+---
+
+## 17. JIRA Dashboard (read-only personal dashboard)
+
+A separate workspace view — distinct from the BuJo tab — that surfaces the user's active JIRA work without leaving Obsidian. Read-only: clicking a row opens the issue in the default browser; clicking a topic chip opens the topic file in the current leaf. Never writes to JIRA, never writes the dashboard result to disk.
+
+### Module boundary
+
+- **Entry points**: `src/services/jiraDashboardService.ts` (`JiraDashboardService`) and `src/ui/JiraDashboardView.ts` (`JiraDashboardView`).
+- Registered as a separate `ItemView` (`VIEW_TYPE_JIRA_DASHBOARD`) with its own ribbon icon (`layout-dashboard`) and commands (`Open JIRA Dashboard`, `Refresh JIRA Dashboard`).
+- Shares credentials with `JiraService` via `PluginSettings`, but keeps its own cache (a single result set, not a per-key map) and its own event bus.
+
+### Settings fields (in `PluginSettings`)
+
+| Field | Default | Description |
+|---|---|---|
+| `jiraDashboardProjects` | `[]` | Project keys scoping the JQL. Empty = all visible projects. |
+| `jiraDashboardTtlMinutes` | `10` | Separate from per-issue TTL. Drives visibility-aware auto-refresh. |
+| `jiraSprintFieldId` | `'customfield_10020'` | Custom field ID for JIRA's Sprint field. Varies per instance. |
+| `jiraDashboardCollapsedSections` | `{}` | Per-section sticky collapsed state, keyed by section id. |
+
+### Fetch lifecycle
+
+1. `JiraDashboardService.refresh()` fires a single `POST /rest/api/3/search` with `maxResults: 100`.
+2. The JQL is built from live settings:
+   ```
+   (assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser())
+   [AND project in ("PROJ", "DEV")]
+   AND (resolution = Unresolved OR resolutiondate >= -7d)
+   ORDER BY updated DESC
+   ```
+3. Response is parsed into `JiraDashboardIssue[]` (see `types.ts`). The parser tolerates the sprint field being an array of objects **or** legacy comma-strings (`name=Sprint 12,state=ACTIVE,…`) — newer Cloud instances ship objects, older ones ship strings. Flagged detection reads `customfield_10021` (standard on Cloud) or a raw `flagged` field.
+4. In-flight dedup: a concurrent `refresh()` returns the same promise.
+5. On completion, the service transitions state (`empty` → `loading` → `fresh`/`error`), bumps its `version` counter, and notifies listeners.
+
+Cache is cleared on every `saveSettings()` call — URL/token/projects may have changed.
+
+### View layout
+
+- **Header**: title · refresh button · `Refreshed Xm ago [· stale]` timestamp · live text-filter input (200ms debounce).
+- **Sections** (each issue falls into exactly one, in declaration order):
+  1. **Blocked / Flagged** — `issue.flagged === true`.
+  2. **In Progress** — `statusCategory === 'indeterminate'`.
+  3. **In Current Sprint** — `sprintActive === true`.
+  4. **Reported by Me** — leftover bucket (everything else not yet placed). Hidden when empty.
+  5. **Recently Done** — `statusCategory === 'done'`.
+- Within each bucket: flagged first, then priority rank (Highest → Lowest → unknown), then due date asc, then `updatedAt` desc.
+- **Sticky collapse state** per section, persisted in `jiraDashboardCollapsedSections`. `Reported by Me` and `Recently Done` default to collapsed on first open.
+
+### Row rendering
+
+Each `JiraDashboardIssue` becomes a compact two-row grid:
+- **Left column**: issue-type icon (16×16) + key (clickable → browser).
+- **Right column, row 1**: summary (clickable → browser), with optional parent line below (`↑ PROJ-100 — epic summary`).
+- **Right column, row 2**: chip row — status, priority (with icon), flagged badge, assignee, due date (red when overdue), sprint name (accent when active), `⏱ Xh spent / Yh left`, first 5 labels, `+N` for the rest, then `↔ Topic` chips (one per topic that references this issue).
+
+### Topic-link forward index
+
+On every `renderContent()`, the view builds a one-pass `Map<issueKey, SprintTopic[]>` from `scanner.getAllTopics()`. Every element of each topic's `jira[]` array contributes to the map. One issue key with multiple topics renders multiple `↔ Topic` chips on the same row; each chip opens its topic file in the current leaf. The index is rebuilt per render — cheap enough given the scanner's in-memory topic cache and avoids stale-link bugs when topics are renamed or their `jira:` field is edited.
+
+### Visibility-aware refresh
+
+The dashboard does **no background polling**. `refresh()` runs in three scenarios:
+- On `onOpen()` — when the cache is stale or empty.
+- On `onResize()` — when the view becomes visible (tab/focus switch) and the cache has aged past the TTL.
+- On user click of the `Refresh` button.
+
+This keeps the dashboard fresh when actually being looked at, and zero-cost when hidden.
+
+### Performance posture
+
+- **One JQL round-trip per refresh**, 100-row cap. All sections are sliced from the same cached array — filters are cheap synchronous predicates.
+- **No per-issue secondary fetches** — the dashboard returns enough fields in one call (`summary, status, priority, assignee, reporter, duedate, resolutiondate, updated, labels, parent, issuetype, timespent, timeestimate, [sprint field], *all`).
+- **Single event bus**; views fold the service's `version` into their render decision so only cache-affecting changes rebuild.
+- **Read-only UX** — no write conflicts, no JIRA transitions, no risk of the plugin silently mutating a ticket.
 
 ---
 

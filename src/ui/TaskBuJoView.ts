@@ -10,18 +10,18 @@ import { AnalyticsService } from '../services/analyticsService';
 import { MonthlyAnalyticsService } from '../services/monthlyAnalyticsService';
 import { MonthlyNoteService } from '../services/monthlyNoteService';
 import { VaultScanner } from '../services/vaultScanner';
+import { JiraService } from '../services/jiraService';
 import { ViewSwitcher } from './components/ViewSwitcher';
 import { Toolbar } from './components/Toolbar';
 import { DailyView } from './components/DailyView';
 import { WeeklyView } from './components/WeeklyView';
 import { MonthlyView } from './components/MonthlyView';
 import { SprintView } from './components/SprintView';
+import { TopicsOverviewView } from './components/TopicsOverviewView';
 import { OverviewView } from './components/OpenPointsView';
 import { OverdueView } from './components/OverdueView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { CalendarView } from './components/CalendarView';
-import { EisenhowerView } from './components/EisenhowerView';
-import { ImpactEffortView } from './components/ImpactEffortView';
 import { SyntaxReferenceModal } from './components/SyntaxReference';
 import { AddTaskBar } from './components/AddTaskBar';
 import { SprintModal } from './SprintModal';
@@ -37,6 +37,7 @@ export class TaskBuJoView extends ItemView {
 	private contentContainer: HTMLElement;
 	private toolbar: Toolbar | null = null;
 	private storeCallback: StoreEventCallback | null = null;
+	private jiraCallback: (() => void) | null = null;
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 	private collapsedGroups: Set<string> = new Set();
 	private lastStoreVersion: number = -1;
@@ -54,6 +55,7 @@ export class TaskBuJoView extends ItemView {
 		private analyticsService: AnalyticsService,
 		private monthlyAnalyticsService: MonthlyAnalyticsService,
 		private monthlyNoteService: MonthlyNoteService,
+		private jiraService: JiraService,
 		private settings: PluginSettings,
 		private getData: () => PluginData,
 		private onSaveSnapshot: (snapshot: WeeklySnapshot) => void,
@@ -124,6 +126,10 @@ export class TaskBuJoView extends ItemView {
 
 		this.storeCallback = () => this.scheduleRefresh();
 		this.store.on(this.storeCallback);
+
+		// Re-render when JIRA cache updates (fetched issue data arrives) so cards show live info
+		this.jiraCallback = () => this.scheduleRefresh();
+		this.jiraService.on(this.jiraCallback);
 
 		this.refresh();
 	}
@@ -199,8 +205,9 @@ export class TaskBuJoView extends ItemView {
 	}
 
 	private refresh(): void {
-		// Skip rebuild if data hasn't changed
-		const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.store.version}`;
+		// Skip rebuild if data hasn't changed. Folds JiraService version too so JIRA cache
+		// updates (fresh fetches, errors, or clears on settings change) re-render the view.
+		const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.store.version}|${this.jiraService.version}`;
 		if (fingerprint === this.lastViewFingerprint) return;
 		this.lastViewFingerprint = fingerprint;
 
@@ -257,6 +264,24 @@ export class TaskBuJoView extends ItemView {
 					(sprint: Sprint) => this.onEditSprint(sprint),
 					this.isDragging,
 					this.searchQuery,
+					this.jiraService,
+				);
+				view.render();
+				break;
+			}
+			case BuJoViewMode.Topics: {
+				const view = new TopicsOverviewView(
+					this.contentContainer,
+					this.scanner.getAllTopics(),
+					this.sprintService,
+					this.sprintTopicService,
+					this.settings,
+					(topic: SprintTopic) => this.onTopicClick(topic),
+					(topic: SprintTopic) => this.onEditTopicDetails(topic),
+					() => this.onNewBacklogTopic(),
+					this.isDragging,
+					this.searchQuery,
+					this.jiraService,
 				);
 				view.render();
 				break;
@@ -268,16 +293,6 @@ export class TaskBuJoView extends ItemView {
 			}
 			case BuJoViewMode.Overview: {
 				const view = new OverviewView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
-				view.render();
-				break;
-			}
-			case BuJoViewMode.Eisenhower: {
-				const view = new EisenhowerView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
-				view.render();
-				break;
-			}
-			case BuJoViewMode.ImpactEffort: {
-				const view = new ImpactEffortView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
 				view.render();
 				break;
 			}
@@ -321,13 +336,40 @@ export class TaskBuJoView extends ItemView {
 	}
 
 	private onNewTopic(): void {
+		// Pre-fill with the active sprint (if any), but the Sprint picker in the modal
+		// lets users override to Backlog or another sprint.
 		const activeSprint = this.sprintService.getActiveSprint();
-		if (!activeSprint) return;
 		new SprintTopicModal(
 			this.app,
 			this.sprintTopicService,
-			activeSprint.id,
+			activeSprint?.id ?? '',
 			(_topic: SprintTopic) => this.refresh(),
+			undefined,
+			this.sprintService,
+		).open();
+	}
+
+	/** Create a topic without auto-assigning it to a sprint (backlog mode). */
+	private onNewBacklogTopic(): void {
+		new SprintTopicModal(
+			this.app,
+			this.sprintTopicService,
+			'', // empty sprintId → backlog topic
+			(_topic: SprintTopic) => this.refresh(),
+			undefined,
+			this.sprintService,
+		).open();
+	}
+
+	/** Open the edit modal for an existing topic (used by TopicsOverviewView). */
+	private onEditTopicDetails(topic: SprintTopic): void {
+		new SprintTopicModal(
+			this.app,
+			this.sprintTopicService,
+			topic.sprintId ?? '',
+			(_topic: SprintTopic) => this.refresh(),
+			topic,
+			this.sprintService,
 		).open();
 	}
 
@@ -352,6 +394,10 @@ export class TaskBuJoView extends ItemView {
 		if (this.storeCallback) {
 			this.store.off(this.storeCallback);
 			this.storeCallback = null;
+		}
+		if (this.jiraCallback) {
+			this.jiraService.off(this.jiraCallback);
+			this.jiraCallback = null;
 		}
 	}
 }
