@@ -4,7 +4,8 @@
       "Bash(npm run:*)",
       "Bash(node esbuild.config.mjs)",
       "Bash(npx tsc:*)",
-      "Bash(node esbuild.config.mjs production)"
+      "Bash(node esbuild.config.mjs production)",
+      "Bash(find /c/Users/on079542 -path */.obsidian/plugins/obsidian-task-bujo -type d)"
     ]
   }
 }

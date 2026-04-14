@@ -12,8 +12,8 @@ export const PRIORITY_TAG_REGEX = /#priority\/(high|medium|low)/i;
 /** Regex to match item category inline tags */
 export const TYPE_TAG_REGEX = /#type\/(task|openpoint)/i;
 
-/** Regex to match @due dates: @due DD-MM-YYYY or @due DD-MM */
-export const DUE_DATE_REGEX = /@due\s+(\d{1,2}-\d{1,2}(?:-\d{4})?)/i;
+/** Regex to match @due dates: @due DD-MM-YYYY, @due DD-MM, or @due <natural language> */
+export const DUE_DATE_REGEX = /@due\s+([\w\d\s\/-]+?)(?=\s+[@#(]|$)/i;
 
 /** Regex to match migration source annotation: (from [[filename]]) */
 export const MIGRATED_FROM_REGEX = /\s*\(from\s+\[\[([^\]]+)\]\]\)\s*/;
@@ -23,6 +23,9 @@ export const WORK_TYPE_REGEX = /#(?:work|w)\/(\S+)/i;
 
 /** Regex to match purpose tags: #purpose/name or #p/CODE */
 export const PURPOSE_REGEX = /#(?:purpose|p)\/(\S+)/i;
+
+/** Regex to match effort tags: #effort/S, #effort/M, #effort/L */
+export const EFFORT_REGEX = /#effort\/(S|M|L)/i;
 
 /** Debounce delay for vault file change events (ms) */
 export const SCAN_DEBOUNCE_MS = 300;

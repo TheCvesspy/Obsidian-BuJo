@@ -32,10 +32,13 @@ export enum BuJoViewMode {
 	Daily = 'daily',
 	Weekly = 'weekly',
 	Monthly = 'monthly',
+	Calendar = 'calendar',
 	Sprint = 'sprint',
 	Overview = 'overview',
 	Overdue = 'overdue',
 	Analytics = 'analytics',
+	Eisenhower = 'eisenhower',
+	ImpactEffort = 'impactEffort',
 }
 
 export interface TaskItem {
@@ -68,12 +71,16 @@ export interface TaskItem {
 	workType: string | null;
 	/** Purpose classification (e.g. "Delivery", "Capability") */
 	purpose: string | null;
+	/** Effort estimate: Small, Medium, Large */
+	effort: 'S' | 'M' | 'L' | null;
 	/** Indentation level: 0 = root, 1 = one tab/indent, etc. */
 	indentLevel: number;
 	/** ID of the parent task, or null if root-level */
 	parentId: string | null;
 	/** IDs of direct children tasks */
 	childrenIds: string[];
+	/** Multi-line description text from indented non-checkbox lines below the task */
+	description: string | null;
 }
 
 export interface Sprint {
@@ -165,6 +172,12 @@ export interface PluginSettings {
 	sprintTopicsPath: string;
 	/** Only count work days (Mon-Fri) for sprint duration and remaining days */
 	sprintWorkDaysOnly: boolean;
+	/** Folder path for archived completed tasks */
+	archiveFolderPath: string;
+	/** How archived tasks are grouped into files */
+	archiveGroupBy: 'month' | 'source';
+	/** Number of days before due date to consider a task "urgent" in Eisenhower view */
+	urgencyThresholdDays: number;
 }
 
 export const DEFAULT_WORK_TYPES: TagCategory[] = [
@@ -202,6 +215,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	goalHeadings: ['Goals'],
 	sprintTopicsPath: 'BuJo/Sprints/Topics',
 	sprintWorkDaysOnly: false,
+	archiveFolderPath: 'BuJo/Archive',
+	archiveGroupBy: 'month',
+	urgencyThresholdDays: 2,
 };
 
 /** Snapshot of weekly analytics for historical tracking */

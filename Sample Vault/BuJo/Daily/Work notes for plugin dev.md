@@ -1,0 +1,1 @@
+Tady to bude chtít nějaký weekly organizer, aby to mohlo stavě daily korektně - nejen vše migrovat. Ale to pořešit až později, katuálně není nutné.

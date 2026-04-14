@@ -19,6 +19,9 @@ import { SprintView } from './components/SprintView';
 import { OverviewView } from './components/OpenPointsView';
 import { OverdueView } from './components/OverdueView';
 import { AnalyticsView } from './components/AnalyticsView';
+import { CalendarView } from './components/CalendarView';
+import { EisenhowerView } from './components/EisenhowerView';
+import { ImpactEffortView } from './components/ImpactEffortView';
 import { SyntaxReferenceModal } from './components/SyntaxReference';
 import { AddTaskBar } from './components/AddTaskBar';
 import { SprintModal } from './SprintModal';
@@ -102,13 +105,16 @@ export class TaskBuJoView extends ItemView {
 
 		this.contentContainer = containerEl.createDiv({ cls: 'task-bujo-content' });
 
+		// Sticky footer for quick-add bar + syntax reference
+		const footer = containerEl.createDiv({ cls: 'task-bujo-footer' });
+
 		// Add Task quick-add bar
-		new AddTaskBar(containerEl, this.app, () => this.settings, {
+		new AddTaskBar(footer, this.app, () => this.settings, {
 			onTaskAdded: () => this.refresh(),
 		});
 
 		// Syntax reference button
-		const syntaxBtn = containerEl.createEl('button', {
+		const syntaxBtn = footer.createEl('button', {
 			cls: 'task-bujo-syntax-toggle',
 			text: 'Syntax Reference',
 		});
@@ -227,6 +233,11 @@ export class TaskBuJoView extends ItemView {
 				view.render();
 				break;
 			}
+			case BuJoViewMode.Calendar: {
+				const view = new CalendarView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery);
+				view.render();
+				break;
+			}
 			case BuJoViewMode.Sprint: {
 				const activeSprint = this.sprintService.getActiveSprint();
 				const topics = activeSprint
@@ -243,6 +254,7 @@ export class TaskBuJoView extends ItemView {
 					(sprint: Sprint) => this.onEndSprint(sprint),
 					() => this.onNewTopic(),
 					(topic: SprintTopic) => this.onTopicClick(topic),
+					(sprint: Sprint) => this.onEditSprint(sprint),
 					this.isDragging,
 					this.searchQuery,
 				);
@@ -256,6 +268,16 @@ export class TaskBuJoView extends ItemView {
 			}
 			case BuJoViewMode.Overview: {
 				const view = new OverviewView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
+				view.render();
+				break;
+			}
+			case BuJoViewMode.Eisenhower: {
+				const view = new EisenhowerView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
+				view.render();
+				break;
+			}
+			case BuJoViewMode.ImpactEffort: {
+				const view = new ImpactEffortView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
 				view.render();
 				break;
 			}
@@ -278,6 +300,12 @@ export class TaskBuJoView extends ItemView {
 		new SprintModal(this.app, this.sprintService, this.settings, (_sprint: Sprint) => {
 			this.refresh();
 		}).open();
+	}
+
+	private onEditSprint(sprint: Sprint): void {
+		new SprintModal(this.app, this.sprintService, this.settings, (_sprint: Sprint) => {
+			this.refresh();
+		}, sprint).open();
 	}
 
 	private onEndSprint(sprint: Sprint): void {

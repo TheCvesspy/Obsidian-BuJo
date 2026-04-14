@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu } from 'obsidian';
+import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice } from 'obsidian';
 import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot } from './types';
 import { VIEW_TYPE_TASK_BUJO, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
 import { TaskBuJoSettingTab } from './settings';
@@ -13,12 +13,13 @@ import { AnalyticsService } from './services/analyticsService';
 import { MonthlyNoteService } from './services/monthlyNoteService';
 import { MonthlyMigrationService } from './services/monthlyMigrationService';
 import { MonthlyAnalyticsService } from './services/monthlyAnalyticsService';
+import { ArchiveService } from './services/archiveService';
 import { TaskBuJoView } from './ui/TaskBuJoView';
 import { MigrationModal } from './ui/MigrationModal';
 import { WeeklyReviewModal } from './ui/WeeklyReviewModal';
 import { MonthlyMigrationModal } from './ui/MonthlyMigrationModal';
 import { MonthlyReviewModal } from './ui/MonthlyReviewModal';
-import { InsertTaskModal, buildTaskLine } from './ui/InsertTaskModal';
+import { InsertTaskModal, buildTaskLine, buildTaskBlock } from './ui/InsertTaskModal';
 import { DueDateModal } from './ui/DueDateModal';
 import { SyntaxReferenceModal } from './ui/components/SyntaxReference';
 import { getWeekId } from './utils/dateUtils';
@@ -38,6 +39,7 @@ export default class TaskBuJoPlugin extends Plugin {
 	private monthlyNoteService: MonthlyNoteService;
 	private monthlyMigrationService: MonthlyMigrationService;
 	private monthlyAnalyticsService: MonthlyAnalyticsService;
+	private archiveService: ArchiveService;
 	private statusBarEl: HTMLElement;
 
 	async onload(): Promise<void> {
@@ -81,6 +83,7 @@ export default class TaskBuJoPlugin extends Plugin {
 			() => this.settings,
 			() => this.data,
 		);
+		this.archiveService = new ArchiveService(this.app.vault, this.store, () => this.settings);
 
 		this.scanner.onChange(() => {
 			this.store.setTasks(this.scanner.getAllTasks());
@@ -161,16 +164,41 @@ export default class TaskBuJoPlugin extends Plugin {
 			callback: () => this.monthlyNoteService.getOrCreateMonthlyNote(new Date()),
 		});
 
-		// Insert task command (editor-only)
+		this.addCommand({
+			id: 'archive-completed',
+			name: 'Archive Completed Tasks',
+			callback: async () => {
+				const result = await this.archiveService.archiveCompleted();
+				if (result.archived === 0) {
+					new Notice('No completed tasks to archive.');
+				} else {
+					new Notice(`Archived ${result.archived} task(s) to ${result.files.length} file(s).`);
+				}
+			},
+		});
+
+		// Quick create task command (works globally)
 		this.addCommand({
 			id: 'insert-task-with-details',
-			name: 'Insert Task with Priority & Due Date',
-			editorCallback: (editor: Editor) => {
-				new InsertTaskModal(this.app, (text, priority, dueDate, typeTag, workType, purpose) => {
-					const line = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose);
-					const cursor = editor.getCursor();
-					editor.replaceRange(line + '\n', { line: cursor.line + 1, ch: 0 });
-					editor.setCursor({ line: cursor.line + 1, ch: line.length });
+			name: 'Quick Create Task',
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 't' }],
+			callback: () => {
+				new InsertTaskModal(this.app, async (result) => {
+					const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
+
+					// Try to insert at active editor cursor
+					const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+					if (activeView?.editor) {
+						const editor = activeView.editor;
+						const cursor = editor.getCursor();
+						editor.replaceRange(block + '\n', { line: cursor.line + 1, ch: 0 });
+						const insertedLines = block.split('\n').length;
+						editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
+					} else {
+						// No active editor — append to today's daily note
+						await this.dailyNoteService.addRawTaskLine(block, new Date());
+						new Notice('Task added to today\'s daily note');
+					}
 				}, this.settings.workTypes, this.settings.purposes).open();
 			},
 		});
@@ -178,16 +206,17 @@ export default class TaskBuJoPlugin extends Plugin {
 		// Right-click editor context menu
 		this.registerEvent(
 			this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
-				// Always offer "Insert task here"
+				// Always offer "Quick create task"
 				menu.addItem(item => {
-					item.setTitle('BuJo: Insert task here')
+					item.setTitle('BuJo: Quick create task')
 						.setIcon('check-square')
 						.onClick(() => {
-							new InsertTaskModal(this.app, (text, priority, dueDate, typeTag, workType, purpose) => {
-								const line = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose);
+							new InsertTaskModal(this.app, (result) => {
+								const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
 								const cursor = editor.getCursor();
-								editor.replaceRange(line + '\n', { line: cursor.line + 1, ch: 0 });
-								editor.setCursor({ line: cursor.line + 1, ch: line.length });
+								editor.replaceRange(block + '\n', { line: cursor.line + 1, ch: 0 });
+								const insertedLines = block.split('\n').length;
+								editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
 							}, this.settings.workTypes, this.settings.purposes).open();
 						});
 				});

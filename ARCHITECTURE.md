@@ -20,10 +20,11 @@
 7. [BuJo Markdown Syntax](#7-bujo-markdown-syntax)
 8. [Migration & Forwarding Flow](#8-migration--forwarding-flow)
 9. [Analytics](#9-analytics)
-10. [Two-Way Sync](#10-two-way-sync)
-11. [Performance Optimizations](#11-performance-optimizations)
-12. [Constants Reference](#12-constants-reference)
-13. [Build & Release](#13-build--release)
+10. [Task Archiving](#10-task-archiving)
+11. [Two-Way Sync](#11-two-way-sync)
+12. [Performance Optimizations](#12-performance-optimizations)
+13. [Constants Reference](#13-constants-reference)
+14. [Build & Release](#14-build--release)
 
 ---
 
@@ -38,15 +39,16 @@
 ├─────────────┼──────────────┼─────────────┼──────────────────┤
 │ taskParser  │ vaultScanner │ BuJoView    │ dateUtils        │
 │ headingCls  │ taskStore    │ Modals (5)  │ pathUtils        │
-│ dateParser  │ taskWriter   │ Views  (6)  │                  │
+│ dateParser  │ taskWriter   │ Views  (10) │                  │
 │             │ migration    │ Components  │                  │
-│             │ dailyNote    │   (13 files)│                  │
+│             │ dailyNote    │   (17 files)│                  │
 │             │ sprint       │             │                  │
 │             │ analytics    │             │                  │
+│             │ archive      │             │                  │
 └─────────────┴──────────────┴─────────────┴──────────────────┘
 ```
 
-**Total**: ~35 source files, ~4,400 lines of TypeScript + ~1,150 lines of CSS.
+**Total**: ~38 source files, ~5,100 lines of TypeScript + ~1,400 lines of CSS.
 
 ### Layer Responsibilities
 
@@ -71,14 +73,14 @@
   - `onload()`: loads persisted data (deep-merges settings), instantiates all services, wires scanner→store pipeline, registers view/commands/ribbon/context menus, triggers `fullScan()` on layout ready, then checks migration & weekly review
   - `onunload()`: detaches views, destroys scanner
 
-#### `src/types.ts` (~193 lines) — Type Definitions & Defaults
-- **Enums**: `TaskStatus`, `ItemCategory`, `Priority`, `GroupMode`, `BuJoViewMode`
-- **Interfaces**: `TaskItem`, `Sprint`, `TagCategory`, `PluginSettings`, `WeeklySnapshot`, `PluginData`
+#### `src/types.ts` (~210 lines) — Type Definitions & Defaults
+- **Enums**: `TaskStatus`, `ItemCategory`, `Priority`, `GroupMode`, `BuJoViewMode` (includes `Calendar`, `Eisenhower`, `ImpactEffort`)
+- **Interfaces**: `TaskItem` (includes `description`, `effort` fields), `Sprint`, `TagCategory`, `PluginSettings` (includes archive settings, `urgencyThresholdDays`), `WeeklySnapshot`, `PluginData`
 - **Type aliases**: `FolderState`, `StoreEventType`, `StoreEventCallback`
 - **Constants**: `DEFAULT_WORK_TYPES`, `DEFAULT_PURPOSES`, `DEFAULT_SETTINGS`, `DEFAULT_PLUGIN_DATA`
 
 #### `src/constants.ts` (~43 lines) — Regex & Tuning Constants
-All regex patterns for parsing and timing constants for debouncing. See [§12](#12-constants-reference).
+All regex patterns for parsing and timing constants for debouncing. See [§13](#13-constants-reference).
 
 #### `src/settings.ts` (~439 lines) — Settings Tab UI
 - **Class**: `TaskBuJoSettingTab extends PluginSettingTab`
@@ -86,9 +88,10 @@ All regex patterns for parsing and timing constants for debouncing. See [§12](#
 
 ### Parser Layer (`src/parser/`)
 
-#### `taskParser.ts` (~169 lines) — Markdown → TaskItem[]
+#### `taskParser.ts` (~190 lines) — Markdown → TaskItem[]
 - **Function**: `parseTasksFromContent(content, sourcePath, classifier, workTypes?, purposes?)`
-- Iterates lines tracking heading context (category, sub-headings). For each checkbox line extracts: status, priority, type tag, due date, migration annotation, work type, purpose
+- Iterates lines tracking heading context (category, sub-headings). For each checkbox line extracts: status, priority, type tag, due date, migration annotation, work type, purpose, effort
+- **Description collection**: non-checkbox, non-heading lines indented deeper than the preceding task are collected into `TaskItem.description` (multi-line, joined with `\n`)
 - **Helper**: `resolveTagCategory(value, categories)` — matches by name or shortCode (case-insensitive)
 
 #### `headingClassifier.ts` (~34 lines) — Heading → Category Mapping
@@ -96,9 +99,14 @@ All regex patterns for parsing and timing constants for debouncing. See [§12](#
 - `classify(headingText, inlineTypeTag)` → `ItemCategory`
 - Priority: inline `#type/` tag > heading substring match > Uncategorized
 
-#### `dateParser.ts` (~46 lines) — Due Date String Parsing
+#### `dateParser.ts` (~140 lines) — Due Date String Parsing
 - **Function**: `parseDueDate(raw: string): Date | null`
-- Accepts `DD-MM-YYYY` (absolute) or `DD-MM` (resolves to nearest future occurrence)
+- **Natural language dates** (tried first via `parseNaturalDate()`):
+  - Keywords: `today`, `tomorrow`, `yesterday`
+  - Weekdays: `monday`..`sunday`, `next monday`..`next sunday`
+  - Relative: `in N days`, `in N weeks`, `in N months`
+  - Periods: `next week` (→ Monday), `next month` (→ 1st), `end of week`/`eow` (→ Friday), `end of month`/`eom`
+- **Numeric formats** (fallback): `DD-MM-YYYY` (absolute) or `DD-MM` (nearest future occurrence)
 - Validates date overflow (e.g., Feb 30 → null)
 
 ### Service Layer (`src/services/`)
@@ -155,6 +163,13 @@ All regex patterns for parsing and timing constants for debouncing. See [§12](#
 - CRUD for sprints, auto-creates next if `autoStartNextSprint` is enabled
 - Sprint IDs: `sprint-{Date.now()}`
 
+#### `archiveService.ts` (~170 lines) — Task Archiving
+- **Class**: `ArchiveService`
+- **Method**: `archiveCompleted()` → `Promise<ArchiveResult>` — archives all Done/Cancelled tasks
+- **Flow**: collects completed tasks → groups by archive file path → appends to archive files (with source annotation) → removes lines from source files (including description lines)
+- **Grouping modes**: By month (`2026-03.md`) or by source file name
+- **Archive file format**: Heading with source wiki-links, original task lines preserved
+
 #### `analyticsService.ts` (~150 lines) — Weekly Analytics Engine
 - **Class**: `AnalyticsService`
 - **Cache**: `statsCache` keyed by `storeVersion + weekId`
@@ -182,9 +197,10 @@ All regex patterns for parsing and timing constants for debouncing. See [§12](#
 - Recent 4 weeks comparison from `weeklyHistory`
 - "Save Snapshot & Close" persists to `PluginData`
 
-#### `InsertTaskModal.ts` (~122 lines) — Insert Task Modal (Editor)
-- Fields: text, priority, date picker, type tag, work type, purpose
-- **Exported**: `buildTaskLine()` — constructs complete markdown checkbox line
+#### `InsertTaskModal.ts` (~170 lines) — Quick Create Task Modal (Editor)
+- Fields: text, priority, effort (S/M/L), date picker, type tag, work type, purpose, description (textarea)
+- **Exported**: `buildTaskLine()` — constructs markdown checkbox line; `buildTaskBlock()` — task line + indented description lines
+- **Interface**: `InsertTaskResult` — typed result object passed to callback
 
 #### `DueDateModal.ts` (~61 lines) — Due Date Picker Modal
 - Date input with Set/Remove buttons, Enter key support
@@ -202,17 +218,20 @@ All regex patterns for parsing and timing constants for debouncing. See [§12](#
 |------|-------|---------|
 | `DailyView.ts` | ~92 | 4 sections: Overdue / Carried Over / Due Today / Unscheduled |
 | `WeeklyView.ts` | ~86 | 7-day calendar (Mon–Sun) with per-day progress bars |
+| `CalendarView.ts` | ~190 | Month grid with day cells, priority-colored task dots, click-to-expand detail panel |
 | `SprintView.ts` | ~112 | Active sprint header, progress bar, grouped tasks |
 | `OpenPointsView.ts` | ~65 | Open points grouped by page + uncategorized section |
 | `OverdueView.ts` | ~56 | Overdue tasks with configurable grouping |
+| `EisenhowerView.ts` | ~115 | 2×2 Eisenhower matrix (Do Now/Plan Deep Work/Coordinate/Batch Later) |
+| `ImpactEffortView.ts` | ~150 | 2×2 Impact×Effort matrix (Quick Wins/Big Bets/Fill-ins/Time Sinks) with urgency badges |
 | `AnalyticsView.ts` | ~147 | Summary cards, bar charts, 8-week trend table |
 | `TaskList.ts` | ~49 | Renders `Map<string, TaskItem[]>` with `GroupHeader` + `TaskItemRow` |
-| `TaskItemRow.ts` | ~77 | Checkbox + status marker + priority dot + text + due badge + source link |
+| `TaskItemRow.ts` | ~120 | Checkbox + status marker + priority dot + text + description toggle + due badge + source link |
 | `Toolbar.ts` | ~87 | Search input (debounced) + group mode buttons |
-| `ViewSwitcher.ts` | ~57 | 6-tab bar |
+| `ViewSwitcher.ts` | ~57 | 10-tab bar |
 | `GroupHeader.ts` | ~69 | Collapsible header with chevron, label, count badge |
 | `AddTaskBar.ts` | ~130 | Inline quick-add form (text + priority + date) |
-| `SyntaxReference.ts` | ~82 | Modal with full syntax table, work types, purposes |
+| `SyntaxReference.ts` | ~90 | Modal with full syntax table, NL date examples, work types, purposes, effort tags |
 
 ### Utility Layer (`src/utils/`)
 
@@ -287,6 +306,9 @@ Markdown Files in Vault
 | `workTypes` | `TagCategory[]` | 6 defaults | Work type categories |
 | `purposes` | `TagCategory[]` | 4 defaults | Purpose categories |
 | `weekStartDay` | `number` | `1` (Monday) | First day of week (0=Sun…6=Sat) |
+| `archiveFolderPath` | `string` | `'BuJo/Archive'` | Folder for archived completed tasks |
+| `archiveGroupBy` | `'month' \| 'source'` | `'month'` | How archived tasks are grouped into files |
+| `urgencyThresholdDays` | `number` | `2` | Days before due date to consider "urgent" in Eisenhower view |
 
 ### Default Work Types
 | Name | Short Code |
@@ -328,12 +350,13 @@ Markdown Files in Vault
 | `run-daily-migration` | BuJo: Run Daily Migration | callback | Opens Morning Review modal |
 | `weekly-review` | BuJo: Weekly Review | callback | Opens Weekly Review modal |
 | `syntax-reference` | BuJo: Syntax Reference | callback | Opens syntax reference modal |
-| `insert-task-with-details` | BuJo: Insert Task with Priority & Due Date | editorCallback | Opens InsertTaskModal, inserts at cursor |
+| `archive-completed` | BuJo: Archive Completed Tasks | callback | Archives all Done/Cancelled tasks to archive folder |
+| `insert-task-with-details` | BuJo: Quick Create Task | editorCallback | Opens InsertTaskModal (with effort, description fields), inserts at cursor. Default hotkey: `Ctrl+Shift+T` |
 
 ### Ribbon & Context Menu
 
 - **Ribbon icon**: `check-square` → opens BuJo view
-- **Editor context menu** (always): "BuJo: Insert task here"
+- **Editor context menu** (always): "BuJo: Quick create task"
 - **Editor context menu** (on checkbox lines): "Mark as done/open", "High/Medium/Low Priority", "Remove priority", "Set due date"
 
 ---
@@ -344,12 +367,16 @@ Markdown Files in Vault
 |------|------|-------------|
 | **Daily** | `BuJoViewMode.Daily` | 4 sections: Overdue → Carried Over → Due Today → Unscheduled. Shows pending count header. |
 | **Weekly** | `BuJoViewMode.Weekly` | 7-day calendar (Mon–Sun) with per-day task lists and progress bars (done/total %). |
-| **Sprint** | `BuJoViewMode.Sprint` | Active sprint header (name, dates, days remaining), progress bar, grouped tasks. End/New sprint buttons. |
-| **Open Points** | `BuJoViewMode.OpenPoints` | All Open Points grouped by page. Uncategorized items shown separately. |
+| **Monthly** | `BuJoViewMode.Monthly` | Goals progress, stats cards, month navigation, trends table, save snapshot. |
+| **Calendar** | `BuJoViewMode.Calendar` | Month grid with priority-colored task dots per day. Click a day to expand task detail below. Today highlighting. Month navigation + "Today" button. Respects `weekStartDay` setting. |
+| **Sprint** | `BuJoViewMode.Sprint` | Active sprint header (name, dates, days remaining), Kanban board (Open/In Progress/Done), drag-and-drop. |
 | **Overdue** | `BuJoViewMode.Overdue` | Open tasks with past due dates. Supports all group modes. |
+| **Overview** | `BuJoViewMode.Overview` | All Tasks + Open Points sub-tabs, grouped by mode. |
+| **Eisenhower** | `BuJoViewMode.Eisenhower` | 2×2 Eisenhower matrix for daily triage. Urgency = overdue or due within configurable `urgencyThresholdDays` (default 2). Importance = High/Medium priority. Tasks without due dates shown in Inbox. Quadrants: Do Now (urgent+important), Plan Deep Work (important), Coordinate (urgent), Batch Later (neither). |
+| **Impact/Effort** | `BuJoViewMode.ImpactEffort` | 2×2 Impact×Effort matrix for strategic planning. Requires `#effort/S\|M\|L` tag. Impact auto-calculated from priority weight + purpose weight. Quadrants: Quick Wins (high impact + small effort), Big Bets (high impact + med/large effort), Fill-ins (low impact + small effort), Time Sinks (low impact + med/large effort). Inbox for unestimated tasks. Urgency badges (overdue/due this week) overlay on tasks. |
 | **Analytics** | `BuJoViewMode.Analytics` | Summary cards, work type/purpose bar charts, 8-week trend table + chart. |
 
-**Grouping** (Sprint & Overdue views only): By Page / By Priority / By Due Date
+**Grouping** (Sprint, Overdue & Overview views only): By Page / By Priority / By Due Date
 
 ---
 
@@ -373,9 +400,41 @@ Markdown Files in Vault
 | `#priority/{level}` | `#priority/high` | Priority: high, medium, low |
 | `#type/{category}` | `#type/openpoint` | Force category: task, openpoint |
 | `@due {date}` | `@due 20-03-2026` or `@due 20-03` | Due date (DD-MM-YYYY or DD-MM) |
+| `@due {natural}` | `@due tomorrow`, `@due next friday`, `@due in 3 days` | Natural language due date |
 | `#work/{name}` or `#w/{code}` | `#w/DW` | Work type tag |
 | `#purpose/{name}` or `#p/{code}` | `#p/D` | Purpose tag |
+| `#effort/{size}` | `#effort/S`, `#effort/M`, `#effort/L` | Effort estimate (Small/Medium/Large) for Impact×Effort matrix |
 | `(from [[PageName]])` | `(from [[2026-03-15]])` | Migration source (auto-generated) |
+
+### Natural Language Date Formats
+
+| Expression | Resolves To |
+|-----------|-------------|
+| `today` | Today at midnight |
+| `tomorrow` | Today + 1 day |
+| `yesterday` | Today − 1 day |
+| `monday`..`sunday` | Next occurrence of that weekday |
+| `next monday`..`next sunday` | Same as above |
+| `in N days` | Today + N days |
+| `in N weeks` | Today + N×7 days |
+| `in N months` | Today + N months |
+| `next week` | Next Monday |
+| `next month` | 1st of next month |
+| `end of week` / `eow` | Next Friday |
+| `end of month` / `eom` | Last day of current month |
+
+### Task Descriptions
+
+Indented non-checkbox lines immediately following a task are collected as that task's description:
+
+```markdown
+- [ ] Implement login flow #priority/high
+    Need to support OAuth2 and SAML
+    See design doc in [[Auth Design]]
+- [ ] Write tests
+```
+
+The two indented lines become the description of "Implement login flow". Descriptions are shown in the BuJo view via an expandable `…` toggle on the task row.
 
 ### Heading Classification
 
@@ -466,7 +525,44 @@ Tasks are included if:
 
 ---
 
-## 10. Two-Way Sync
+## 10. Task Archiving
+
+### Purpose
+Over months of use, completed tasks accumulate in daily notes and project pages. Archiving moves them to dedicated archive files, keeping the vault clean and scan performance fast.
+
+### Trigger
+- **Manual command**: `BuJo: Archive Completed Tasks` — archives all Done and Cancelled tasks vault-wide
+
+### Archive Flow (`ArchiveService.archiveCompleted()`)
+1. Collects all Done/Cancelled tasks from every category (tasks, open points, goals, uncategorized)
+2. Groups by archive file path based on `archiveGroupBy` setting:
+   - **By month**: `{archiveFolderPath}/2026-03.md` (uses due date, or current date if none)
+   - **By source**: `{archiveFolderPath}/{source-filename}.md`
+3. Creates archive folder structure if needed
+4. Appends task lines to archive files, grouped by source with `## From [[SourceName]]` headings
+5. Removes archived lines from source files (including any description lines that followed them)
+6. Shows notice: "Archived N task(s) to M file(s)"
+
+### Archive File Format
+```markdown
+# Archived Tasks — 2026-03
+
+## From [[2026-03-15]]
+
+- [x] Complete login flow #priority/high @due 20-03-2026
+
+## From [[ProjectNotes]]
+
+- [x] Review API design #w/RV
+- [-] Deprecated endpoint cleanup
+```
+
+### Recommended Setup
+Exclude the archive folder from scanning (via Settings → Scanning → set archive folder to Exclude) so archived tasks don't appear in views.
+
+---
+
+## 11. Two-Way Sync
 
 ### Problem
 When a task is migrated (forwarded) from File A to a daily note, completing it in the daily note should also update File A.
@@ -489,7 +585,7 @@ On every incremental file scan:
 
 ---
 
-## 11. Performance Optimizations
+## 12. Performance Optimizations
 
 ### Caching
 
@@ -532,7 +628,7 @@ On every incremental file scan:
 
 ---
 
-## 12. Constants Reference
+## 13. Constants Reference
 
 | Constant | Value | Usage |
 |----------|-------|-------|
@@ -541,10 +637,11 @@ On every incremental file scan:
 | `HEADING_REGEX` | `/^(#{1,6})\s+(.+)$/` | Matches markdown headings |
 | `PRIORITY_TAG_REGEX` | `/#priority\/(high\|medium\|low)/i` | Priority tags |
 | `TYPE_TAG_REGEX` | `/#type\/(task\|openpoint)/i` | Category type tags |
-| `DUE_DATE_REGEX` | `/@due\s+(\d{1,2}-\d{1,2}(?:-\d{4})?)/i` | Due date annotations |
+| `DUE_DATE_REGEX` | `/@due\s+([\w\d\s\/-]+?)(?=\s+[@#(]\|$)/i` | Due date annotations (numeric + natural language) |
 | `MIGRATED_FROM_REGEX` | `/\s*\(from\s+\[\[([^\]]+)\]\]\)\s*/` | Migration source links |
 | `WORK_TYPE_REGEX` | `/#(?:work\|w)\/(\S+)/i` | Work type tags |
 | `PURPOSE_REGEX` | `/#(?:purpose\|p)\/(\S+)/i` | Purpose tags |
+| `EFFORT_REGEX` | `/#effort\/(S\|M\|L)/i` | Effort estimate tags |
 | `SCAN_DEBOUNCE_MS` | `300` | File change debounce |
 | `SEARCH_DEBOUNCE_MS` | `200` | Search input debounce |
 | `REFRESH_DEBOUNCE_MS` | `100` | UI refresh coalescing |
@@ -554,7 +651,7 @@ On every incremental file scan:
 
 ---
 
-## 13. Build & Release
+## 14. Build & Release
 
 ### Build Commands
 ```bash
@@ -582,7 +679,7 @@ node release.mjs [major|minor|patch]
 - Copies `main.js`, `styles.css`, `manifest.json` to `_release/`
 
 ### Styles
-`styles.css` (~1,150 lines) uses Obsidian CSS variables (`var(--text-muted)`, `var(--background-modifier-border)`, etc.) for full theme compatibility. All components are styled with `.task-bujo-*` class prefix.
+`styles.css` (~1,500 lines) uses Obsidian CSS variables (`var(--text-muted)`, `var(--background-modifier-border)`, etc.) for full theme compatibility. All components are styled with `.task-bujo-*` class prefix. Includes dedicated sections for Calendar grid, Eisenhower matrix, Impact×Effort matrix, and task description toggles.
 
 ---
 

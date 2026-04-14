@@ -1,5 +1,5 @@
 import { TaskItem, TaskStatus, Priority, ItemCategory } from '../types';
-import { CHECKBOX_REGEX, HEADING_REGEX, PRIORITY_TAG_REGEX, TYPE_TAG_REGEX, DUE_DATE_REGEX, MIGRATED_FROM_REGEX, WORK_TYPE_REGEX, PURPOSE_REGEX } from '../constants';
+import { CHECKBOX_REGEX, HEADING_REGEX, PRIORITY_TAG_REGEX, TYPE_TAG_REGEX, DUE_DATE_REGEX, MIGRATED_FROM_REGEX, WORK_TYPE_REGEX, PURPOSE_REGEX, EFFORT_REGEX } from '../constants';
 import { HeadingClassifier } from './headingClassifier';
 import { parseDueDate } from './dateParser';
 import { TagCategory } from '../types';
@@ -65,6 +65,9 @@ export function parseTasksFromContent(
 
 	// Track tasks per heading context for hierarchy building
 	let currentHeadingTasks: TaskItem[] = [];
+	// Track the last parsed task for description collection
+	let lastTask: TaskItem | null = null;
+	let lastTaskIndentChars = 0;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
@@ -72,6 +75,7 @@ export function parseTasksFromContent(
 		// Check for heading
 		const headingMatch = line.match(HEADING_REGEX);
 		if (headingMatch) {
+			lastTask = null;
 			// Build hierarchy for tasks accumulated under the previous heading
 			if (currentHeadingTasks.length > 0) {
 				buildHierarchy(currentHeadingTasks);
@@ -104,7 +108,24 @@ export function parseTasksFromContent(
 
 		// Check for checkbox
 		const checkboxMatch = line.match(CHECKBOX_REGEX);
-		if (!checkboxMatch) continue;
+		if (!checkboxMatch) {
+			// Collect description lines: non-checkbox, non-heading, non-empty lines
+			// that are indented deeper than the last task
+			if (lastTask && line.trim().length > 0) {
+				const leadingWhitespace = line.match(/^(\s*)/)?.[1] || '';
+				const lineIndentChars = leadingWhitespace.length;
+				if (lineIndentChars > lastTaskIndentChars) {
+					if (lastTask.description) {
+						lastTask.description += '\n' + line.trim();
+					} else {
+						lastTask.description = line.trim();
+					}
+				} else {
+					lastTask = null;
+				}
+			}
+			continue;
+		}
 
 		const indentLevel = computeIndentLevel(checkboxMatch[1]);
 		const statusChar = checkboxMatch[2];
@@ -161,6 +182,14 @@ export function parseTasksFromContent(
 			text = text.replace(PURPOSE_REGEX, '');
 		}
 
+		// Extract effort tag: #effort/S, #effort/M, #effort/L
+		let effort: 'S' | 'M' | 'L' | null = null;
+		const effortMatch = text.match(EFFORT_REGEX);
+		if (effortMatch) {
+			effort = effortMatch[1].toUpperCase() as 'S' | 'M' | 'L';
+			text = text.replace(EFFORT_REGEX, '');
+		}
+
 		// Clean up display text
 		text = text.replace(/\s{2,}/g, ' ').trim();
 
@@ -191,12 +220,16 @@ export function parseTasksFromContent(
 			migratedFrom,
 			workType,
 			purpose,
+			effort,
 			indentLevel,
 			parentId: null,
 			childrenIds: [],
+			description: null,
 		};
 		tasks.push(taskItem);
 		currentHeadingTasks.push(taskItem);
+		lastTask = taskItem;
+		lastTaskIndentChars = (checkboxMatch[1] || '').length;
 	}
 
 	// Build hierarchy for the last heading context

@@ -80,6 +80,13 @@ export class TaskItemRow {
 			textSpan.addClass('task-bujo-task-migrated');
 		}
 
+		// Description toggle indicator
+		if (task.description) {
+			const descToggle = this.el.createSpan({ cls: 'task-bujo-desc-toggle' });
+			descToggle.textContent = '…';
+			descToggle.setAttribute('title', 'Show/hide description');
+		}
+
 		// Progress badge for collapsed parents
 		if (isParent && isCollapsed && callbacks.getTaskById) {
 			const progress = getChildProgress(task, callbacks.getTaskById);
@@ -101,6 +108,24 @@ export class TaskItemRow {
 			this.callbacks.onClickSource(task);
 		});
 		this.el.appendChild(sourceEl);
+
+		// Expandable description area
+		if (task.description) {
+			const descEl = this.el.createDiv({
+				cls: 'task-bujo-task-description task-bujo-task-description-hidden',
+			});
+			descEl.textContent = task.description;
+
+			// Wire up toggle
+			const toggle = this.el.querySelector('.task-bujo-desc-toggle');
+			if (toggle) {
+				toggle.addEventListener('click', (e) => {
+					e.stopPropagation();
+					descEl.toggleClass('task-bujo-task-description-hidden',
+						!descEl.hasClass('task-bujo-task-description-hidden'));
+				});
+			}
+		}
 	}
 
 	getElement(): HTMLElement {

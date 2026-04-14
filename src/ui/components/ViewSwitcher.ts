@@ -23,9 +23,12 @@ export class ViewSwitcher {
 			{ mode: BuJoViewMode.Daily, label: 'Daily' },
 			{ mode: BuJoViewMode.Weekly, label: 'Weekly' },
 			{ mode: BuJoViewMode.Monthly, label: 'Monthly' },
+			{ mode: BuJoViewMode.Calendar, label: 'Calendar' },
 			{ mode: BuJoViewMode.Sprint, label: 'Sprint' },
 			{ mode: BuJoViewMode.Overdue, label: 'Overdue' },
 			{ mode: BuJoViewMode.Overview, label: 'Overview' },
+			{ mode: BuJoViewMode.Eisenhower, label: 'Eisenhower' },
+			{ mode: BuJoViewMode.ImpactEffort, label: 'Impact/Effort' },
 			{ mode: BuJoViewMode.Analytics, label: 'Analytics' },
 		];
 

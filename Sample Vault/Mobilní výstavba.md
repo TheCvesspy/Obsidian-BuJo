@@ -1,0 +1,6 @@
+- překlopení portálu výstavby do Portálu výstavby
+- existuje druhá platforma - TSM (něco nad Camundou)
+	- takže se ještě řeší na čem to postavíme
+- Next steps:
+	- #netoworg_žáček udělá do příštího pondělí přehled procesu mobilky, vč. nějakého vizuálu
+	- #pavel svolá schůzku s mobilkou na příští čtvrtek, kdy bychom případně proces představili

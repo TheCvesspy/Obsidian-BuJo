@@ -37,6 +37,7 @@ export class SprintView {
 		private onEndSprint: (sprint: Sprint) => void,
 		private onNewTopic: () => void,
 		private onTopicClick: (topic: SprintTopic) => void,
+		private onEditSprint: (sprint: Sprint) => void,
 		private isDragging: { value: boolean },
 		private searchQuery: string = '',
 	) {
@@ -83,7 +84,10 @@ export class SprintView {
 		// Header
 		const header = this.el.createDiv({ cls: 'task-bujo-sprint-header' });
 		const headerInfo = header.createDiv({ cls: 'task-bujo-sprint-header-info' });
-		headerInfo.createSpan({ cls: 'task-bujo-sprint-name', text: sprint.name });
+		const nameEl = headerInfo.createSpan({ cls: 'task-bujo-sprint-name', text: sprint.name });
+		nameEl.setAttribute('title', 'Click to edit sprint');
+		nameEl.style.cursor = 'pointer';
+		nameEl.addEventListener('click', () => this.onEditSprint(sprint));
 		headerInfo.createSpan({
 			cls: 'task-bujo-sprint-dates',
 			text: ` ${startDate.toLocaleDateString()} – ${endDate.toLocaleDateString()}`,
@@ -92,6 +96,12 @@ export class SprintView {
 			cls: 'task-bujo-sprint-remaining',
 			text: ` · ${daysRemaining} ${dayLabel} remaining`,
 		});
+		const editBtn = headerInfo.createEl('button', {
+			cls: 'task-bujo-btn task-bujo-sprint-edit-btn',
+			text: 'Edit',
+		});
+		editBtn.setAttribute('title', 'Edit sprint name and dates');
+		editBtn.addEventListener('click', () => this.onEditSprint(sprint));
 
 		const addTopicBtn = header.createEl('button', {
 			cls: 'task-bujo-btn',

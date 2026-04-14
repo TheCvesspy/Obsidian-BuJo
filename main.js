@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => TaskBuJoPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_WORK_TYPES = [
@@ -62,7 +62,10 @@ var DEFAULT_SETTINGS = {
   monthlyMigrationPromptOnStartup: true,
   goalHeadings: ["Goals"],
   sprintTopicsPath: "BuJo/Sprints/Topics",
-  sprintWorkDaysOnly: false
+  sprintWorkDaysOnly: false,
+  archiveFolderPath: "BuJo/Archive",
+  archiveGroupBy: "month",
+  urgencyThresholdDays: 2
 };
 var DEFAULT_PLUGIN_DATA = {
   settings: DEFAULT_SETTINGS,
@@ -80,10 +83,11 @@ var CHECKBOX_REGEX = /^(\s*)-\s*\[([ x><!-])\]\s+(.*)$/i;
 var HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 var PRIORITY_TAG_REGEX = /#priority\/(high|medium|low)/i;
 var TYPE_TAG_REGEX = /#type\/(task|openpoint)/i;
-var DUE_DATE_REGEX = /@due\s+(\d{1,2}-\d{1,2}(?:-\d{4})?)/i;
+var DUE_DATE_REGEX = /@due\s+([\w\d\s\/-]+?)(?=\s+[@#(]|$)/i;
 var MIGRATED_FROM_REGEX = /\s*\(from\s+\[\[([^\]]+)\]\]\)\s*/;
 var WORK_TYPE_REGEX = /#(?:work|w)\/(\S+)/i;
 var PURPOSE_REGEX = /#(?:purpose|p)\/(\S+)/i;
+var EFFORT_REGEX = /#effort\/(S|M|L)/i;
 var SCAN_DEBOUNCE_MS = 300;
 var SEARCH_DEBOUNCE_MS = 200;
 var REFRESH_DEBOUNCE_MS = 100;
@@ -168,9 +172,12 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         ["daily" /* Daily */]: "Daily",
         ["weekly" /* Weekly */]: "Weekly",
         ["monthly" /* Monthly */]: "Monthly",
+        ["calendar" /* Calendar */]: "Calendar",
         ["sprint" /* Sprint */]: "Sprint",
         ["overdue" /* Overdue */]: "Overdue",
         ["overview" /* Overview */]: "Overview",
+        ["eisenhower" /* Eisenhower */]: "Eisenhower",
+        ["impactEffort" /* ImpactEffort */]: "Impact/Effort",
         ["analytics" /* Analytics */]: "Analytics"
       }).setValue(this.plugin.settings.defaultViewMode).onChange(async (value) => {
         this.plugin.settings.defaultViewMode = value;
@@ -247,6 +254,32 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
       (toggle) => toggle.setValue(this.plugin.settings.sprintWorkDaysOnly).onChange(async (value) => {
         this.plugin.settings.sprintWorkDaysOnly = value;
         await this.plugin.saveSettings(false);
+      })
+    );
+    containerEl.createEl("h2", { text: "Archive" });
+    new import_obsidian.Setting(containerEl).setName("Archive folder path").setDesc("Folder where completed tasks are archived.").addText(
+      (text) => text.setPlaceholder("BuJo/Archive").setValue(this.plugin.settings.archiveFolderPath).onChange((value) => {
+        this.plugin.settings.archiveFolderPath = value.trim();
+        this.debouncedSave(false);
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Archive grouping").setDesc("How archived tasks are organized into files.").addDropdown(
+      (dropdown) => dropdown.addOptions({
+        "month": "By Month (2026-03.md)",
+        "source": "By Source File"
+      }).setValue(this.plugin.settings.archiveGroupBy).onChange(async (value) => {
+        this.plugin.settings.archiveGroupBy = value;
+        await this.plugin.saveSettings(false);
+      })
+    );
+    containerEl.createEl("h2", { text: "Views" });
+    new import_obsidian.Setting(containerEl).setName("Urgency threshold (days)").setDesc('Tasks due within this many days are considered "urgent" in the Eisenhower view.').addText(
+      (text) => text.setPlaceholder("2").setValue(String(this.plugin.settings.urgencyThresholdDays)).onChange((value) => {
+        const parsed = parseInt(value, 10);
+        if (!isNaN(parsed) && parsed >= 0) {
+          this.plugin.settings.urgencyThresholdDays = parsed;
+          this.debouncedSave(false);
+        }
       })
     );
     containerEl.createEl("h2", { text: "Analytics" });
@@ -430,7 +463,92 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
 var import_obsidian2 = require("obsidian");
 
 // src/parser/dateParser.ts
+var DAY_NAMES = {
+  "sunday": 0,
+  "sun": 0,
+  "monday": 1,
+  "mon": 1,
+  "tuesday": 2,
+  "tue": 2,
+  "wednesday": 3,
+  "wed": 3,
+  "thursday": 4,
+  "thu": 4,
+  "friday": 5,
+  "fri": 5,
+  "saturday": 6,
+  "sat": 6
+};
+function parseNaturalDate(raw) {
+  const input = raw.toLowerCase().trim();
+  const today = /* @__PURE__ */ new Date();
+  today.setHours(0, 0, 0, 0);
+  if (input === "today") {
+    return new Date(today);
+  }
+  if (input === "tomorrow") {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 1);
+    return d;
+  }
+  if (input === "yesterday") {
+    const d = new Date(today);
+    d.setDate(d.getDate() - 1);
+    return d;
+  }
+  if (input === "next week") {
+    const d = new Date(today);
+    const daysUntilMonday = (1 - d.getDay() + 7) % 7 || 7;
+    d.setDate(d.getDate() + daysUntilMonday);
+    return d;
+  }
+  if (input === "next month") {
+    const d = new Date(today);
+    d.setMonth(d.getMonth() + 1, 1);
+    return d;
+  }
+  if (input === "end of week" || input === "eow") {
+    const d = new Date(today);
+    const dayOfWeek = d.getDay();
+    const daysUntilFriday = (5 - dayOfWeek + 7) % 7 || 7;
+    d.setDate(d.getDate() + daysUntilFriday);
+    return d;
+  }
+  if (input === "end of month" || input === "eom") {
+    const d = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    return d;
+  }
+  const nextDayMatch = input.match(/^(?:next\s+)?(\w+)$/);
+  if (nextDayMatch && DAY_NAMES[nextDayMatch[1]] !== void 0) {
+    const targetDay = DAY_NAMES[nextDayMatch[1]];
+    const d = new Date(today);
+    const currentDay = d.getDay();
+    let daysAhead = (targetDay - currentDay + 7) % 7;
+    if (daysAhead === 0)
+      daysAhead = 7;
+    d.setDate(d.getDate() + daysAhead);
+    return d;
+  }
+  const inMatch = input.match(/^in\s+(\d+)\s+(days?|weeks?|months?)$/);
+  if (inMatch) {
+    const n = parseInt(inMatch[1], 10);
+    const unit = inMatch[2];
+    const d = new Date(today);
+    if (unit.startsWith("day")) {
+      d.setDate(d.getDate() + n);
+    } else if (unit.startsWith("week")) {
+      d.setDate(d.getDate() + n * 7);
+    } else if (unit.startsWith("month")) {
+      d.setMonth(d.getMonth() + n);
+    }
+    return d;
+  }
+  return null;
+}
 function parseDueDate(raw) {
+  const natural = parseNaturalDate(raw.trim());
+  if (natural)
+    return natural;
   const parts = raw.split("-");
   if (parts.length < 2 || parts.length > 3)
     return null;
@@ -499,7 +617,7 @@ function buildHierarchy(tasks) {
   }
 }
 function parseTasksFromContent(content, sourcePath, classifier, workTypes, purposes) {
-  var _a;
+  var _a, _b;
   const lines = content.split("\n");
   const tasks = [];
   let categoryHeading = null;
@@ -507,10 +625,13 @@ function parseTasksFromContent(content, sourcePath, classifier, workTypes, purpo
   let activeCategory = null;
   let currentSubHeading = null;
   let currentHeadingTasks = [];
+  let lastTask = null;
+  let lastTaskIndentChars = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const headingMatch = line.match(HEADING_REGEX);
     if (headingMatch) {
+      lastTask = null;
       if (currentHeadingTasks.length > 0) {
         buildHierarchy(currentHeadingTasks);
         currentHeadingTasks = [];
@@ -534,11 +655,25 @@ function parseTasksFromContent(content, sourcePath, classifier, workTypes, purpo
       continue;
     }
     const checkboxMatch = line.match(CHECKBOX_REGEX);
-    if (!checkboxMatch)
+    if (!checkboxMatch) {
+      if (lastTask && line.trim().length > 0) {
+        const leadingWhitespace = ((_a = line.match(/^(\s*)/)) == null ? void 0 : _a[1]) || "";
+        const lineIndentChars = leadingWhitespace.length;
+        if (lineIndentChars > lastTaskIndentChars) {
+          if (lastTask.description) {
+            lastTask.description += "\n" + line.trim();
+          } else {
+            lastTask.description = line.trim();
+          }
+        } else {
+          lastTask = null;
+        }
+      }
       continue;
+    }
     const indentLevel = computeIndentLevel(checkboxMatch[1]);
     const statusChar = checkboxMatch[2];
-    const status = (_a = STATUS_MAP[statusChar]) != null ? _a : " " /* Open */;
+    const status = (_b = STATUS_MAP[statusChar]) != null ? _b : " " /* Open */;
     let text = checkboxMatch[3];
     let priority = "none" /* None */;
     const priorityMatch = text.match(PRIORITY_TAG_REGEX);
@@ -578,6 +713,12 @@ function parseTasksFromContent(content, sourcePath, classifier, workTypes, purpo
       purpose = resolveTagCategory(purposeMatch[1], purposes || []);
       text = text.replace(PURPOSE_REGEX, "");
     }
+    let effort = null;
+    const effortMatch = text.match(EFFORT_REGEX);
+    if (effortMatch) {
+      effort = effortMatch[1].toUpperCase();
+      text = text.replace(EFFORT_REGEX, "");
+    }
     text = text.replace(/\s{2,}/g, " ").trim();
     let category;
     if (inlineTypeTag) {
@@ -604,12 +745,16 @@ function parseTasksFromContent(content, sourcePath, classifier, workTypes, purpo
       migratedFrom,
       workType,
       purpose,
+      effort,
       indentLevel,
       parentId: null,
-      childrenIds: []
+      childrenIds: [],
+      description: null
     };
     tasks.push(taskItem);
     currentHeadingTasks.push(taskItem);
+    lastTask = taskItem;
+    lastTaskIndentChars = (checkboxMatch[1] || "").length;
   }
   if (currentHeadingTasks.length > 0) {
     buildHierarchy(currentHeadingTasks);
@@ -2611,8 +2756,157 @@ var MonthlyAnalyticsService = class {
   }
 };
 
+// src/services/archiveService.ts
+var import_obsidian7 = require("obsidian");
+var ArchiveService = class {
+  constructor(vault, store, getSettings) {
+    this.vault = vault;
+    this.store = store;
+    this.getSettings = getSettings;
+  }
+  /**
+   * Archive all completed (Done + Cancelled) tasks from the vault.
+   * Moves task lines to archive files and removes them from source files.
+   */
+  async archiveCompleted() {
+    const settings = this.getSettings();
+    const allTasks = [
+      ...this.store.getTasks(),
+      ...this.store.getOpenPoints(),
+      ...this.store.getGoals(),
+      ...this.store.getUncategorized()
+    ];
+    const completedTasks = allTasks.filter(
+      (t) => t.status === "x" /* Done */ || t.status === "-" /* Cancelled */
+    );
+    if (completedTasks.length === 0) {
+      return { archived: 0, files: [] };
+    }
+    const archiveGroups = /* @__PURE__ */ new Map();
+    for (const task of completedTasks) {
+      const archivePath = this.getArchivePath(task, settings);
+      if (!archiveGroups.has(archivePath)) {
+        archiveGroups.set(archivePath, []);
+      }
+      archiveGroups.get(archivePath).push(task);
+    }
+    const sourceGroups = /* @__PURE__ */ new Map();
+    for (const task of completedTasks) {
+      if (!sourceGroups.has(task.sourcePath)) {
+        sourceGroups.set(task.sourcePath, []);
+      }
+      sourceGroups.get(task.sourcePath).push(task);
+    }
+    const touchedFiles = /* @__PURE__ */ new Set();
+    for (const [archivePath, tasks] of archiveGroups) {
+      await this.appendToArchive(archivePath, tasks, settings);
+      touchedFiles.add(archivePath);
+    }
+    for (const [sourcePath, tasks] of sourceGroups) {
+      await this.removeFromSource(sourcePath, tasks);
+    }
+    return {
+      archived: completedTasks.length,
+      files: Array.from(touchedFiles)
+    };
+  }
+  getArchivePath(task, settings) {
+    const folder = settings.archiveFolderPath || "BuJo/Archive";
+    if (settings.archiveGroupBy === "source") {
+      const basename = task.sourcePath.replace(/\.md$/, "").split("/").pop() || "misc";
+      return `${folder}/${basename}.md`;
+    }
+    const date = task.dueDate || /* @__PURE__ */ new Date();
+    const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    return `${folder}/${month}.md`;
+  }
+  async ensureFolder(folderPath) {
+    const existing = this.vault.getAbstractFileByPath(folderPath);
+    if (existing instanceof import_obsidian7.TFolder)
+      return;
+    const parts = folderPath.split("/");
+    let current = "";
+    for (const part of parts) {
+      current = current ? `${current}/${part}` : part;
+      const folder = this.vault.getAbstractFileByPath(current);
+      if (!folder) {
+        await this.vault.createFolder(current);
+      }
+    }
+  }
+  async appendToArchive(archivePath, tasks, settings) {
+    var _a;
+    const folder = archivePath.substring(0, archivePath.lastIndexOf("/"));
+    await this.ensureFolder(folder);
+    let existingContent = "";
+    const file = this.vault.getAbstractFileByPath(archivePath);
+    if (file instanceof import_obsidian7.TFile) {
+      existingContent = await this.vault.read(file);
+    }
+    const lines = [];
+    if (!existingContent) {
+      const title = ((_a = archivePath.split("/").pop()) == null ? void 0 : _a.replace(/\.md$/, "")) || "Archive";
+      lines.push(`# Archived Tasks \u2014 ${title}`);
+      lines.push("");
+    }
+    const bySource = /* @__PURE__ */ new Map();
+    for (const task of tasks) {
+      if (!bySource.has(task.sourcePath)) {
+        bySource.set(task.sourcePath, []);
+      }
+      bySource.get(task.sourcePath).push(task);
+    }
+    for (const [source, sourceTasks] of bySource) {
+      const sourceName = source.replace(/\.md$/, "").split("/").pop() || source;
+      lines.push(`## From [[${sourceName}]]`);
+      lines.push("");
+      for (const task of sourceTasks) {
+        lines.push(task.rawLine);
+      }
+      lines.push("");
+    }
+    const newContent = existingContent ? existingContent.trimEnd() + "\n\n" + lines.join("\n") : lines.join("\n");
+    if (file instanceof import_obsidian7.TFile) {
+      await this.vault.modify(file, newContent);
+    } else {
+      await this.vault.create(archivePath, newContent);
+    }
+  }
+  async removeFromSource(sourcePath, tasks) {
+    var _a, _b;
+    const file = this.vault.getAbstractFileByPath(sourcePath);
+    if (!(file instanceof import_obsidian7.TFile))
+      return;
+    const content = await this.vault.read(file);
+    const lines = content.split("\n");
+    const lineNumbers = new Set(tasks.map((t) => t.lineNumber));
+    const sortedLineNums = Array.from(lineNumbers).sort((a, b) => a - b);
+    const allLinesToRemove = /* @__PURE__ */ new Set();
+    for (const lineNum of sortedLineNums) {
+      allLinesToRemove.add(lineNum);
+      const taskLine = lines[lineNum];
+      const taskIndent = (((_a = taskLine.match(/^(\s*)/)) == null ? void 0 : _a[1]) || "").length;
+      for (let j = lineNum + 1; j < lines.length; j++) {
+        const nextLine = lines[j];
+        if (nextLine.trim().length === 0)
+          break;
+        if (nextLine.match(/^#{1,6}\s/))
+          break;
+        if (nextLine.match(/^\s*-\s*\[/))
+          break;
+        const nextIndent = (((_b = nextLine.match(/^(\s*)/)) == null ? void 0 : _b[1]) || "").length;
+        if (nextIndent <= taskIndent)
+          break;
+        allLinesToRemove.add(j);
+      }
+    }
+    const newLines = lines.filter((_, idx) => !allLinesToRemove.has(idx));
+    await this.vault.modify(file, newLines.join("\n"));
+  }
+};
+
 // src/ui/TaskBuJoView.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 
 // src/ui/components/ViewSwitcher.ts
 var ViewSwitcher = class {
@@ -2628,9 +2922,12 @@ var ViewSwitcher = class {
       { mode: "daily" /* Daily */, label: "Daily" },
       { mode: "weekly" /* Weekly */, label: "Weekly" },
       { mode: "monthly" /* Monthly */, label: "Monthly" },
+      { mode: "calendar" /* Calendar */, label: "Calendar" },
       { mode: "sprint" /* Sprint */, label: "Sprint" },
       { mode: "overdue" /* Overdue */, label: "Overdue" },
       { mode: "overview" /* Overview */, label: "Overview" },
+      { mode: "eisenhower" /* Eisenhower */, label: "Eisenhower" },
+      { mode: "impactEffort" /* ImpactEffort */, label: "Impact/Effort" },
       { mode: "analytics" /* Analytics */, label: "Analytics" }
     ];
     for (const { mode, label } of tabs) {
@@ -2782,7 +3079,7 @@ var GroupHeader = class {
 };
 
 // src/ui/icons.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 var PRIORITY_CLASSES = {
   high: "task-bujo-priority-high",
   medium: "task-bujo-priority-medium",
@@ -2933,6 +3230,11 @@ var TaskItemRow = class {
     if (task.status === ">" /* Migrated */) {
       textSpan.addClass("task-bujo-task-migrated");
     }
+    if (task.description) {
+      const descToggle = this.el.createSpan({ cls: "task-bujo-desc-toggle" });
+      descToggle.textContent = "\u2026";
+      descToggle.setAttribute("title", "Show/hide description");
+    }
     if (isParent && isCollapsed && callbacks.getTaskById) {
       const progress = getChildProgress(task, callbacks.getTaskById);
       const badge = this.el.createSpan({ cls: "task-bujo-subtask-progress" });
@@ -2949,6 +3251,22 @@ var TaskItemRow = class {
       this.callbacks.onClickSource(task);
     });
     this.el.appendChild(sourceEl);
+    if (task.description) {
+      const descEl = this.el.createDiv({
+        cls: "task-bujo-task-description task-bujo-task-description-hidden"
+      });
+      descEl.textContent = task.description;
+      const toggle = this.el.querySelector(".task-bujo-desc-toggle");
+      if (toggle) {
+        toggle.addEventListener("click", (e) => {
+          e.stopPropagation();
+          descEl.toggleClass(
+            "task-bujo-task-description-hidden",
+            !descEl.hasClass("task-bujo-task-description-hidden")
+          );
+        });
+      }
+    }
   }
   getElement() {
     return this.el;
@@ -3066,23 +3384,33 @@ var DailyView = class {
     }
     const overdue = [];
     const carriedOver = [];
+    const dailyLog = [];
     const dueToday = [];
     const unscheduled = [];
+    const upcoming = [];
     let pendingCount = 0;
-    const todayDailyPath = this.settings.dailyNotePath ? `${this.settings.dailyNotePath}/${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}.md` : null;
+    const todayDailyPath = this.settings.dailyNotePath ? `${this.settings.dailyNotePath}/${formatDateISO(today)}.md` : null;
     for (const t of tasks) {
       if (t.status === " " /* Open */ && t.dueDate && t.dueDate < today) {
         overdue.push(t);
         pendingCount++;
-      } else if (t.migratedFrom && todayDailyPath && t.sourcePath === todayDailyPath && t.status === " " /* Open */) {
+      } else if (t.migratedFrom && todayDailyPath && t.sourcePath === todayDailyPath) {
         carriedOver.push(t);
-        pendingCount++;
+        if (t.status === " " /* Open */)
+          pendingCount++;
+      } else if (todayDailyPath && t.sourcePath === todayDailyPath) {
+        dailyLog.push(t);
+        if (t.status === " " /* Open */)
+          pendingCount++;
       } else if (t.dueDate && t.dueDate.toDateString() === todayStr) {
         dueToday.push(t);
         if (t.status === " " /* Open */)
           pendingCount++;
       } else if (t.status === " " /* Open */ && !t.dueDate) {
         unscheduled.push(t);
+        pendingCount++;
+      } else if (t.status === " " /* Open */ && t.dueDate) {
+        upcoming.push(t);
         pendingCount++;
       }
     }
@@ -3092,8 +3420,10 @@ var DailyView = class {
     const sections = [
       ["Overdue", overdue],
       ["Carried Over", carriedOver],
+      ["Daily Log", dailyLog],
       ["Due Today", dueToday],
-      ["Unscheduled", unscheduled]
+      ["Unscheduled", unscheduled],
+      ["Upcoming", upcoming]
     ];
     for (const [label, items] of sections) {
       const sectionEl = this.el.createDiv({ cls: "task-bujo-section" });
@@ -3425,7 +3755,7 @@ var STATUS_TRANSITIONS = {
   "done": { left: "in-progress", right: null }
 };
 var SprintView = class {
-  constructor(container, store, sprintService, topicService, topics, settings, onNewSprint, onEndSprint, onNewTopic, onTopicClick, isDragging, searchQuery = "") {
+  constructor(container, store, sprintService, topicService, topics, settings, onNewSprint, onEndSprint, onNewTopic, onTopicClick, onEditSprint, isDragging, searchQuery = "") {
     this.container = container;
     this.store = store;
     this.sprintService = sprintService;
@@ -3436,6 +3766,7 @@ var SprintView = class {
     this.onEndSprint = onEndSprint;
     this.onNewTopic = onNewTopic;
     this.onTopicClick = onTopicClick;
+    this.onEditSprint = onEditSprint;
     this.isDragging = isDragging;
     this.searchQuery = searchQuery;
     this.el = container.createDiv({ cls: "task-bujo-sprint-view" });
@@ -3473,7 +3804,10 @@ var SprintView = class {
     }
     const header = this.el.createDiv({ cls: "task-bujo-sprint-header" });
     const headerInfo = header.createDiv({ cls: "task-bujo-sprint-header-info" });
-    headerInfo.createSpan({ cls: "task-bujo-sprint-name", text: sprint.name });
+    const nameEl = headerInfo.createSpan({ cls: "task-bujo-sprint-name", text: sprint.name });
+    nameEl.setAttribute("title", "Click to edit sprint");
+    nameEl.style.cursor = "pointer";
+    nameEl.addEventListener("click", () => this.onEditSprint(sprint));
     headerInfo.createSpan({
       cls: "task-bujo-sprint-dates",
       text: ` ${startDate.toLocaleDateString()} \u2013 ${endDate.toLocaleDateString()}`
@@ -3482,6 +3816,12 @@ var SprintView = class {
       cls: "task-bujo-sprint-remaining",
       text: ` \xB7 ${daysRemaining} ${dayLabel} remaining`
     });
+    const editBtn = headerInfo.createEl("button", {
+      cls: "task-bujo-btn task-bujo-sprint-edit-btn",
+      text: "Edit"
+    });
+    editBtn.setAttribute("title", "Edit sprint name and dates");
+    editBtn.addEventListener("click", () => this.onEditSprint(sprint));
     const addTopicBtn = header.createEl("button", {
       cls: "task-bujo-btn",
       text: "+ Topic"
@@ -3882,16 +4222,422 @@ var AnalyticsView = class {
   }
 };
 
+// src/ui/components/CalendarView.ts
+var MONTH_NAMES2 = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+var DAY_LABELS_SUNDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+var CalendarView = class {
+  constructor(container, store, settings, callbacks, searchQuery) {
+    this.store = store;
+    this.settings = settings;
+    this.callbacks = callbacks;
+    this.searchQuery = searchQuery;
+    this.selectedDay = null;
+    this.el = container.createDiv({ cls: "task-bujo-calendar" });
+    const now = /* @__PURE__ */ new Date();
+    this.selectedMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+  render() {
+    this.el.empty();
+    this.renderHeader();
+    this.renderDayLabels();
+    this.renderGrid();
+    if (this.selectedDay) {
+      this.renderDayDetail(this.selectedDay);
+    }
+  }
+  renderHeader() {
+    const header = this.el.createDiv({ cls: "task-bujo-calendar-header" });
+    const prevBtn = header.createEl("button", {
+      cls: "task-bujo-calendar-nav",
+      text: "\u2039"
+    });
+    prevBtn.addEventListener("click", () => {
+      this.selectedMonth = new Date(
+        this.selectedMonth.getFullYear(),
+        this.selectedMonth.getMonth() - 1,
+        1
+      );
+      this.selectedDay = null;
+      this.render();
+    });
+    const title = header.createSpan({ cls: "task-bujo-calendar-title" });
+    title.textContent = `${MONTH_NAMES2[this.selectedMonth.getMonth()]} ${this.selectedMonth.getFullYear()}`;
+    const nextBtn = header.createEl("button", {
+      cls: "task-bujo-calendar-nav",
+      text: "\u203A"
+    });
+    nextBtn.addEventListener("click", () => {
+      this.selectedMonth = new Date(
+        this.selectedMonth.getFullYear(),
+        this.selectedMonth.getMonth() + 1,
+        1
+      );
+      this.selectedDay = null;
+      this.render();
+    });
+    const todayBtn = header.createEl("button", {
+      cls: "task-bujo-calendar-nav task-bujo-calendar-today-btn",
+      text: "Today"
+    });
+    todayBtn.addEventListener("click", () => {
+      const now = /* @__PURE__ */ new Date();
+      this.selectedMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      this.selectedDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      this.render();
+    });
+  }
+  renderDayLabels() {
+    const labels = this.el.createDiv({ cls: "task-bujo-calendar-day-labels" });
+    const weekStart = this.settings.weekStartDay;
+    for (let i = 0; i < 7; i++) {
+      const dayIndex = (weekStart + i) % 7;
+      labels.createDiv({
+        cls: "task-bujo-calendar-day-label",
+        text: DAY_LABELS_SUNDAY[dayIndex]
+      });
+    }
+  }
+  renderGrid() {
+    const grid = this.el.createDiv({ cls: "task-bujo-calendar-grid" });
+    const year = this.selectedMonth.getFullYear();
+    const month = this.selectedMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const weekStart = this.settings.weekStartDay;
+    const rangeStart = new Date(year, month, 1 - (firstDay.getDay() - weekStart + 7) % 7);
+    const totalCells = Math.ceil((daysInMonth + (firstDay.getDay() - weekStart + 7) % 7) / 7) * 7;
+    const rangeEnd = new Date(rangeStart);
+    rangeEnd.setDate(rangeEnd.getDate() + totalCells - 1);
+    rangeEnd.setHours(23, 59, 59, 999);
+    const allTasks = this.store.getTasksForDateRange(rangeStart, rangeEnd);
+    let tasks = allTasks;
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase();
+      tasks = tasks.filter((t) => t.text.toLowerCase().includes(q));
+    }
+    const tasksByDay = /* @__PURE__ */ new Map();
+    for (const task of tasks) {
+      if (!task.dueDate)
+        continue;
+      const key = `${task.dueDate.getFullYear()}-${task.dueDate.getMonth()}-${task.dueDate.getDate()}`;
+      if (!tasksByDay.has(key))
+        tasksByDay.set(key, []);
+      tasksByDay.get(key).push(task);
+    }
+    const today = /* @__PURE__ */ new Date();
+    for (let i = 0; i < totalCells; i++) {
+      const cellDate = new Date(rangeStart);
+      cellDate.setDate(cellDate.getDate() + i);
+      const cell = grid.createDiv({ cls: "task-bujo-calendar-cell" });
+      const isCurrentMonth = cellDate.getMonth() === month;
+      const isTodayCell = isToday(cellDate, today);
+      const isSelected = this.selectedDay && isSameDay(cellDate, this.selectedDay);
+      if (!isCurrentMonth)
+        cell.addClass("task-bujo-calendar-other-month");
+      if (isTodayCell)
+        cell.addClass("task-bujo-calendar-today");
+      if (isSelected)
+        cell.addClass("task-bujo-calendar-selected");
+      cell.createDiv({
+        cls: "task-bujo-calendar-day-number",
+        text: String(cellDate.getDate())
+      });
+      const key = `${cellDate.getFullYear()}-${cellDate.getMonth()}-${cellDate.getDate()}`;
+      const dayTasks = tasksByDay.get(key) || [];
+      if (dayTasks.length > 0) {
+        const dots = cell.createDiv({ cls: "task-bujo-calendar-task-dots" });
+        const maxDots = 4;
+        const shown = dayTasks.slice(0, maxDots);
+        for (const t of shown) {
+          const dot = dots.createSpan({ cls: "task-bujo-calendar-dot" });
+          if (t.priority === "high" /* High */)
+            dot.addClass("task-bujo-priority-high");
+          else if (t.priority === "medium" /* Medium */)
+            dot.addClass("task-bujo-priority-medium");
+          else if (t.priority === "low" /* Low */)
+            dot.addClass("task-bujo-priority-low");
+          else
+            dot.addClass("task-bujo-calendar-dot-default");
+        }
+        if (dayTasks.length > maxDots) {
+          dots.createSpan({
+            cls: "task-bujo-calendar-dot-more",
+            text: `+${dayTasks.length - maxDots}`
+          });
+        }
+      }
+      const clickDate = new Date(cellDate);
+      cell.addEventListener("click", () => {
+        this.selectedDay = clickDate;
+        this.render();
+      });
+    }
+  }
+  renderDayDetail(date) {
+    const detail = this.el.createDiv({ cls: "task-bujo-calendar-detail" });
+    const dayLabel = detail.createDiv({ cls: "task-bujo-calendar-detail-header" });
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    dayLabel.textContent = `${days[date.getDay()]}, ${MONTH_NAMES2[date.getMonth()]} ${date.getDate()}`;
+    let dayTasks = this.store.getTasksForDate(date);
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase();
+      dayTasks = dayTasks.filter((t) => t.text.toLowerCase().includes(q));
+    }
+    if (dayTasks.length === 0) {
+      detail.createDiv({
+        cls: "task-bujo-empty",
+        text: "No tasks due on this day."
+      });
+      return;
+    }
+    const list = detail.createDiv({ cls: "task-bujo-calendar-detail-list" });
+    for (const task of dayTasks) {
+      new TaskItemRow(list, task, this.callbacks);
+    }
+  }
+};
+
+// src/ui/components/EisenhowerView.ts
+var EisenhowerView = class {
+  constructor(container, store, settings, callbacks, searchQuery, collapsedGroups) {
+    this.store = store;
+    this.settings = settings;
+    this.callbacks = callbacks;
+    this.searchQuery = searchQuery;
+    this.collapsedGroups = collapsedGroups;
+    this.el = container.createDiv({ cls: "task-bujo-eisenhower" });
+  }
+  render() {
+    this.el.empty();
+    let tasks = this.store.getTasks().filter(
+      (t) => t.parentId === null && t.status === " " /* Open */
+    );
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase();
+      tasks = tasks.filter((t) => t.text.toLowerCase().includes(q));
+    }
+    const q1 = [];
+    const q2 = [];
+    const q3 = [];
+    const q4 = [];
+    const unscheduled = [];
+    for (const task of tasks) {
+      if (!task.dueDate) {
+        unscheduled.push(task);
+        continue;
+      }
+      const urgent = this.isUrgent(task);
+      const important = this.isImportant(task);
+      if (urgent && important)
+        q1.push(task);
+      else if (!urgent && important)
+        q2.push(task);
+      else if (urgent && !important)
+        q3.push(task);
+      else
+        q4.push(task);
+    }
+    const quadrants = [
+      { key: "q1", title: "\u{1F525} Do Now", subtitle: "Urgent & Important", cls: "task-bujo-eisenhower-q1", tasks: q1 },
+      { key: "q2", title: "\u{1F3AF} Plan Deep Work", subtitle: "Important, Not Urgent", cls: "task-bujo-eisenhower-q2", tasks: q2 },
+      { key: "q3", title: "\u{1F91D} Coordinate", subtitle: "Urgent, Not Important", cls: "task-bujo-eisenhower-q3", tasks: q3 },
+      { key: "q4", title: "\u{1F4E6} Batch Later", subtitle: "Not Urgent, Not Important", cls: "task-bujo-eisenhower-q4", tasks: q4 }
+    ];
+    const axisRow = this.el.createDiv({ cls: "task-bujo-eisenhower-axis-labels" });
+    axisRow.createDiv();
+    axisRow.createDiv({ cls: "task-bujo-eisenhower-axis-label", text: "Urgent" });
+    axisRow.createDiv({ cls: "task-bujo-eisenhower-axis-label", text: "Not Urgent" });
+    const grid = this.el.createDiv({ cls: "task-bujo-eisenhower-grid" });
+    for (const q of quadrants) {
+      this.renderQuadrant(grid, q);
+    }
+    const unscheduledQuadrant = {
+      key: "unscheduled",
+      title: "Inbox",
+      subtitle: "No due date \u2014 needs scheduling",
+      cls: "task-bujo-eisenhower-unscheduled",
+      tasks: unscheduled
+    };
+    this.renderQuadrant(this.el, unscheduledQuadrant);
+  }
+  renderQuadrant(container, quadrant) {
+    const el = container.createDiv({ cls: `task-bujo-eisenhower-quadrant ${quadrant.cls}` });
+    const header = el.createDiv({ cls: "task-bujo-eisenhower-quadrant-header" });
+    const titleArea = header.createDiv();
+    titleArea.createDiv({ cls: "task-bujo-eisenhower-quadrant-title", text: quadrant.title });
+    titleArea.createDiv({ cls: "task-bujo-eisenhower-quadrant-subtitle", text: quadrant.subtitle });
+    header.createDiv({ cls: "task-bujo-eisenhower-quadrant-count", text: String(quadrant.tasks.length) });
+    const list = el.createDiv({ cls: "task-bujo-eisenhower-task-list" });
+    if (quadrant.tasks.length === 0) {
+      list.createDiv({ cls: "task-bujo-empty", text: "No tasks" });
+      return;
+    }
+    for (const task of quadrant.tasks) {
+      new TaskItemRow(list, task, this.callbacks);
+    }
+  }
+  isUrgent(task) {
+    if (!task.dueDate)
+      return false;
+    const now = /* @__PURE__ */ new Date();
+    now.setHours(0, 0, 0, 0);
+    const diffMs = task.dueDate.getTime() - now.getTime();
+    const diffDays = diffMs / (1e3 * 60 * 60 * 24);
+    return diffDays <= this.settings.urgencyThresholdDays;
+  }
+  isImportant(task) {
+    return task.priority === "high" /* High */ || task.priority === "medium" /* Medium */;
+  }
+};
+
+// src/ui/components/ImpactEffortView.ts
+var HIGH_IMPACT_PURPOSES = ["Delivery", "Strategy"];
+var LOW_IMPACT_PURPOSES = ["Capability", "Support"];
+function calculateImpact(task) {
+  var _a;
+  const priorityWeight = {
+    ["high" /* High */]: 3,
+    ["medium" /* Medium */]: 2,
+    ["low" /* Low */]: 1,
+    ["none" /* None */]: 0
+  };
+  const pw = (_a = priorityWeight[task.priority]) != null ? _a : 0;
+  let ppw = 0;
+  if (task.purpose) {
+    if (HIGH_IMPACT_PURPOSES.includes(task.purpose))
+      ppw = 2;
+    else if (LOW_IMPACT_PURPOSES.includes(task.purpose))
+      ppw = 1;
+  }
+  const score = pw + ppw;
+  if (score >= 4)
+    return "high";
+  if (score >= 2)
+    return "medium";
+  return "low";
+}
+function getUrgencyBadge(task) {
+  if (!task.dueDate)
+    return null;
+  const now = /* @__PURE__ */ new Date();
+  now.setHours(0, 0, 0, 0);
+  const diffDays = (task.dueDate.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24);
+  if (diffDays < 0)
+    return "\u{1F534}";
+  if (diffDays <= 7)
+    return "\u{1F7E1}";
+  return null;
+}
+var ImpactEffortView = class {
+  constructor(container, store, settings, callbacks, searchQuery, collapsedGroups) {
+    this.store = store;
+    this.settings = settings;
+    this.callbacks = callbacks;
+    this.searchQuery = searchQuery;
+    this.collapsedGroups = collapsedGroups;
+    this.el = container.createDiv({ cls: "task-bujo-impact-effort" });
+  }
+  render() {
+    this.el.empty();
+    let tasks = this.store.getTasks().filter(
+      (t) => t.parentId === null && t.status === " " /* Open */
+    );
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase();
+      tasks = tasks.filter((t) => t.text.toLowerCase().includes(q));
+    }
+    const quickWins = [];
+    const bigBets = [];
+    const fillIns = [];
+    const timeSinks = [];
+    const inbox = [];
+    for (const task of tasks) {
+      if (!task.effort) {
+        inbox.push(task);
+        continue;
+      }
+      const impact = calculateImpact(task);
+      const isHighImpact = impact === "high" || impact === "medium";
+      const isSmallEffort = task.effort === "S";
+      if (isHighImpact && isSmallEffort)
+        quickWins.push(task);
+      else if (isHighImpact && !isSmallEffort)
+        bigBets.push(task);
+      else if (!isHighImpact && isSmallEffort)
+        fillIns.push(task);
+      else
+        timeSinks.push(task);
+    }
+    const quadrants = [
+      { key: "quickwins", title: "\u{1F3AF} Quick Wins", subtitle: "High Impact + Small Effort \u2014 Do these first", cls: "task-bujo-ie-quickwins", tasks: quickWins },
+      { key: "bigbets", title: "\u{1F680} Big Bets", subtitle: "High Impact + Med/Large Effort \u2014 Block deep work", cls: "task-bujo-ie-bigbets", tasks: bigBets },
+      { key: "fillins", title: "\u{1F4CB} Fill-ins", subtitle: "Low Impact + Small Effort \u2014 Between meetings", cls: "task-bujo-ie-fillins", tasks: fillIns },
+      { key: "timesinks", title: "\u26A0\uFE0F Time Sinks", subtitle: "Low Impact + Med/Large Effort \u2014 Rethink", cls: "task-bujo-ie-timesinks", tasks: timeSinks }
+    ];
+    const axisRow = this.el.createDiv({ cls: "task-bujo-ie-axis-labels" });
+    axisRow.createDiv();
+    axisRow.createDiv({ cls: "task-bujo-ie-axis-label", text: "Small Effort" });
+    axisRow.createDiv({ cls: "task-bujo-ie-axis-label", text: "Medium / Large Effort" });
+    const grid = this.el.createDiv({ cls: "task-bujo-ie-grid" });
+    for (const q of quadrants) {
+      this.renderQuadrant(grid, q);
+    }
+    const inboxQuadrant = {
+      key: "inbox",
+      title: "\u{1F4E5} Inbox",
+      subtitle: "No effort estimate \u2014 needs sizing",
+      cls: "task-bujo-ie-inbox",
+      tasks: inbox
+    };
+    this.renderQuadrant(this.el, inboxQuadrant);
+  }
+  renderQuadrant(container, quadrant) {
+    const el = container.createDiv({ cls: `task-bujo-ie-quadrant ${quadrant.cls}` });
+    const header = el.createDiv({ cls: "task-bujo-ie-quadrant-header" });
+    const titleArea = header.createDiv();
+    titleArea.createDiv({ cls: "task-bujo-ie-quadrant-title", text: quadrant.title });
+    titleArea.createDiv({ cls: "task-bujo-ie-quadrant-subtitle", text: quadrant.subtitle });
+    header.createDiv({ cls: "task-bujo-ie-quadrant-count", text: String(quadrant.tasks.length) });
+    const list = el.createDiv({ cls: "task-bujo-ie-task-list" });
+    if (quadrant.tasks.length === 0) {
+      list.createDiv({ cls: "task-bujo-empty", text: "No tasks" });
+      return;
+    }
+    for (const task of quadrant.tasks) {
+      const row = list.createDiv({ cls: "task-bujo-ie-task-row" });
+      const badge = getUrgencyBadge(task);
+      if (badge) {
+        row.createSpan({ cls: "task-bujo-urgency-badge", text: badge });
+      }
+      new TaskItemRow(row, task, this.callbacks);
+    }
+  }
+};
+
 // src/ui/components/SyntaxReference.ts
-var import_obsidian8 = require("obsidian");
-var SyntaxReferenceModal = class extends import_obsidian8.Modal {
+var import_obsidian9 = require("obsidian");
+var SyntaxReferenceModal = class extends import_obsidian9.Modal {
   constructor(app) {
     super(app);
   }
   /** Try to get the active markdown editor (if any) */
   getActiveEditor() {
     var _a;
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian8.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian9.MarkdownView);
     return (_a = view == null ? void 0 : view.editor) != null ? _a : null;
   }
   /** Insert text at cursor position in the active editor */
@@ -3945,6 +4691,12 @@ var SyntaxReferenceModal = class extends import_obsidian8.Modal {
       ["", ""],
       ["@due 20-03-2026", "Due date (DD-MM-YYYY)"],
       ["@due 20-03", "Due date (DD-MM, nearest future)"],
+      ["@due today", "Due today"],
+      ["@due tomorrow", "Due tomorrow"],
+      ["@due next friday", "Due next Friday"],
+      ["@due in 3 days", "Due in 3 days"],
+      ["@due next week", "Due next Monday"],
+      ["@due end of month", "Due end of month"],
       ["", ""],
       ["#type/task", "Force classify as Task"],
       ["#type/openpoint", "Force classify as Open Point"],
@@ -3952,6 +4704,9 @@ var SyntaxReferenceModal = class extends import_obsidian8.Modal {
       ["", ""],
       ["#work/name or #w/CODE", "Work type tag"],
       ["#purpose/name or #p/CODE", "Purpose tag"],
+      ["#effort/S", "Small effort estimate"],
+      ["#effort/M", "Medium effort estimate"],
+      ["#effort/L", "Large effort estimate"],
       ["", ""],
       ["(from [[PageName]])", "Migration source link"],
       ["", ""],
@@ -4017,11 +4772,11 @@ var SyntaxReferenceModal = class extends import_obsidian8.Modal {
 };
 
 // src/ui/components/AddTaskBar.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/ui/InsertTaskModal.ts
-var import_obsidian9 = require("obsidian");
-var InsertTaskModal = class extends import_obsidian9.Modal {
+var import_obsidian10 = require("obsidian");
+var InsertTaskModal = class extends import_obsidian10.Modal {
   constructor(app, onSubmit, workTypes = [], purposes = []) {
     super(app);
     this.onSubmit = onSubmit;
@@ -4033,22 +4788,24 @@ var InsertTaskModal = class extends import_obsidian9.Modal {
     this.typeTag = "";
     this.workType = "";
     this.purpose = "";
+    this.effort = "";
+    this.description = "";
   }
   onOpen() {
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-insert-modal");
-    contentEl.createEl("h2", { text: "Insert Task" });
-    new import_obsidian9.Setting(contentEl).setName("Task text").addText((text) => {
+    contentEl.createEl("h2", { text: "Quick Create Task" });
+    new import_obsidian10.Setting(contentEl).setName("Task text").addText((text) => {
       text.setPlaceholder("What needs to be done?").onChange((v) => {
         this.text = v;
       });
       text.inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter")
+        if (e.key === "Enter" && !e.shiftKey)
           this.submit();
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian9.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian10.Setting(contentEl).setName("Priority").addDropdown(
       (dd) => dd.addOptions({
         none: "None",
         high: "High",
@@ -4058,13 +4815,23 @@ var InsertTaskModal = class extends import_obsidian9.Modal {
         this.priority = v;
       })
     );
-    new import_obsidian9.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian10.Setting(contentEl).setName("Effort").setDesc("For Impact/Effort matrix").addDropdown(
+      (dd) => dd.addOptions({
+        "": "None",
+        "S": "Small",
+        "M": "Medium",
+        "L": "Large"
+      }).onChange((v) => {
+        this.effort = v;
+      })
+    );
+    new import_obsidian10.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.onChange((v) => {
         this.dueDate = v ? isoToPluginDate(v) : "";
       });
     });
-    new import_obsidian9.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
+    new import_obsidian10.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
       (dd) => dd.addOptions({
         "": "Auto (from heading)",
         "task": "Task",
@@ -4074,7 +4841,7 @@ var InsertTaskModal = class extends import_obsidian9.Modal {
       })
     );
     if (this.workTypes.length > 0) {
-      new import_obsidian9.Setting(contentEl).setName("Work type").addDropdown((dd) => {
+      new import_obsidian10.Setting(contentEl).setName("Work type").addDropdown((dd) => {
         const options = { "": "None" };
         for (const wt of this.workTypes) {
           options[wt.shortCode] = `${wt.name} (${wt.shortCode})`;
@@ -4085,7 +4852,7 @@ var InsertTaskModal = class extends import_obsidian9.Modal {
       });
     }
     if (this.purposes.length > 0) {
-      new import_obsidian9.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
+      new import_obsidian10.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
         const options = { "": "None" };
         for (const p of this.purposes) {
           options[p.shortCode] = `${p.name} (${p.shortCode})`;
@@ -4095,21 +4862,38 @@ var InsertTaskModal = class extends import_obsidian9.Modal {
         });
       });
     }
-    new import_obsidian9.Setting(contentEl).addButton(
-      (btn) => btn.setButtonText("Insert").setCta().onClick(() => this.submit())
+    const descSetting = new import_obsidian10.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
+    const descArea = descSetting.controlEl.createEl("textarea", {
+      cls: "task-bujo-insert-description",
+      attr: { rows: "3", placeholder: "Additional context, notes, links..." }
+    });
+    descArea.addEventListener("input", () => {
+      this.description = descArea.value;
+    });
+    new import_obsidian10.Setting(contentEl).addButton(
+      (btn) => btn.setButtonText("Create").setCta().onClick(() => this.submit())
     );
   }
   submit() {
     if (!this.text.trim())
       return;
-    this.onSubmit(this.text.trim(), this.priority, this.dueDate.trim(), this.typeTag, this.workType, this.purpose);
+    this.onSubmit({
+      text: this.text.trim(),
+      priority: this.priority,
+      dueDate: this.dueDate.trim(),
+      typeTag: this.typeTag,
+      workType: this.workType,
+      purpose: this.purpose,
+      effort: this.effort,
+      description: this.description.trim()
+    });
     this.close();
   }
   onClose() {
     this.contentEl.empty();
   }
 };
-function buildTaskLine(text, priority, dueDate, typeTag = "", workType = "", purpose = "") {
+function buildTaskLine(text, priority, dueDate, typeTag = "", workType = "", purpose = "", effort = "") {
   const parts = [`- [ ] ${text}`];
   if (priority && priority !== "none")
     parts.push(`#priority/${priority}`);
@@ -4121,7 +4905,16 @@ function buildTaskLine(text, priority, dueDate, typeTag = "", workType = "", pur
     parts.push(`#w/${workType}`);
   if (purpose)
     parts.push(`#p/${purpose}`);
+  if (effort)
+    parts.push(`#effort/${effort}`);
   return parts.join(" ");
+}
+function buildTaskBlock(text, priority, dueDate, typeTag, workType, purpose, effort, description) {
+  const taskLine = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose, effort);
+  if (!description)
+    return taskLine;
+  const descLines = description.split("\n").map((line) => `    ${line}`).join("\n");
+  return taskLine + "\n" + descLines;
 }
 
 // src/ui/components/AddTaskBar.ts
@@ -4186,7 +4979,7 @@ var AddTaskBar = class {
     const dateStr = formatDateISO(today);
     const filePath = `${settings.dailyNotePath}/${dateStr}.md`;
     const existing = this.app.vault.getAbstractFileByPath(filePath);
-    if (existing && existing instanceof import_obsidian10.TFile) {
+    if (existing && existing instanceof import_obsidian11.TFile) {
       const content = await this.app.vault.read(existing);
       const insertAfterHeading = this.findTasksSection(content);
       if (insertAfterHeading !== -1) {
@@ -4237,8 +5030,8 @@ ${taskLine}
 };
 
 // src/ui/SprintModal.ts
-var import_obsidian11 = require("obsidian");
-var SprintModal = class extends import_obsidian11.Modal {
+var import_obsidian12 = require("obsidian");
+var SprintModal = class extends import_obsidian12.Modal {
   constructor(app, sprintService, settings, onSave, editSprint) {
     super(app);
     this.sprintService = sprintService;
@@ -4260,7 +5053,7 @@ var SprintModal = class extends import_obsidian11.Modal {
     contentEl.createEl("h2", {
       text: this.editSprint ? "Edit Sprint" : "Create Sprint"
     });
-    new import_obsidian11.Setting(contentEl).setName("Sprint Name").addText((text) => {
+    new import_obsidian12.Setting(contentEl).setName("Sprint Name").addText((text) => {
       text.setValue(this.name).onChange((value) => {
         this.name = value;
       });
@@ -4270,7 +5063,7 @@ var SprintModal = class extends import_obsidian11.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian11.Setting(contentEl).setName("Start Date").addText((text) => {
+    new import_obsidian12.Setting(contentEl).setName("Start Date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.startDate;
       text.onChange((value) => {
@@ -4278,7 +5071,7 @@ var SprintModal = class extends import_obsidian11.Modal {
         this.updateDuration();
       });
     });
-    new import_obsidian11.Setting(contentEl).setName("End Date").addText((text) => {
+    new import_obsidian12.Setting(contentEl).setName("End Date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.endDate;
       text.onChange((value) => {
@@ -4289,7 +5082,7 @@ var SprintModal = class extends import_obsidian11.Modal {
     this.durationEl = contentEl.createEl("p");
     this.updateDuration();
     this.errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
-    new import_obsidian11.Setting(contentEl).addButton(
+    new import_obsidian12.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(() => this.save())
     );
   }
@@ -4346,8 +5139,8 @@ var SprintModal = class extends import_obsidian11.Modal {
 };
 
 // src/ui/SprintTopicModal.ts
-var import_obsidian12 = require("obsidian");
-var PageSuggestModal = class extends import_obsidian12.FuzzySuggestModal {
+var import_obsidian13 = require("obsidian");
+var PageSuggestModal = class extends import_obsidian13.FuzzySuggestModal {
   constructor(app, onChoose) {
     super(app);
     this.onChoose = onChoose;
@@ -4363,7 +5156,7 @@ var PageSuggestModal = class extends import_obsidian12.FuzzySuggestModal {
     this.onChoose(item);
   }
 };
-var SprintTopicModal = class extends import_obsidian12.Modal {
+var SprintTopicModal = class extends import_obsidian13.Modal {
   constructor(app, topicService, sprintId, onSave, editTopic) {
     super(app);
     this.topicService = topicService;
@@ -4389,7 +5182,7 @@ var SprintTopicModal = class extends import_obsidian12.Modal {
     contentEl.createEl("h2", {
       text: this.editTopic ? "Edit Topic" : "New Sprint Topic"
     });
-    new import_obsidian12.Setting(contentEl).setName("Title").addText((text) => {
+    new import_obsidian13.Setting(contentEl).setName("Title").addText((text) => {
       text.setPlaceholder("Topic title").setValue(this.title).onChange((value) => {
         this.title = value;
       });
@@ -4399,12 +5192,12 @@ var SprintTopicModal = class extends import_obsidian12.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian12.Setting(contentEl).setName("JIRA Ticket").setDesc("Optional JIRA ticket reference").addText(
+    new import_obsidian13.Setting(contentEl).setName("JIRA Ticket").setDesc("Optional JIRA ticket reference").addText(
       (text) => text.setPlaceholder("PROJ-123").setValue(this.jira).onChange((value) => {
         this.jira = value;
       })
     );
-    new import_obsidian12.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian13.Setting(contentEl).setName("Priority").addDropdown(
       (dropdown) => dropdown.addOptions({
         ["none" /* None */]: "None",
         ["low" /* Low */]: "Low",
@@ -4414,7 +5207,7 @@ var SprintTopicModal = class extends import_obsidian12.Modal {
         this.priority = value;
       })
     );
-    const linkedSetting = new import_obsidian12.Setting(contentEl).setName("Linked Pages").addButton(
+    const linkedSetting = new import_obsidian13.Setting(contentEl).setName("Linked Pages").addButton(
       (btn) => btn.setButtonText("+ Add Page").onClick(() => {
         new PageSuggestModal(this.app, (file) => {
           const pageName = file.path.replace(/\.md$/, "");
@@ -4428,7 +5221,7 @@ var SprintTopicModal = class extends import_obsidian12.Modal {
     this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: "task-bujo-page-chips" });
     this.renderChips();
     const errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
-    new import_obsidian12.Setting(contentEl).addButton(
+    new import_obsidian13.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
         errorEl.empty();
         if (!this.title.trim()) {
@@ -4493,8 +5286,8 @@ var SprintTopicModal = class extends import_obsidian12.Modal {
 };
 
 // src/ui/SprintCloseModal.ts
-var import_obsidian13 = require("obsidian");
-var SprintCloseModal = class extends import_obsidian13.Modal {
+var import_obsidian14 = require("obsidian");
+var SprintCloseModal = class extends import_obsidian14.Modal {
   constructor(app, sprint, topics, sprintService, topicService, onComplete) {
     super(app);
     this.sprint = sprint;
@@ -4645,8 +5438,8 @@ var SprintCloseModal = class extends import_obsidian13.Modal {
 };
 
 // src/ui/SubtaskConfirmModal.ts
-var import_obsidian14 = require("obsidian");
-var SubtaskConfirmModal = class extends import_obsidian14.Modal {
+var import_obsidian15 = require("obsidian");
+var SubtaskConfirmModal = class extends import_obsidian15.Modal {
   constructor(app, task, openChildCount, actionLabel = "Complete") {
     super(app);
     this.task = task;
@@ -4709,7 +5502,7 @@ var SubtaskConfirmModal = class extends import_obsidian14.Modal {
 };
 
 // src/ui/TaskBuJoView.ts
-var TaskBuJoView = class extends import_obsidian15.ItemView {
+var TaskBuJoView = class extends import_obsidian16.ItemView {
   constructor(leaf, store, writer, sprintService, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
     super(leaf);
     this.store = store;
@@ -4769,10 +5562,11 @@ var TaskBuJoView = class extends import_obsidian15.ItemView {
       }
     });
     this.contentContainer = containerEl.createDiv({ cls: "task-bujo-content" });
-    new AddTaskBar(containerEl, this.app, () => this.settings, {
+    const footer = containerEl.createDiv({ cls: "task-bujo-footer" });
+    new AddTaskBar(footer, this.app, () => this.settings, {
       onTaskAdded: () => this.refresh()
     });
-    const syntaxBtn = containerEl.createEl("button", {
+    const syntaxBtn = footer.createEl("button", {
       cls: "task-bujo-syntax-toggle",
       text: "Syntax Reference"
     });
@@ -4809,7 +5603,7 @@ var TaskBuJoView = class extends import_obsidian15.ItemView {
         let leaf = null;
         this.app.workspace.iterateAllLeaves((l) => {
           var _a;
-          if (!leaf && l.view instanceof import_obsidian15.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
+          if (!leaf && l.view instanceof import_obsidian16.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
             leaf = l;
           }
         });
@@ -4874,6 +5668,11 @@ var TaskBuJoView = class extends import_obsidian15.ItemView {
         view.render();
         break;
       }
+      case "calendar" /* Calendar */: {
+        const view = new CalendarView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery);
+        view.render();
+        break;
+      }
       case "sprint" /* Sprint */: {
         const activeSprint = this.sprintService.getActiveSprint();
         const topics = activeSprint ? this.scanner.getAllTopics().filter((t) => t.sprintId === activeSprint.id) : [];
@@ -4888,6 +5687,7 @@ var TaskBuJoView = class extends import_obsidian15.ItemView {
           (sprint) => this.onEndSprint(sprint),
           () => this.onNewTopic(),
           (topic) => this.onTopicClick(topic),
+          (sprint) => this.onEditSprint(sprint),
           this.isDragging,
           this.searchQuery
         );
@@ -4901,6 +5701,16 @@ var TaskBuJoView = class extends import_obsidian15.ItemView {
       }
       case "overview" /* Overview */: {
         const view = new OverviewView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
+        view.render();
+        break;
+      }
+      case "eisenhower" /* Eisenhower */: {
+        const view = new EisenhowerView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
+        view.render();
+        break;
+      }
+      case "impactEffort" /* ImpactEffort */: {
+        const view = new ImpactEffortView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery, this.collapsedGroups);
         view.render();
         break;
       }
@@ -4922,6 +5732,11 @@ var TaskBuJoView = class extends import_obsidian15.ItemView {
     new SprintModal(this.app, this.sprintService, this.settings, (_sprint) => {
       this.refresh();
     }).open();
+  }
+  onEditSprint(sprint) {
+    new SprintModal(this.app, this.sprintService, this.settings, (_sprint) => {
+      this.refresh();
+    }, sprint).open();
   }
   onEndSprint(sprint) {
     const topics = this.scanner.getAllTopics().filter((t) => t.sprintId === sprint.id);
@@ -4970,8 +5785,8 @@ var TaskBuJoView = class extends import_obsidian15.ItemView {
 };
 
 // src/ui/MigrationModal.ts
-var import_obsidian16 = require("obsidian");
-var MigrationModal = class extends import_obsidian16.Modal {
+var import_obsidian17 = require("obsidian");
+var MigrationModal = class extends import_obsidian17.Modal {
   constructor(app, migrationService, dailyNotes, store, reviewData, onComplete) {
     super(app);
     this.migrationService = migrationService;
@@ -5321,8 +6136,8 @@ var MigrationModal = class extends import_obsidian16.Modal {
 };
 
 // src/ui/WeeklyReviewModal.ts
-var import_obsidian17 = require("obsidian");
-var WeeklyReviewModal = class extends import_obsidian17.Modal {
+var import_obsidian18 = require("obsidian");
+var WeeklyReviewModal = class extends import_obsidian18.Modal {
   constructor(app, analyticsService, settings, weeklyHistory, onSaveSnapshot, precomputedStats) {
     super(app);
     this.analyticsService = analyticsService;
@@ -5400,8 +6215,8 @@ var WeeklyReviewModal = class extends import_obsidian17.Modal {
 };
 
 // src/ui/MonthlyMigrationModal.ts
-var import_obsidian18 = require("obsidian");
-var MonthlyMigrationModal = class extends import_obsidian18.Modal {
+var import_obsidian19 = require("obsidian");
+var MonthlyMigrationModal = class extends import_obsidian19.Modal {
   constructor(app, migrationService, store, reviewData, onComplete) {
     super(app);
     this.migrationService = migrationService;
@@ -5551,8 +6366,8 @@ var MonthlyMigrationModal = class extends import_obsidian18.Modal {
 };
 
 // src/ui/MonthlyReviewModal.ts
-var import_obsidian19 = require("obsidian");
-var MonthlyReviewModal = class extends import_obsidian19.Modal {
+var import_obsidian20 = require("obsidian");
+var MonthlyReviewModal = class extends import_obsidian20.Modal {
   constructor(app, monthlyAnalytics, monthlyNotes, store, settings, monthlyHistory, onSaveSnapshot) {
     super(app);
     this.monthlyAnalytics = monthlyAnalytics;
@@ -5668,8 +6483,8 @@ var MonthlyReviewModal = class extends import_obsidian19.Modal {
 };
 
 // src/ui/DueDateModal.ts
-var import_obsidian20 = require("obsidian");
-var DueDateModal = class extends import_obsidian20.Modal {
+var import_obsidian21 = require("obsidian");
+var DueDateModal = class extends import_obsidian21.Modal {
   constructor(app, currentDate, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -5680,7 +6495,7 @@ var DueDateModal = class extends import_obsidian20.Modal {
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-due-modal");
     contentEl.createEl("h3", { text: "Set Due Date" });
-    new import_obsidian20.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian21.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.isoValue;
       text.onChange((v) => {
@@ -5694,7 +6509,7 @@ var DueDateModal = class extends import_obsidian20.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    const btnContainer = new import_obsidian20.Setting(contentEl);
+    const btnContainer = new import_obsidian21.Setting(contentEl);
     btnContainer.addButton(
       (btn) => btn.setButtonText("Set").setCta().onClick(() => {
         this.onSubmit(this.value.trim());
@@ -5714,7 +6529,7 @@ var DueDateModal = class extends import_obsidian20.Modal {
 };
 
 // src/main.ts
-var TaskBuJoPlugin = class extends import_obsidian21.Plugin {
+var TaskBuJoPlugin = class extends import_obsidian22.Plugin {
   async onload() {
     var _a, _b, _c, _d;
     const saved = await this.loadData();
@@ -5755,6 +6570,7 @@ var TaskBuJoPlugin = class extends import_obsidian21.Plugin {
       () => this.settings,
       () => this.data
     );
+    this.archiveService = new ArchiveService(this.app.vault, this.store, () => this.settings);
     this.scanner.onChange(() => {
       this.store.setTasks(this.scanner.getAllTasks());
       this.updateStatusBar();
@@ -5827,26 +6643,48 @@ var TaskBuJoPlugin = class extends import_obsidian21.Plugin {
       callback: () => this.monthlyNoteService.getOrCreateMonthlyNote(/* @__PURE__ */ new Date())
     });
     this.addCommand({
+      id: "archive-completed",
+      name: "Archive Completed Tasks",
+      callback: async () => {
+        const result = await this.archiveService.archiveCompleted();
+        if (result.archived === 0) {
+          new import_obsidian22.Notice("No completed tasks to archive.");
+        } else {
+          new import_obsidian22.Notice(`Archived ${result.archived} task(s) to ${result.files.length} file(s).`);
+        }
+      }
+    });
+    this.addCommand({
       id: "insert-task-with-details",
-      name: "Insert Task with Priority & Due Date",
-      editorCallback: (editor) => {
-        new InsertTaskModal(this.app, (text, priority, dueDate, typeTag, workType, purpose) => {
-          const line = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose);
-          const cursor = editor.getCursor();
-          editor.replaceRange(line + "\n", { line: cursor.line + 1, ch: 0 });
-          editor.setCursor({ line: cursor.line + 1, ch: line.length });
+      name: "Quick Create Task",
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "t" }],
+      callback: () => {
+        new InsertTaskModal(this.app, async (result) => {
+          const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
+          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian22.MarkdownView);
+          if (activeView == null ? void 0 : activeView.editor) {
+            const editor = activeView.editor;
+            const cursor = editor.getCursor();
+            editor.replaceRange(block + "\n", { line: cursor.line + 1, ch: 0 });
+            const insertedLines = block.split("\n").length;
+            editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
+          } else {
+            await this.dailyNoteService.addRawTaskLine(block, /* @__PURE__ */ new Date());
+            new import_obsidian22.Notice("Task added to today's daily note");
+          }
         }, this.settings.workTypes, this.settings.purposes).open();
       }
     });
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
         menu.addItem((item) => {
-          item.setTitle("BuJo: Insert task here").setIcon("check-square").onClick(() => {
-            new InsertTaskModal(this.app, (text, priority, dueDate, typeTag, workType, purpose) => {
-              const line = buildTaskLine(text, priority, dueDate, typeTag, workType, purpose);
+          item.setTitle("BuJo: Quick create task").setIcon("check-square").onClick(() => {
+            new InsertTaskModal(this.app, (result) => {
+              const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.effort, result.description);
               const cursor2 = editor.getCursor();
-              editor.replaceRange(line + "\n", { line: cursor2.line + 1, ch: 0 });
-              editor.setCursor({ line: cursor2.line + 1, ch: line.length });
+              editor.replaceRange(block + "\n", { line: cursor2.line + 1, ch: 0 });
+              const insertedLines = block.split("\n").length;
+              editor.setCursor({ line: cursor2.line + insertedLines, ch: 0 });
             }, this.settings.workTypes, this.settings.purposes).open();
           });
         });

@@ -102,9 +102,12 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                         [BuJoViewMode.Daily]: 'Daily',
                         [BuJoViewMode.Weekly]: 'Weekly',
                         [BuJoViewMode.Monthly]: 'Monthly',
+                        [BuJoViewMode.Calendar]: 'Calendar',
                         [BuJoViewMode.Sprint]: 'Sprint',
                         [BuJoViewMode.Overdue]: 'Overdue',
                         [BuJoViewMode.Overview]: 'Overview',
+                        [BuJoViewMode.Eisenhower]: 'Eisenhower',
+                        [BuJoViewMode.ImpactEffort]: 'Impact/Effort',
                         [BuJoViewMode.Analytics]: 'Analytics',
                     })
                     .setValue(this.plugin.settings.defaultViewMode)
@@ -271,6 +274,57 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                     .onChange(async value => {
                         this.plugin.settings.sprintWorkDaysOnly = value;
                         await this.plugin.saveSettings(false);
+                    })
+            );
+
+        // ── Archive ──────────────────────────────────────────────
+        containerEl.createEl('h2', { text: 'Archive' });
+
+        new Setting(containerEl)
+            .setName('Archive folder path')
+            .setDesc('Folder where completed tasks are archived.')
+            .addText(text =>
+                text
+                    .setPlaceholder('BuJo/Archive')
+                    .setValue(this.plugin.settings.archiveFolderPath)
+                    .onChange(value => {
+                        this.plugin.settings.archiveFolderPath = value.trim();
+                        this.debouncedSave(false);
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Archive grouping')
+            .setDesc('How archived tasks are organized into files.')
+            .addDropdown(dropdown =>
+                dropdown
+                    .addOptions({
+                        'month': 'By Month (2026-03.md)',
+                        'source': 'By Source File',
+                    })
+                    .setValue(this.plugin.settings.archiveGroupBy)
+                    .onChange(async value => {
+                        this.plugin.settings.archiveGroupBy = value as 'month' | 'source';
+                        await this.plugin.saveSettings(false);
+                    })
+            );
+
+        // ── Views ────────────────────────────────────────────────
+        containerEl.createEl('h2', { text: 'Views' });
+
+        new Setting(containerEl)
+            .setName('Urgency threshold (days)')
+            .setDesc('Tasks due within this many days are considered "urgent" in the Eisenhower view.')
+            .addText(text =>
+                text
+                    .setPlaceholder('2')
+                    .setValue(String(this.plugin.settings.urgencyThresholdDays))
+                    .onChange(value => {
+                        const parsed = parseInt(value, 10);
+                        if (!isNaN(parsed) && parsed >= 0) {
+                            this.plugin.settings.urgencyThresholdDays = parsed;
+                            this.debouncedSave(false);
+                        }
                     })
             );
 

@@ -1,0 +1,43 @@
+
+### Intro notes
+- **Dokumentaristé**
+	- Chceme se bavit primárně o G2 projektech ....
+	- Co je to dokumentarista, co dělá a proč?
+	- Co je tedy jeho práce v Cetin?
+	- Popsat běžný work day ?
+	- Pain points and Great points ?
+		- vůči aktuálnímu portálu výstavby
+- **PCčka**
+	- **už se s někým bavili, snad budou mít nějakou poznámku**/nahrávku #netoworg_žáček
+		- aktuálně berou Portál jako nutné zlo, do kterého musí reportovat data, jelikož je do toho Gába tlačí
+		- dělají to místo průběžně dávkově
+		- nefunguje to tak jak jsme zvyklí, ale čísla musí být
+		- voice bot?? pro tvorbu zápisků
+	- Chceme se aktuálně bavit primárně o G2 projektu (projektech)
+	- Co vlastně PCčko dělá?
+	- Jak vypadá jeho běžný pracovní den?
+	- Co očekává, že mu případně Portál dá/pomůže/k čemu mu bude?
+	- Pain points and Great Points v rámci jeho procesu
+	- **PCčka jsou "lepší" a "horší"**
+		- chtěli bychom zástupce z obou skupin
+		- (jsou tu tací, kteří prostě některé věci ignorují)
+- **Lidé z PS**
+	- Chceme se bavit primárně o G2 projektech?
+	- Co plánování služeb v G2 projektech dělá?
+	- Běžná agenda ideálně ve spojení s portálem výstavby
+		- pokud s tím nedělají, tak co obecně dělají
+	- Pain points and Great poitns v rámci jejich procesu?
+- **lidé z KPS** (**sekundární skupina uživatelů**)
+	- zatím na ně #netoworg_žáček narazil u sepisování věcí kolem mobilní výstavby
+		- tam byly v roli RACI matice, kde se vyžaduje jejich zapojení a konzultace (co chceme, co nechtěj)
+	- Co je jejich práce?
+	- Jak komunikují (a proč) s operátory?
+	- Běžná agenda ve spojení s Portálem výstavby (resp. dat, která poskytuje) - milníky atd.
+	- Pain Points and Great Points
+- **Vrchní plánovač**
+	- #netoworg_žáček : v mezičase co se bavili s Plánovači, došlo k vytvoření Nové optiky (a dost tam došlo ke změně co dělají)
+	- aktuálně jsou z nezanedbatelné části externí (z pohledu CETIN - do Nové optiky)
+	- chce to se s nimi pobavit
+- **Plánovač/i**
+	- to stejný
+- Basically se nikdo nebavil s uživateli jako takovými - takže nám chybí persony

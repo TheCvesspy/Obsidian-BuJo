@@ -2,7 +2,7 @@ import { TaskItem, TaskStatus, PluginSettings, GroupMode } from '../../types';
 import { TaskStore } from '../../services/taskStore';
 import { TaskItemRowCallbacks } from './TaskItemRow';
 import { TaskList } from './TaskList';
-import { formatDateDisplay, todayStart } from '../../utils/dateUtils';
+import { formatDateDisplay, formatDateISO, todayStart } from '../../utils/dateUtils';
 
 export class DailyView {
 	private el: HTMLElement;
@@ -33,13 +33,15 @@ export class DailyView {
 		// Single-pass bucketing
 		const overdue: TaskItem[] = [];
 		const carriedOver: TaskItem[] = [];
+		const dailyLog: TaskItem[] = [];
 		const dueToday: TaskItem[] = [];
 		const unscheduled: TaskItem[] = [];
+		const upcoming: TaskItem[] = [];
 		let pendingCount = 0;
 
-		// Today's daily note path — tasks here with migratedFrom are "carried over"
+		// Today's daily note path — tasks here are shown in Carried Over / Daily Log
 		const todayDailyPath = this.settings.dailyNotePath
-			? `${this.settings.dailyNotePath}/${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}.md`
+			? `${this.settings.dailyNotePath}/${formatDateISO(today)}.md`
 			: null;
 
 		for (const t of tasks) {
@@ -47,15 +49,23 @@ export class DailyView {
 				// Past due date — overdue
 				overdue.push(t);
 				pendingCount++;
-			} else if (t.migratedFrom && todayDailyPath && t.sourcePath === todayDailyPath && t.status === TaskStatus.Open) {
-				// Migrated into today's daily note
+			} else if (t.migratedFrom && todayDailyPath && t.sourcePath === todayDailyPath) {
+				// Migrated into today's daily note from a previous day
 				carriedOver.push(t);
-				pendingCount++;
+				if (t.status === TaskStatus.Open) pendingCount++;
+			} else if (todayDailyPath && t.sourcePath === todayDailyPath) {
+				// Written directly in today's daily note
+				dailyLog.push(t);
+				if (t.status === TaskStatus.Open) pendingCount++;
 			} else if (t.dueDate && t.dueDate.toDateString() === todayStr) {
 				dueToday.push(t);
 				if (t.status === TaskStatus.Open) pendingCount++;
 			} else if (t.status === TaskStatus.Open && !t.dueDate) {
 				unscheduled.push(t);
+				pendingCount++;
+			} else if (t.status === TaskStatus.Open && t.dueDate) {
+				// Future due date — upcoming
+				upcoming.push(t);
 				pendingCount++;
 			}
 		}
@@ -69,8 +79,10 @@ export class DailyView {
 		const sections: [string, TaskItem[]][] = [
 			['Overdue', overdue],
 			['Carried Over', carriedOver],
+			['Daily Log', dailyLog],
 			['Due Today', dueToday],
 			['Unscheduled', unscheduled],
+			['Upcoming', upcoming],
 		];
 
 		for (const [label, items] of sections) {
