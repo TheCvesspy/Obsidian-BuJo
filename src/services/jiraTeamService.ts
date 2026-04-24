@@ -3,54 +3,60 @@ import { JiraDashboardIssue, PluginSettings } from '../types';
 
 type Listener = () => void;
 
-type DashboardState =
+type TeamState =
 	| { kind: 'empty' }
 	| { kind: 'loading' }
 	| { kind: 'fresh'; issues: JiraDashboardIssue[]; fetchedAt: number }
 	| { kind: 'error'; message: string; fetchedAt: number };
 
 /**
- * JIRA Dashboard service.
+ * JIRA Team service.
  *
- * Owns a single cached result set — the union of issues matching "mine" (assignee, reporter,
- * or watcher) across configured projects, filtered to unresolved OR resolved in the last 7 days.
- * One JQL round-trip per refresh; the dashboard view slices the result client-side.
+ * Sibling of `JiraDashboardService` but scoped to team-wide work rather than "mine".
+ * Runs one JQL per refresh:
  *
- * Never writes to disk. Gated by the same `jiraEnabled` flag as JiraService — when disabled,
- * every method is a no-op.
+ *   assignee in ("email1", "email2", …)
+ *   [AND project in (configured)]
+ *   AND (resolution = Unresolved OR resolutiondate >= -7d)
+ *   ORDER BY updated DESC
  *
- * Performance posture:
- *   - No background polling. `refresh()` only fires when explicitly called (on view open,
- *     manual Refresh button, or auto-refresh triggered by the view when visible + stale).
- *   - In-flight fetches are deduplicated so two concurrent refresh calls share one request.
- *   - Cache cleared on settings save (URL/token/projects may have changed).
+ * Why a separate service rather than a second cached result set on JiraDashboardService?
+ *   - Different scope = different failure modes (empty team list, member without JIRA
+ *     access, email → accountId mismatch). Isolating the team state keeps the personal
+ *     dashboard untouched when the team fetch fails.
+ *   - The dashboard view can render the personal part even if the team part errors.
+ *
+ * Fetch mechanics mirror JiraDashboardService — GET /rest/api/3/search/jql, explicit
+ * field list (no `*all`), defensive JSON parsing, in-flight dedup. Never writes to
+ * disk; cache cleared on every settings save.
  */
-export class JiraDashboardService {
-	private state: DashboardState = { kind: 'empty' };
+export class JiraTeamService {
+	private state: TeamState = { kind: 'empty' };
 	private inFlight: Promise<JiraDashboardIssue[] | null> | null = null;
 	private listeners = new Set<Listener>();
 	private _version = 0;
 
 	constructor(private getSettings: () => PluginSettings) {}
 
+	/** True if the master JIRA toggle AND the team toggle are on AND there's at least
+	 *  one active team member with a valid-looking email. Everything else is a no-op. */
 	isEnabled(): boolean {
 		const s = this.getSettings();
-		return s.jiraEnabled && !!s.jiraBaseUrl && !!s.jiraEmail && !!s.jiraApiToken;
+		if (!s.jiraEnabled || !s.jiraTeamEnabled) return false;
+		if (!s.jiraBaseUrl || !s.jiraEmail || !s.jiraApiToken) return false;
+		return this.activeEmails(s).length > 0;
 	}
 
 	get version(): number { return this._version; }
 
-	/** Current cached issues (may be stale). Null if never fetched or errored. */
 	getIssues(): JiraDashboardIssue[] | null {
 		return this.state.kind === 'fresh' ? this.state.issues : null;
 	}
 
-	/** Timestamp of the last successful fetch (ms since epoch), or null. */
 	getFetchedAt(): number | null {
 		return this.state.kind === 'fresh' || this.state.kind === 'error' ? this.state.fetchedAt : null;
 	}
 
-	/** Error message from the last fetch, or null. */
 	getError(): string | null {
 		return this.state.kind === 'error' ? this.state.message : null;
 	}
@@ -59,14 +65,12 @@ export class JiraDashboardService {
 		return this.state.kind === 'loading';
 	}
 
-	/** Is the cache older than the configured TTL? Empty/error cache is considered stale. */
 	isStale(): boolean {
 		if (this.state.kind !== 'fresh') return true;
 		const ttlMs = Math.max(0, this.getSettings().jiraDashboardTtlMinutes) * 60_000;
 		return Date.now() - this.state.fetchedAt > ttlMs;
 	}
 
-	/** Fetch the dashboard result. Deduplicates concurrent calls. */
 	async refresh(): Promise<JiraDashboardIssue[] | null> {
 		if (!this.isEnabled()) return null;
 		if (this.inFlight) return this.inFlight;
@@ -83,7 +87,6 @@ export class JiraDashboardService {
 		}
 	}
 
-	/** Wipe the cache and notify listeners. */
 	clearCache(): void {
 		this.state = { kind: 'empty' };
 		this.inFlight = null;
@@ -103,32 +106,45 @@ export class JiraDashboardService {
 
 	// ── Internals ─────────────────────────────────────────────────
 
+	private activeEmails(s: PluginSettings): string[] {
+		return (s.teamMembers || [])
+			.filter(m => m.active && m.email && m.email.includes('@'))
+			.map(m => m.email.trim());
+	}
+
+	private buildJql(s: PluginSettings): string {
+		const emails = this.activeEmails(s);
+		// JQL accepts `assignee = "email"` on Cloud — Atlassian resolves to accountId.
+		// Quote each email; strip any rogue double-quotes defensively.
+		const userClause = `assignee in (${emails.map(e => `"${e.replace(/"/g, '')}"`).join(', ')})`;
+		const projectClause = s.jiraDashboardProjects.length > 0
+			? `AND project in (${s.jiraDashboardProjects.map(k => `"${k.replace(/"/g, '')}"`).join(', ')})`
+			: '';
+		const staleClause = 'AND (resolution = Unresolved OR resolutiondate >= -7d)';
+		return `${userClause} ${projectClause} ${staleClause} ORDER BY updated DESC`.replace(/\s+/g, ' ').trim();
+	}
+
 	private async doFetch(): Promise<JiraDashboardIssue[] | null> {
 		const s = this.getSettings();
 		const jql = this.buildJql(s);
 		const sprintField = (s.jiraSprintFieldId || 'customfield_10020').trim();
 
-		// Field list sent to JIRA — plus the configurable sprint custom field
-		// and the Flagged custom field (standard on Cloud). The new /search/jql
-		// endpoint doesn't accept the `*all` magic token, so we name everything.
 		const fields = [
 			'summary', 'status', 'priority', 'assignee', 'reporter',
 			'duedate', 'resolutiondate', 'updated', 'labels',
 			'parent', 'issuetype', 'timespent', 'timeestimate',
 			sprintField,
-			'customfield_10021', // Flagged (Cloud standard)
+			'customfield_10021',
 		];
 
-		// Use GET /rest/api/3/search/jql — the successor to the deprecated /search
-		// endpoint (see https://developer.atlassian.com/changelog/#CHANGE-2046).
-		// The new endpoint accepts both GET and POST; we prefer GET because some
-		// tenants enforce XSRF on POSTs even with the X-Atlassian-Token header.
+		// Teams can have 50+ issues across 10 people, bump maxResults vs personal (100).
+		// The endpoint caps at 100 anyway; paging is a future concern if the team is huge.
 		const params = new URLSearchParams();
 		params.set('jql', jql);
 		params.set('fields', fields.join(','));
 		params.set('maxResults', '100');
 
-		console.log('[JIRA Dashboard] JQL:', jql);
+		console.log('[JIRA Team] JQL:', jql);
 
 		try {
 			const req: RequestUrlParam = {
@@ -142,14 +158,11 @@ export class JiraDashboardService {
 				throw: false,
 			};
 			const resp = await requestUrl(req);
-
-			// `resp.json` is a getter that throws when the body isn't JSON
-			// (e.g. "XSRF check failed" plain text on 403). Parse defensively.
 			const parsedJson = this.safeParseJson(resp.text);
 
 			if (resp.status < 200 || resp.status >= 300) {
 				const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
-				console.error('[JIRA Dashboard] HTTP error:', resp.status, resp.text?.slice(0, 500));
+				console.error('[JIRA Team] HTTP error:', resp.status, resp.text?.slice(0, 500));
 				this.state = { kind: 'error', message: msg, fetchedAt: Date.now() };
 				this.bump();
 				return null;
@@ -161,35 +174,21 @@ export class JiraDashboardService {
 			this.bump();
 			return issues;
 		} catch (err) {
-			console.error('[JIRA Dashboard] fetch threw:', err);
+			console.error('[JIRA Team] fetch threw:', err);
 			this.state = { kind: 'error', message: this.formatError(err), fetchedAt: Date.now() };
 			this.bump();
 			return null;
 		}
 	}
 
-	/** Parse body as JSON without throwing on invalid input. */
 	private safeParseJson(text: string | undefined): any {
 		if (!text) return null;
-		try {
-			return JSON.parse(text);
-		} catch {
-			return null;
-		}
+		try { return JSON.parse(text); } catch { return null; }
 	}
 
-	/** Build the JQL used for the dashboard fetch. */
-	private buildJql(s: PluginSettings): string {
-		const userClause = '(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser())';
-		const projectClause = s.jiraDashboardProjects.length > 0
-			? `AND project in (${s.jiraDashboardProjects.map(k => `"${k.replace(/"/g, '')}"`).join(', ')})`
-			: '';
-		// Unresolved OR resolved within the last 7 days
-		const staleClause = 'AND (resolution = Unresolved OR resolutiondate >= -7d)';
-		return `${userClause} ${projectClause} ${staleClause} ORDER BY updated DESC`.replace(/\s+/g, ' ').trim();
-	}
-
-	/** Parse a single issue JSON into the dashboard shape. Tolerant of missing fields. */
+	/** Parse a single issue JSON. Mirrors JiraDashboardService.parseIssue, with the
+	 *  same tolerance for missing fields. Kept local rather than exported to avoid
+	 *  cross-service coupling — if the shape diverges later, each service can evolve. */
 	private parseIssue(raw: any, baseUrl: string, sprintField: string): JiraDashboardIssue {
 		const fields = raw?.fields ?? {};
 		const statusObj = fields.status ?? {};
@@ -201,15 +200,11 @@ export class JiraDashboardService {
 				: 'unknown';
 
 		const priorityObj = fields.priority ?? null;
-
 		const parent = fields.parent ?? null;
 		const parentKey: string | null = parent?.key ?? null;
 		const parentSummary: string | null = parent?.fields?.summary ?? null;
-
 		const issueTypeObj = fields.issuetype ?? {};
 
-		// Sprint field is an array of strings or objects depending on JIRA Cloud version.
-		// Most common shape: array of objects with { name, state }. Fall back gracefully.
 		const sprintRaw = fields[sprintField];
 		let sprintName: string | null = null;
 		let sprintActive = false;
@@ -225,7 +220,6 @@ export class JiraDashboardService {
 					}
 					if (!sprintName) sprintName = name ?? null;
 				} else if (typeof sp === 'string') {
-					// Legacy string form — best-effort extract of name=X
 					const m = sp.match(/name=([^,\]]+)/);
 					const state = sp.match(/state=([A-Z]+)/)?.[1];
 					if (state === 'ACTIVE') {
@@ -238,10 +232,7 @@ export class JiraDashboardService {
 			}
 		}
 
-		// Flagged: JIRA exposes this under various custom fields. We look at the raw
-		// issue object for any field whose name/value equals "Impediment"/"Flagged".
 		let flagged = false;
-		// Common Cloud custom field for Flagged is customfield_10021 — value is an array of objects
 		const flaggedField = fields.customfield_10021 ?? fields.flagged;
 		if (Array.isArray(flaggedField) && flaggedField.length > 0) flagged = true;
 		else if (flaggedField && typeof flaggedField === 'object') flagged = true;
@@ -275,6 +266,12 @@ export class JiraDashboardService {
 			issueUrl: `${baseUrl.replace(/\/+$/, '')}/browse/${raw.key}`,
 		};
 	}
+
+	/** Extract the assignee's email from the raw issue JSON, for bucketing into per-person
+	 *  sections. Note: the public API at top-level (`JiraDashboardIssue.assignee`) only
+	 *  carries displayName — we'd need emailAddress to match back to `teamMembers[i].email`.
+	 *  We avoid that by grouping client-side using displayName matches below; a future
+	 *  upgrade can widen the parser to surface email + accountId. */
 
 	private formatError(err: unknown): string {
 		if (err instanceof Error) return err.message;

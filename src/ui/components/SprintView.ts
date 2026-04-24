@@ -196,6 +196,7 @@ export class SprintView {
 
 		// Render topic cards
 		const jiraLookup = this.makeJiraLookup();
+		const assigneeLookup = this.makeAssigneeLookup();
 		for (const topic of topics) {
 			renderTopicCard(body, topic, {
 				draggable: true,
@@ -208,6 +209,8 @@ export class SprintView {
 					await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
 				},
 				jiraLookup,
+				assigneeLookup,
+				nudgeThresholdDays: this.settings.nudgeThresholdDays,
 			});
 		}
 
@@ -239,6 +242,18 @@ export class SprintView {
 			loading: svc.isLoading(key),
 			error: svc.getError(key),
 		});
+	}
+
+	/** Build a per-email assignee lookup resolving the "logged team" for display. */
+	private makeAssigneeLookup() {
+		const members = this.settings.teamMembers ?? [];
+		if (members.length === 0) return undefined;
+		const byEmail = new Map(members.map(m => [m.email, m]));
+		return (email: string) => {
+			const m = byEmail.get(email);
+			if (!m) return null;
+			return { label: m.nickname || m.fullName || m.email, isInactive: !m.active };
+		};
 	}
 
 	destroy(): void {

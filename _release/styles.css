@@ -2522,6 +2522,194 @@
     letter-spacing: 0.02em;
 }
 
+/* Assignee chip on topic cards */
+.task-bujo-kanban-card-assignee {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-on-accent, var(--text-normal));
+    background: var(--interactive-accent);
+    padding: 1px 6px;
+    margin-top: 4px;
+    border-radius: 8px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-kanban-card-assignee-stale {
+    color: var(--text-muted);
+    background: var(--background-modifier-border);
+    font-style: italic;
+}
+
+/* Waiting-on chip on topic cards */
+.task-bujo-kanban-card-waiting {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-normal);
+    background: var(--background-modifier-border);
+    padding: 1px 6px;
+    margin-top: 4px;
+    border-radius: 8px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-kanban-card-waiting-stale {
+    background: var(--background-modifier-error, #e74c3c);
+    color: var(--text-on-accent, #fff);
+}
+
+/* Waiting-on section in the morning migration modal */
+.task-bujo-review-waiting .task-bujo-waiting-topic {
+    font-weight: 600;
+}
+
+.task-bujo-review-waiting .task-bujo-waiting-meta {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* External reference chips on topic cards */
+.task-bujo-kanban-card-refs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.task-bujo-kanban-card-ref-chip {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.task-bujo-kanban-card-ref-chip:hover {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+/* References UI in SprintTopicModal */
+.task-bujo-refs-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+    width: 100%;
+}
+
+.task-bujo-refs-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--background-modifier-border);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+}
+
+.task-bujo-refs-add-form {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    width: 100%;
+}
+
+.task-bujo-refs-label-input {
+    flex: 0 0 30%;
+    padding: 2px 6px;
+}
+
+.task-bujo-refs-url-input {
+    flex: 1 1 auto;
+    padding: 2px 6px;
+}
+
+.task-bujo-refs-add-btn {
+    flex: 0 0 auto;
+}
+
+/* Quick Capture to Inbox modal */
+.task-bujo-quick-capture-modal {
+    min-width: 500px;
+}
+
+.task-bujo-quick-capture-textarea {
+    width: 100%;
+    min-height: 150px;
+    padding: 10px 12px;
+    font-family: var(--font-text);
+    font-size: 14px;
+    line-height: 1.5;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.task-bujo-quick-capture-textarea:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+.task-bujo-quick-capture-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+.task-bujo-quick-capture-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+
+/* Quick-add target toggle (Tasks / Inbox) */
+.task-bujo-add-target-toggle {
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-right: 6px;
+}
+
+.task-bujo-add-target-toggle:hover {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+/* Assignee filter dropdown in the Topics overview header */
+.task-bujo-topics-assigneefilter {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 8px;
+}
+
+.task-bujo-topics-assignee-select {
+    font-size: 12px;
+    padding: 2px 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
 /* ── JIRA Dashboard ──────────────────────────────────────────── */
 
 .task-bujo-jira-dashboard-container {
@@ -2534,6 +2722,9 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    /* Sibling of the scroll container — must not be squeezed when the body
+       overflows, or the search/refresh row shrinks and the scroll math breaks. */
+    flex-shrink: 0;
 }
 
 .task-bujo-jira-dashboard-title-row {
@@ -2562,6 +2753,42 @@
 .task-bujo-jira-dashboard-refresh {
     font-size: 12px;
     padding: 4px 10px;
+}
+
+/* Tab bar — switches between "My Work" and "Team" views. Hidden via .is-hidden
+   when team tracking is off, so the header collapses to title + search only. */
+.task-bujo-jira-dashboard-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin: 0 -16px;
+    padding: 0 16px;
+    /* Pull the tab underline flush with the header's bottom border. */
+    margin-bottom: -1px;
+}
+
+.task-bujo-jira-dashboard-tabs.is-hidden {
+    display: none;
+}
+
+.task-bujo-jira-dashboard-tab {
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    user-select: none;
+    transition: color 80ms ease, border-color 80ms ease;
+}
+
+.task-bujo-jira-dashboard-tab:hover {
+    color: var(--text-normal);
+}
+
+.task-bujo-jira-dashboard-tab.is-active {
+    color: var(--text-normal);
+    border-bottom-color: var(--interactive-accent);
+    font-weight: 600;
 }
 
 .task-bujo-jira-dashboard-search-row {
@@ -2600,6 +2827,11 @@
     border-radius: 6px;
     overflow: hidden;
     background: var(--background-secondary);
+    /* Sections are flex children of a column flex container with overflow-y:auto
+       on the parent. Without flex-shrink:0, the flex engine shrinks each section
+       to fit the viewport — combined with overflow:hidden above, that silently
+       clips rows inside a long section and the outer scrollbar never appears. */
+    flex-shrink: 0;
 }
 
 .task-bujo-jira-dashboard-section-header {
@@ -2809,4 +3041,398 @@
 
 .task-bujo-jira-dashboard-label.is-more {
     opacity: 0.6;
+}
+
+/* ── Team block (workload heatmap + per-person sections) ──────── */
+
+.task-bujo-jira-dashboard-team-block {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 2px solid var(--background-modifier-border);
+    /* Flex child of the scroll container — mirror the section fix from earlier
+       (no shrinking or sections get squeezed and rows silently clip). */
+    flex-shrink: 0;
+}
+
+.task-bujo-jira-dashboard-team-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 0 2px;
+}
+
+.task-bujo-jira-dashboard-team-title {
+    font-size: 14px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+
+.task-bujo-jira-dashboard-team-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.task-bujo-jira-dashboard-team-meta.is-error {
+    color: var(--text-error);
+}
+
+/* Heatmap */
+.task-bujo-jira-dashboard-heatmap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+}
+
+.task-bujo-jira-dashboard-heatmap-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 2px;
+}
+
+.task-bujo-jira-dashboard-heatmap-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.task-bujo-jira-dashboard-heatmap-nick {
+    flex: 0 0 80px;
+    font-weight: 500;
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-jira-dashboard-heatmap-track {
+    flex: 1 1 auto;
+    height: 14px;
+    background: var(--background-modifier-border);
+    border-radius: 3px;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.task-bujo-jira-dashboard-heatmap-fill {
+    display: flex;
+    height: 100%;
+}
+
+.task-bujo-jira-dashboard-heatmap-seg {
+    height: 100%;
+    min-width: 2px;
+}
+.task-bujo-jira-dashboard-heatmap-seg.is-blocked    { background: var(--color-red,   #e06c75); }
+.task-bujo-jira-dashboard-heatmap-seg.is-in-progress{ background: var(--color-blue,  #61afef); }
+.task-bujo-jira-dashboard-heatmap-seg.is-open       { background: var(--text-muted); opacity: 0.5; }
+.task-bujo-jira-dashboard-heatmap-seg.is-done       { background: var(--color-green, #98c379); opacity: 0.6; }
+
+.task-bujo-jira-dashboard-heatmap-counts {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 140px;
+    text-align: right;
+}
+
+/* Per-person sections reuse the existing section styles — only the outer team
+   wrapper adds a subtle accent so they read as "different section family". */
+.task-bujo-jira-dashboard-team-section .task-bujo-jira-dashboard-section-header {
+    background: var(--background-secondary-alt);
+}
+
+/* ── Team Members settings list ───────────────────────────────── */
+
+.task-bujo-team-members-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.task-bujo-team-member-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+}
+
+.task-bujo-team-member-inputs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.task-bujo-team-member-input {
+    flex: 1 1 180px;
+    min-width: 0;
+    padding: 5px 8px;
+    font-size: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+}
+
+.task-bujo-team-member-input-nick {
+    flex: 0 0 120px;
+}
+
+.task-bujo-team-member-input-email {
+    flex: 2 1 240px;
+}
+
+.task-bujo-team-member-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.task-bujo-team-member-active {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.task-bujo-team-member-remove {
+    margin-left: auto;
+    padding: 4px 10px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--text-error);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.task-bujo-team-member-remove:hover {
+    background: var(--background-modifier-error-hover);
+    color: var(--text-on-accent);
+}
+
+/* ── Team Overview view ────────────────────────────────────────── */
+
+.task-bujo-team-overview {
+    padding: 16px;
+}
+
+.task-bujo-team-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.task-bujo-team-title {
+    margin: 0;
+    font-size: 1.3em;
+}
+
+.task-bujo-team-start-1on1 {
+    padding: 6px 14px;
+}
+
+.task-bujo-team-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.task-bujo-team-card {
+    padding: 14px 16px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: border-color 100ms ease;
+}
+
+.task-bujo-team-card:hover {
+    border-color: var(--interactive-accent);
+}
+
+.task-bujo-team-card.is-on-leave {
+    opacity: 0.6;
+    background: var(--background-primary);
+}
+
+.task-bujo-team-card-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.task-bujo-team-avatar {
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+}
+
+.task-bujo-team-identity {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.task-bujo-team-name {
+    font-weight: 600;
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-team-role {
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-bujo-team-chips {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 6px;
+}
+
+.task-bujo-team-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.task-bujo-team-action {
+    padding: 5px 11px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+}
+
+.task-bujo-team-action:hover {
+    background: var(--interactive-hover);
+}
+
+.task-bujo-team-action.mod-warning {
+    border-color: var(--text-error);
+    color: var(--text-error);
+}
+
+.task-bujo-team-action.mod-warning:hover {
+    background: var(--background-modifier-error-hover);
+    color: var(--text-on-accent);
+}
+
+/* ── Cadence chips ─────────────────────────────────────────────── */
+
+.task-bujo-cadence-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 10px;
+    line-height: 1.4;
+}
+
+.task-bujo-cadence-overdue {
+    background: var(--background-modifier-error);
+    color: var(--text-error);
+}
+
+.task-bujo-cadence-due-soon {
+    background: var(--background-modifier-hover);
+    color: var(--color-orange, #d97706);
+}
+
+.task-bujo-cadence-on-track {
+    background: var(--background-modifier-hover);
+    color: var(--color-green, #16a34a);
+}
+
+.task-bujo-cadence-never {
+    background: var(--background-modifier-hover);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.task-bujo-cadence-suspended {
+    background: repeating-linear-gradient(
+        -45deg,
+        var(--background-modifier-hover),
+        var(--background-modifier-hover) 4px,
+        var(--background-secondary) 4px,
+        var(--background-secondary) 8px
+    );
+    color: var(--text-muted);
+}
+
+/* ── Overdue 1:1 rows inside MigrationModal ───────────────────── */
+
+.task-bujo-review-oneonones {
+    border-left: 3px solid var(--text-error);
+    padding-left: 10px;
+    margin-bottom: 12px;
+}
+
+.task-bujo-oneonone-name {
+    font-weight: 600;
+}
+
+.task-bujo-oneonone-role {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.task-bujo-oneonone-overdue {
+    color: var(--text-error);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.task-bujo-empty-hint {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 6px;
+}
+
+.task-bujo-empty-hint code {
+    padding: 1px 5px;
+    background: var(--background-secondary);
+    border-radius: 3px;
+    font-size: 12px;
 }

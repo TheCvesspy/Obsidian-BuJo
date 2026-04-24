@@ -1,6 +1,6 @@
 import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice } from 'obsidian';
 import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, BuJoViewMode } from './types';
-import { VIEW_TYPE_TASK_BUJO, VIEW_TYPE_JIRA_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
+import { VIEW_TYPE_TASK_BUJO, VIEW_TYPE_JIRA_DASHBOARD, VIEW_TYPE_TEAM_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
 import { TaskBuJoSettingTab } from './settings';
 import { VaultScanner } from './services/vaultScanner';
 import { TaskStore } from './services/taskStore';
@@ -11,18 +11,21 @@ import { SprintTopicService } from './services/sprintTopicService';
 import { MigrationService } from './services/migrationService';
 import { AnalyticsService } from './services/analyticsService';
 import { MonthlyNoteService } from './services/monthlyNoteService';
-import { MonthlyMigrationService } from './services/monthlyMigrationService';
 import { MonthlyAnalyticsService } from './services/monthlyAnalyticsService';
 import { ArchiveService } from './services/archiveService';
 import { JiraService } from './services/jiraService';
 import { JiraDashboardService } from './services/jiraDashboardService';
+import { JiraTeamService } from './services/jiraTeamService';
+import { TeamMemberService } from './services/teamMemberService';
 import { TaskBuJoView } from './ui/TaskBuJoView';
 import { JiraDashboardView } from './ui/JiraDashboardView';
+import { TeamDashboardView } from './ui/TeamDashboardView';
 import { MigrationModal } from './ui/MigrationModal';
+import { OneOnOneModal } from './ui/OneOnOneModal';
 import { WeeklyReviewModal } from './ui/WeeklyReviewModal';
-import { MonthlyMigrationModal } from './ui/MonthlyMigrationModal';
 import { MonthlyReviewModal } from './ui/MonthlyReviewModal';
 import { InsertTaskModal, buildTaskLine, buildTaskBlock } from './ui/InsertTaskModal';
+import { QuickCaptureModal } from './ui/QuickCaptureModal';
 import { DueDateModal } from './ui/DueDateModal';
 import { SyntaxReferenceModal } from './ui/components/SyntaxReference';
 import { getWeekId } from './utils/dateUtils';
@@ -40,11 +43,12 @@ export default class TaskBuJoPlugin extends Plugin {
 	private migrationService: MigrationService;
 	private analyticsService: AnalyticsService;
 	private monthlyNoteService: MonthlyNoteService;
-	private monthlyMigrationService: MonthlyMigrationService;
 	private monthlyAnalyticsService: MonthlyAnalyticsService;
 	private archiveService: ArchiveService;
 	jiraService: JiraService;
 	jiraDashboardService: JiraDashboardService;
+	jiraTeamService: JiraTeamService;
+	teamMemberService: TeamMemberService;
 	private statusBarEl: HTMLElement;
 
 	async onload(): Promise<void> {
@@ -54,7 +58,6 @@ export default class TaskBuJoPlugin extends Plugin {
 		this.data.settings = Object.assign({}, DEFAULT_PLUGIN_DATA.settings, saved?.settings);
 		this.data.weeklyHistory = this.data.weeklyHistory ?? [];
 		this.data.lastWeeklyReviewWeek = this.data.lastWeeklyReviewWeek ?? null;
-		this.data.lastMonthlyMigrationMonth = this.data.lastMonthlyMigrationMonth ?? null;
 		this.data.monthlyHistory = this.data.monthlyHistory ?? [];
 
 		// Migrate removed view modes: Eisenhower and ImpactEffort (task-level) were repurposed
@@ -62,6 +65,12 @@ export default class TaskBuJoPlugin extends Plugin {
 		const staleModes = ['eisenhower', 'impactEffort'];
 		if (staleModes.includes(this.data.settings.defaultViewMode as string)) {
 			this.data.settings.defaultViewMode = BuJoViewMode.Topics;
+		}
+		// `team` was briefly a tab in the BuJo view; now a standalone workspace view.
+		// Redirect the default so users who had it pinned land on Daily instead of
+		// hitting a removed switch case.
+		if ((this.data.settings.defaultViewMode as string) === 'team') {
+			this.data.settings.defaultViewMode = BuJoViewMode.Daily;
 		}
 
 		this.settings = this.data.settings;
@@ -83,14 +92,6 @@ export default class TaskBuJoPlugin extends Plugin {
 		);
 		this.analyticsService = new AnalyticsService(this.store, () => this.settings);
 		this.monthlyNoteService = new MonthlyNoteService(this.app.vault, () => this.settings);
-		this.monthlyMigrationService = new MonthlyMigrationService(
-			this.store,
-			this.writer,
-			this.monthlyNoteService,
-			() => this.data,
-			() => this.saveSettings(false),
-			() => this.settings,
-		);
 		this.monthlyAnalyticsService = new MonthlyAnalyticsService(
 			this.store,
 			() => this.settings,
@@ -99,6 +100,8 @@ export default class TaskBuJoPlugin extends Plugin {
 		this.archiveService = new ArchiveService(this.app.vault, this.store, () => this.settings);
 		this.jiraService = new JiraService(() => this.settings);
 		this.jiraDashboardService = new JiraDashboardService(() => this.settings);
+		this.jiraTeamService = new JiraTeamService(() => this.settings);
+		this.teamMemberService = new TeamMemberService(this.app.vault, this.scanner, () => this.settings);
 
 		this.scanner.onChange(() => {
 			this.store.setTasks(this.scanner.getAllTasks());
@@ -124,6 +127,18 @@ export default class TaskBuJoPlugin extends Plugin {
 			)
 		);
 
+		this.registerView(VIEW_TYPE_TEAM_DASHBOARD, (leaf) =>
+			new TeamDashboardView(
+				leaf,
+				this.teamMemberService,
+				() => this.settings,
+				// Scanner has no unsubscribe API; the view guards on `contentContainer`
+				// being non-null so closures fired post-close are safe.
+				(cb) => this.scanner.onTeamChange(cb),
+				() => this.activateJiraTeamTab(),
+			)
+		);
+
 		this.registerView(VIEW_TYPE_JIRA_DASHBOARD, (leaf) =>
 			new JiraDashboardView(
 				leaf,
@@ -137,6 +152,7 @@ export default class TaskBuJoPlugin extends Plugin {
 				this.sprintTopicService,
 				this.sprintService,
 				(cb) => this.scanner.onTopicsChange(cb),
+				this.jiraTeamService,
 			)
 		);
 
@@ -145,6 +161,7 @@ export default class TaskBuJoPlugin extends Plugin {
 
 		this.addRibbonIcon('check-square', 'Open BuJo', () => this.activateView());
 		this.addRibbonIcon('layout-dashboard', 'Open JIRA Dashboard', () => this.activateJiraDashboard());
+		this.addRibbonIcon('users', 'Open Team Dashboard', () => this.activateTeamDashboard());
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.setText('BuJo ...');
@@ -168,9 +185,19 @@ export default class TaskBuJoPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'open-team-dashboard',
+			name: 'Open Team Dashboard',
+			callback: () => this.activateTeamDashboard(),
+		});
+
+		this.addCommand({
 			id: 'refresh-jira-dashboard',
 			name: 'Refresh JIRA Dashboard',
-			callback: () => this.jiraDashboardService.refresh(),
+			// Refresh both in parallel — if the team service is disabled it no-ops.
+			callback: () => {
+				this.jiraDashboardService.refresh();
+				this.jiraTeamService.refresh();
+			},
 		});
 
 		this.addCommand({
@@ -192,12 +219,6 @@ export default class TaskBuJoPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'run-monthly-migration',
-			name: 'Run Monthly Migration',
-			callback: () => this.showMonthlyMigrationModal(),
-		});
-
-		this.addCommand({
 			id: 'monthly-review',
 			name: 'Monthly Review',
 			callback: () => this.showMonthlyReview(),
@@ -210,14 +231,24 @@ export default class TaskBuJoPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'start-1-on-1',
+			name: 'Start 1:1',
+			callback: () => this.openOneOnOnePicker(),
+		});
+
+		this.addCommand({
 			id: 'archive-completed',
 			name: 'Archive Completed Tasks',
 			callback: async () => {
 				const result = await this.archiveService.archiveCompleted();
-				if (result.archived === 0) {
+				if (result.archived === 0 && result.skipped === 0) {
 					new Notice('No completed tasks to archive.');
 				} else {
-					new Notice(`Archived ${result.archived} task(s) to ${result.files.length} file(s).`);
+					const parts = [`Archived ${result.archived} task(s) to ${result.files.length} file(s).`];
+					if (result.skipped > 0) {
+						parts.push(`${result.skipped} skipped (source file edited since last scan — try again).`);
+					}
+					new Notice(parts.join(' '));
 				}
 			},
 		});
@@ -245,6 +276,24 @@ export default class TaskBuJoPlugin extends Plugin {
 						new Notice('Task added to today\'s daily note');
 					}
 				}, this.settings.workTypes, this.settings.purposes).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'quick-capture-inbox',
+			name: 'Quick Capture to Inbox',
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'i' }],
+			callback: () => {
+				new QuickCaptureModal(this.app, async (text) => {
+					// First line becomes the checkbox; subsequent lines are indented so they
+					// render as continuation of the same list item rather than breaking out.
+					const lines = text.split('\n');
+					const first = lines[0];
+					const rest = lines.slice(1).map(l => `    ${l}`).join('\n');
+					const block = rest ? `- [ ] ${first}\n${rest}` : `- [ ] ${first}`;
+					await this.dailyNoteService.addRawInboxLine(block, new Date());
+					new Notice('Captured to today\'s Inbox');
+				}).open();
 			},
 		});
 
@@ -334,10 +383,38 @@ export default class TaskBuJoPlugin extends Plugin {
 			await this.scanner.fullScan();
 			this.store.setTasks(this.scanner.getAllTasks());
 			this.updateStatusBar();
+			await this.autoGenerateTeamPagesIfNeeded();
 			this.checkMigration();
 			this.checkWeeklyReview();
-			this.checkMonthlyMigration();
 		});
+	}
+
+	/** One-shot: if the user has a populated `teamMembers[]` list from the JIRA
+	 *  team-tracking feature but no person pages in `teamFolderPath`, create
+	 *  skeleton pages automatically. Idempotent — safe on every startup.
+	 *  Skipped when the team folder already contains at least one person page so
+	 *  a user who's curated their own layout isn't disturbed. */
+	private async autoGenerateTeamPagesIfNeeded(): Promise<void> {
+		const members = this.settings.teamMembers;
+		if (!members || members.length === 0) return;
+		if (this.teamMemberService.getAllMembers().length > 0) return; // pages already exist
+
+		let created = 0;
+		for (const m of members) {
+			if (!m.fullName) continue;
+			try {
+				if (await this.teamMemberService.ensurePageFromSettings(m)) created++;
+			} catch {
+				// Swallow per-member errors so one bad name doesn't abort the batch.
+			}
+		}
+		if (created > 0) {
+			// Kick the scanner so the Team view picks up the new files without waiting
+			// for the user to trigger an edit.
+			await this.scanner.fullScan();
+			this.store.setTasks(this.scanner.getAllTasks());
+			new Notice(`BuJo: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
+		}
 	}
 
 	async activateView(newTab = false): Promise<void> {
@@ -368,6 +445,53 @@ export default class TaskBuJoPlugin extends Plugin {
 		if (leaf) workspace.revealLeaf(leaf);
 	}
 
+	async activateTeamDashboard(): Promise<void> {
+		const { workspace } = this.app;
+		let leaf: WorkspaceLeaf | null = null;
+		const leaves = workspace.getLeavesOfType(VIEW_TYPE_TEAM_DASHBOARD);
+		if (leaves.length > 0) {
+			leaf = leaves[0];
+		} else {
+			leaf = workspace.getLeaf(true);
+			if (leaf) await leaf.setViewState({ type: VIEW_TYPE_TEAM_DASHBOARD, active: true });
+		}
+		if (leaf) workspace.revealLeaf(leaf);
+	}
+
+	/** Open the JIRA Dashboard with the Team tab pre-selected. Called from the
+	 *  Team Overview "JIRA workload" chip on each person card. Uses the sticky-state
+	 *  save path so fetched caches aren't wiped. */
+	async activateJiraTeamTab(): Promise<void> {
+		if (this.settings.jiraDashboardActiveTab !== 'team') {
+			this.settings.jiraDashboardActiveTab = 'team';
+			await this.saveData(this.data);
+		}
+		await this.activateJiraDashboard();
+	}
+
+	/** Open the fuzzy picker for 1:1 start. Separates the "pick" from "start"
+	 *  so the same flow is reachable from a keyboard shortcut (no view open)
+	 *  as well as from the Team Overview button. Scopes to active members —
+	 *  on-leave teammates can still be reached via the per-card button on the
+	 *  Team tab if an urgent 1:1 is needed. */
+	private openOneOnOnePicker(): void {
+		const members = this.teamMemberService.getActiveMembers();
+		if (members.length === 0) {
+			new Notice('No active team members found. Create a person page under ' + this.settings.teamFolderPath + '/.');
+			return;
+		}
+		new OneOnOneModal(this.app, members, async (member) => {
+			try {
+				const file = await this.teamMemberService.startOneOnOne(member, new Date());
+				const leaf = this.app.workspace.getLeaf(false);
+				await leaf.openFile(file);
+				this.app.workspace.revealLeaf(leaf);
+			} catch (e) {
+				new Notice(`Could not start 1:1: ${e instanceof Error ? e.message : 'unknown error'}`);
+			}
+		}).open();
+	}
+
 	private checkMigration(): void {
 		if (this.settings.migrationPromptOnStartup && this.migrationService.needsMigration()) {
 			this.showMigrationModal();
@@ -377,9 +501,19 @@ export default class TaskBuJoPlugin extends Plugin {
 	private showMigrationModal(): void {
 		const reviewData = this.migrationService.getMorningReviewData();
 
-		new MigrationModal(this.app, this.migrationService, this.dailyNoteService, this.store, reviewData, (_result) => {
-			// Migration completed — views will auto-refresh via store events
-		}).open();
+		new MigrationModal(
+			this.app,
+			this.migrationService,
+			this.dailyNoteService,
+			this.store,
+			reviewData,
+			(_result) => {
+				// Migration completed — views will auto-refresh via store events
+			},
+			this.teamMemberService,
+			this.sprintTopicService,
+			this.settings,
+		).open();
 	}
 
 	private updateStatusBar(): void {
@@ -438,21 +572,8 @@ export default class TaskBuJoPlugin extends Plugin {
 		// Cheap to clear; worst case views re-fetch the next time they render.
 		this.jiraService?.clearCache();
 		this.jiraDashboardService?.clearCache();
+		this.jiraTeamService?.clearCache();
 		this.updateStatusBar();
-	}
-
-	private checkMonthlyMigration(): void {
-		if (this.settings.monthlyMigrationPromptOnStartup && this.monthlyMigrationService.needsMonthlyMigration()) {
-			this.showMonthlyMigrationModal();
-		}
-	}
-
-	private showMonthlyMigrationModal(): void {
-		const reviewData = this.monthlyMigrationService.getMonthlyReviewData();
-
-		new MonthlyMigrationModal(this.app, this.monthlyMigrationService, this.store, reviewData, (_result) => {
-			// Monthly migration completed — views will auto-refresh via store events
-		}).open();
 	}
 
 	private showMonthlyReview(): void {
@@ -494,6 +615,7 @@ export default class TaskBuJoPlugin extends Plugin {
 	onunload(): void {
 		this.app.workspace.detachLeavesOfType(VIEW_TYPE_TASK_BUJO);
 		this.app.workspace.detachLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
+		this.app.workspace.detachLeavesOfType(VIEW_TYPE_TEAM_DASHBOARD);
 		this.scanner.destroy();
 	}
 }

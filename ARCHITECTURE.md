@@ -885,7 +885,7 @@ A separate workspace view — distinct from the BuJo tab — that surfaces the u
 
 ### Fetch lifecycle
 
-1. `JiraDashboardService.refresh()` fires a single `POST /rest/api/3/search` with `maxResults: 100`.
+1. `JiraDashboardService.refresh()` fires a single `GET /rest/api/3/search/jql` with `maxResults=100`. This is the successor to the deprecated `POST /rest/api/3/search` (removed per Atlassian changelog CHANGE-2046 — the old path now returns HTTP 410 Gone). GET is used instead of POST because some corporate tenants enforce XSRF on POSTs even with `X-Atlassian-Token: no-check`, and a 100-row dashboard URL is ~1KB — well under any gateway limit. The new endpoint rejects the `*all` magic token, so the field list is named explicitly: `summary, status, priority, assignee, reporter, duedate, resolutiondate, updated, labels, parent, issuetype, timespent, timeestimate, [sprint field], customfield_10021`.
 2. The JQL is built from live settings:
    ```
    (assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser())
@@ -893,11 +893,11 @@ A separate workspace view — distinct from the BuJo tab — that surfaces the u
    AND (resolution = Unresolved OR resolutiondate >= -7d)
    ORDER BY updated DESC
    ```
-3. Response is parsed into `JiraDashboardIssue[]` (see `types.ts`). The parser tolerates the sprint field being an array of objects **or** legacy comma-strings (`name=Sprint 12,state=ACTIVE,…`) — newer Cloud instances ship objects, older ones ship strings. Flagged detection reads `customfield_10021` (standard on Cloud) or a raw `flagged` field.
+3. Response is parsed into `JiraDashboardIssue[]` (see `types.ts`). The parser tolerates the sprint field being an array of objects **or** legacy comma-strings (`name=Sprint 12,state=ACTIVE,…`) — newer Cloud instances ship objects, older ones ship strings. Flagged detection reads `customfield_10021` (standard on Cloud) or a raw `flagged` field. Response bodies are run through a `safeParseJson` helper rather than `resp.json` (which is a getter that throws on non-JSON bodies — e.g. a plain-text `"XSRF check failed"` on a 403). This keeps a non-JSON error body from masking the real HTTP status with a parse exception.
 4. In-flight dedup: a concurrent `refresh()` returns the same promise.
 5. On completion, the service transitions state (`empty` → `loading` → `fresh`/`error`), bumps its `version` counter, and notifies listeners.
 
-Cache is cleared on every `saveSettings()` call — URL/token/projects may have changed.
+Cache is cleared on every `saveSettings()` call — URL/token/projects may have changed. Note: sticky UI-state saves from the dashboard (section collapse/expand) bypass `saveSettings` and go directly to `saveData(this.data)` from `main.ts` to avoid wiping the fetched result set on every section toggle.
 
 ### View layout
 
@@ -931,12 +931,39 @@ The dashboard does **no background polling**. `refresh()` runs in three scenario
 
 This keeps the dashboard fresh when actually being looked at, and zero-cost when hidden.
 
+### JIRA → Topic actions (right-click on a row)
+
+The dashboard is read-only against JIRA, but it doubles as a natural launch point for topic creation/linking since the user is already staring at the issue. Right-clicking any row opens a context menu with:
+
+- **Create topic from this issue** — opens `SprintTopicModal` seeded via its optional `prefill` parameter (`{ title, jira, priority }`). Title ← `issue.summary` (fallback: issue key), JIRA field ← `issue.key`, priority ← `mapJiraPriority()` (Highest/High → `high`, Medium → `medium`, Low/Lowest → `low`, else `none`). Default sprint is the currently active sprint from `SprintService.getActiveSprint()`, falling back to Backlog if none. JIRA is source-of-truth for title/priority **on first create only** — no subsequent syncs rewrite the topic's frontmatter.
+- **Link to existing topic…** — opens a `FuzzySuggestModal` (`TopicSuggestModal`) over every topic in the vault filtered to those not already carrying this key. Selecting one appends the key to the topic's existing `jira[]` array (dedup preserving insertion order) via `SprintTopicService.updateTopicFrontmatter`. Auto-disables when every topic already has this key.
+- **Open topic: …** — one entry per already-linked topic, for quick nav to the topic file. Only appears when `topicIndex.get(issue.key)` is non-empty.
+
+Both write paths route through the standard topic service (`createTopic` / `updateTopicFrontmatter`) so they participate in the normal file-watch → scanner → `onTopicsChange` → re-render cycle. The dashboard view subscribes to `VaultScanner.onTopicsChange` and rebuilds the forward topic index on each fired event, so a newly-created or re-linked topic's `↔ Topic` chip appears on the row without a manual refresh. The scanner has no explicit unsubscribe API, so the callback guards on `contentContainer` being non-null (set to `null` in `onClose`).
+
+### Team tracking (lead-analyst mode)
+
+Opt-in layer on top of the personal dashboard for leads who organize a team's work. Configure team members in `Settings → JIRA Integration → Team Members` (full name + nickname + email + active flag, stored on `PluginSettings.teamMembers`), flip the `jiraTeamEnabled` toggle, and the view grows a second **Team** tab (see *Tab layout* below). Email is the JIRA identity — used directly in `assignee in ("email1", "email2", …)` JQL clauses.
+
+**Tab layout.** The header carries a tab bar with two tabs — **My Work** and **Team** — whenever team tracking is enabled. Selection persists via `PluginSettings.jiraDashboardActiveTab: 'mine' | 'team'` (default `'mine'`, written through the `saveData` UI-state bypass so switching tabs doesn't wipe fetched caches). `renderContent()` routes to `renderMineTab()` or `renderTeamTab()` based on the resolved active tab — only the selected block is built per render, so off-screen tab content costs zero layout. When team tracking is toggled off the tab bar hides entirely (`.is-hidden`) and `resolveActiveTab()` coerces a stale `'team'` selection back to `'mine'`, so the dashboard degrades gracefully to its pre-team-feature appearance. Switching tabs kicks a `refresh()` on the target service only if its cache is stale; already-fresh tabs switch instantly with no network.
+
+**`JiraTeamService` (`src/services/jiraTeamService.ts`)** mirrors `JiraDashboardService`'s state machine, event bus, and fetch mechanics (GET `/search/jql`, explicit field list, `safeParseJson`, in-flight dedup). Separate rather than folded into one service so a team-fetch failure can never mask the user's own issues. `isEnabled()` short-circuits when the master toggle is off, team toggle is off, creds are missing, or no active member has a valid-looking email. Reuses `jiraDashboardProjects` + `jiraDashboardTtlMinutes` — same project scope and same visibility-aware auto-refresh cadence as the personal sections.
+
+The Team tab renders its content in two parts:
+
+1. **Workload heatmap** — one row per active member, sorted heaviest-first. Each row has a proportionally-sized segmented bar colored by status category (**red** blocked · **blue** in-progress · **grey** open · **faded green** done). Widths scale against the team max so the busiest member fills the track and others are visually relative. A compact count summary (`3 blocked · 5 in progress · 2 open`) sits to the right.
+2. **Per-person sections** — one collapsible section per member, sorted by workload desc, reusing the existing `renderIssueRow` so right-click context menus (Create topic / Link to topic) work identically to personal rows. Sticky collapsed state keyed by `team:<email>` in `jiraDashboardCollapsedSections`.
+
+**Bucketing**: each team-scoped issue is assigned to exactly one member by: (1) case-insensitive email match against `issue.assigneeEmail` (unambiguous when present — many Cloud tenants hide `emailAddress` for privacy), falling back to (2) case-insensitive `fullName` vs `issue.assignee` displayName match. Issues matching no member are dropped rather than bucketed into a catch-all. `JiraDashboardIssue` carries both `assigneeEmail` and `assigneeAccountId` now, populated by both parsers.
+
+Everything in this layer is read-only against JIRA. The only writes are to local topic files, via the same right-click actions available on the personal rows.
+
 ### Performance posture
 
-- **One JQL round-trip per refresh**, 100-row cap. All sections are sliced from the same cached array — filters are cheap synchronous predicates.
-- **No per-issue secondary fetches** — the dashboard returns enough fields in one call (`summary, status, priority, assignee, reporter, duedate, resolutiondate, updated, labels, parent, issuetype, timespent, timeestimate, [sprint field], *all`).
-- **Single event bus**; views fold the service's `version` into their render decision so only cache-affecting changes rebuild.
-- **Read-only UX** — no write conflicts, no JIRA transitions, no risk of the plugin silently mutating a ticket.
+- **One JQL round-trip per refresh**, 100-row cap — per service. The personal and team services run independent fetches, so enabling the team block doubles the network round-trip count from 1 → 2 per refresh, no more.
+- **No per-issue secondary fetches** — each service returns enough fields in one call (`summary, status, priority, assignee, reporter, duedate, resolutiondate, updated, labels, parent, issuetype, timespent, timeestimate, [sprint field], customfield_10021`).
+- **Two independent event buses** (`JiraDashboardService` + `JiraTeamService`); the view subscribes to both and re-renders on either. Folds each service's `version` separately so a stale personal cache doesn't invalidate a fresh team cache or vice versa.
+- **Read-only against JIRA** — no JIRA mutations, no transitions, no comments, no risk of the plugin silently changing a ticket. Topic writes are local-only and never round-trip to JIRA.
 
 ---
 

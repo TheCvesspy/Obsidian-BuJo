@@ -1,8 +1,10 @@
-import { App, Modal, Setting } from 'obsidian';
-import { TaskItem, TaskStatus, Priority } from '../types';
+import { App, Modal, Notice, Setting } from 'obsidian';
+import { TaskItem, TaskStatus, Priority, SprintTopic, PluginSettings, TeamMember } from '../types';
 import { MigrationService, MigrationAction, MigrationDecision, MigrationResult, MorningReviewData } from '../services/migrationService';
 import { TaskStore } from '../services/taskStore';
 import { DailyNoteService } from '../services/dailyNoteService';
+import { TeamMemberService, OverdueOneOnOne } from '../services/teamMemberService';
+import { SprintTopicService } from '../services/sprintTopicService';
 import { formatDateDisplay, isoToPluginDate } from '../utils/dateUtils';
 import { buildTaskLine } from './InsertTaskModal';
 
@@ -19,22 +21,40 @@ export class MigrationModal extends Modal {
         private dailyNotes: DailyNoteService,
         private store: TaskStore,
         private reviewData: MorningReviewData,
-        private onComplete: (result: MigrationResult | null) => void
+        private onComplete: (result: MigrationResult | null) => void,
+        /** Optional — when omitted, the Overdue 1:1s section is hidden. Makes the
+         *  modal usable in contexts that don't have a TeamMemberService wired up. */
+        private teamService?: TeamMemberService,
+        /** Optional — when omitted, the Waiting-on Topics section is hidden. */
+        private topicService?: SprintTopicService,
+        /** Optional — needed to resolve team-member emails to nicknames in the
+         *  Waiting-on section and to read the stale threshold. */
+        private settings?: PluginSettings,
     ) {
         super(app);
     }
 
-    onOpen(): void {
+    async onOpen(): Promise<void> {
         this.modalEl.addClass('task-bujo-migration-modal');
         const { contentEl } = this;
         contentEl.empty();
 
         contentEl.createEl('h2', { text: 'Morning Review' });
 
+        const overdueOneOnOnes = this.teamService?.getOverdueOneOnOnes() ?? [];
+        if (overdueOneOnOnes.length > 0) {
+            this.renderOverdueOneOnOnes(contentEl, overdueOneOnOnes);
+        }
+
+        const staleWaitingTopics = await this.getStaleWaitingTopics();
+        if (staleWaitingTopics.length > 0) {
+            this.renderStaleWaitingTopics(contentEl, staleWaitingTopics);
+        }
+
         const { yesterdayTasks, overdueTasks, todayTasks } = this.reviewData;
         const hasActionable = yesterdayTasks.length > 0 || overdueTasks.length > 0;
 
-        if (!hasActionable && todayTasks.length === 0) {
+        if (!hasActionable && todayTasks.length === 0 && overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0) {
             contentEl.createEl('p', {
                 text: 'No tasks to review. Your slate is clean!',
                 cls: 'task-bujo-empty'
@@ -395,6 +415,140 @@ export class MigrationModal extends Modal {
             this.onComplete(null);
             this.close();
         });
+    }
+
+    /** Top-of-modal nudge: team members whose 1:1 cadence has elapsed.
+     *  Each row offers a single "Schedule 1:1" action that appends a reminder
+     *  line to today's daily note — the author still decides when to actually
+     *  hold the 1:1 and can trigger `Start 1:1` from the Team view at that point. */
+    private renderOverdueOneOnOnes(container: HTMLElement, overdue: OverdueOneOnOne[]): void {
+        const section = container.createDiv({ cls: 'task-bujo-review-section task-bujo-review-oneonones' });
+        const header = section.createDiv({ cls: 'task-bujo-review-section-header' });
+        header.createSpan({ text: 'Overdue 1:1s', cls: 'task-bujo-review-section-title' });
+        header.createSpan({ text: ` (${overdue.length})`, cls: 'task-bujo-review-section-count' });
+
+        for (const { member, daysOverdue } of overdue) {
+            const row = section.createDiv({ cls: 'task-bujo-migration-item task-bujo-oneonone-row' });
+
+            const infoEl = row.createDiv({ cls: 'task-bujo-migration-item-info' });
+            const textEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-text' });
+            textEl.createSpan({ text: member.name, cls: 'task-bujo-oneonone-name' });
+            if (member.role) {
+                textEl.createSpan({ text: ` — ${member.role}`, cls: 'task-bujo-oneonone-role' });
+            }
+
+            const metaEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-meta' });
+            metaEl.createSpan({
+                cls: 'task-bujo-oneonone-overdue',
+                text: `${daysOverdue}d overdue · cadence ${member.cadence}`,
+            });
+
+            const actionsEl = row.createDiv({ cls: 'task-bujo-migration-item-actions' });
+            const scheduleBtn = actionsEl.createEl('button', {
+                text: 'Schedule 1:1',
+                cls: 'task-bujo-btn-forward',
+            });
+            scheduleBtn.addEventListener('click', async () => {
+                try {
+                    // Append a plain checkbox reminder with a @to-style annotation so the
+                    // user can convert it into a calendar event or mark it done later.
+                    // Kept as a raw task line so it appears in the regular BuJo daily view.
+                    const line = `- [ ] Schedule 1:1 with [[${member.name}]] (${daysOverdue}d overdue)`;
+                    await this.dailyNotes.addRawTaskLine(line, new Date());
+                    scheduleBtn.setText('Scheduled ✓');
+                    scheduleBtn.disabled = true;
+                    scheduleBtn.addClass('is-active');
+                } catch (e) {
+                    new Notice(`Could not schedule reminder: ${e instanceof Error ? e.message : 'unknown error'}`);
+                }
+            });
+        }
+    }
+
+    /** Topics the user is waiting on where either no nudge was ever logged, or the last
+     *  nudge is older than the configured threshold. Returns empty if no service wired up. */
+    private async getStaleWaitingTopics(): Promise<SprintTopic[]> {
+        if (!this.topicService) return [];
+        const threshold = this.settings?.nudgeThresholdDays ?? 7;
+        const all = await this.topicService.getAllTopics();
+        const now = new Date();
+        const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        return all
+            .filter(t => t.status !== 'done' && t.waitingOn)
+            .filter(t => {
+                if (!t.lastNudged) return true;
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(t.lastNudged)) return true;
+                const then = new Date(t.lastNudged + 'T00:00:00').getTime();
+                if (isNaN(then)) return true;
+                const daysSince = Math.floor((todayMs - then) / (24 * 60 * 60 * 1000));
+                return daysSince > threshold;
+            });
+    }
+
+    /** Section: topics waiting on someone with no recent nudge. Each row lets the user
+     *  mark the nudge as done (updates `lastNudged`) or clear the waitingOn flag. */
+    private renderStaleWaitingTopics(container: HTMLElement, topics: SprintTopic[]): void {
+        const section = container.createDiv({ cls: 'task-bujo-review-section task-bujo-review-waiting' });
+        const header = section.createDiv({ cls: 'task-bujo-review-section-header' });
+        header.createSpan({ text: 'Waiting on', cls: 'task-bujo-review-section-title' });
+        header.createSpan({ text: ` (${topics.length})`, cls: 'task-bujo-review-section-count' });
+
+        const members: TeamMember[] = this.settings?.teamMembers ?? [];
+        const byEmail = new Map(members.map(m => [m.email, m]));
+
+        for (const topic of topics) {
+            const row = section.createDiv({ cls: 'task-bujo-migration-item task-bujo-waiting-row' });
+
+            const infoEl = row.createDiv({ cls: 'task-bujo-migration-item-info' });
+            const textEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-text' });
+            textEl.createSpan({ text: topic.title, cls: 'task-bujo-waiting-topic' });
+
+            const waitingOn = topic.waitingOn ?? '';
+            const member = byEmail.get(waitingOn);
+            const label = member ? (member.nickname || member.fullName || member.email) : waitingOn;
+
+            const metaEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-meta' });
+            const summary = topic.lastNudged
+                ? `Waiting on ${label} · last nudged ${topic.lastNudged}`
+                : `Waiting on ${label} · never nudged`;
+            metaEl.createSpan({ text: summary, cls: 'task-bujo-waiting-meta' });
+
+            const actionsEl = row.createDiv({ cls: 'task-bujo-migration-item-actions' });
+
+            const nudgedBtn = actionsEl.createEl('button', {
+                text: 'Just nudged',
+                cls: 'task-bujo-btn-forward',
+            });
+            nudgedBtn.addEventListener('click', async () => {
+                try {
+                    await this.topicService!.markNudged(topic.filePath);
+                    nudgedBtn.setText('Nudged ✓');
+                    nudgedBtn.disabled = true;
+                    nudgedBtn.addClass('is-active');
+                } catch (e) {
+                    new Notice(`Could not mark nudged: ${e instanceof Error ? e.message : 'unknown error'}`);
+                }
+            });
+
+            const clearBtn = actionsEl.createEl('button', {
+                text: 'Unblock',
+                cls: 'task-bujo-btn',
+            });
+            clearBtn.addEventListener('click', async () => {
+                try {
+                    await this.topicService!.updateTopicFrontmatter(topic.filePath, {
+                        waitingOn: null,
+                        lastNudged: null,
+                    });
+                    clearBtn.setText('Cleared ✓');
+                    clearBtn.disabled = true;
+                    nudgedBtn.disabled = true;
+                    clearBtn.addClass('is-active');
+                } catch (e) {
+                    new Notice(`Could not unblock: ${e instanceof Error ? e.message : 'unknown error'}`);
+                }
+            });
+        }
     }
 
     private updateSummary(): void {

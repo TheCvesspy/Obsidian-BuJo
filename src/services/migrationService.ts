@@ -253,9 +253,16 @@ export class MigrationService {
         return result;
     }
 
-    /** Normalize task text for dedup: strip "(from [[...]])" and trim whitespace */
+    /** Build the dedup identity for a task.
+     *  Two copies collapse only if their text (minus the `(from [[…]])` annotation),
+     *  priority, and due date all match — the three signals that together
+     *  distinguish a forwarded duplicate from a genuinely distinct task that
+     *  happens to share wording. Narrower than the old text-only key; prefers
+     *  keeping two tasks over silently dropping one. */
     private normalizeTaskText(task: TaskItem): string {
-        return task.text.replace(MIGRATED_FROM_REGEX, '').trim().toLowerCase();
+        const text = task.text.replace(MIGRATED_FROM_REGEX, '').trim().toLowerCase();
+        const due = task.dueDate ? formatDateISO(task.dueDate) : '';
+        return `${text}|${task.priority}|${due}`;
     }
 
     /** Extract YYYY-MM-DD date string from a daily note path, or null if not a daily note */

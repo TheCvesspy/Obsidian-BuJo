@@ -19,6 +19,7 @@ import { MonthlyView } from './components/MonthlyView';
 import { SprintView } from './components/SprintView';
 import { TopicsOverviewView } from './components/TopicsOverviewView';
 import { OverviewView } from './components/OpenPointsView';
+import { InboxView } from './components/InboxView';
 import { OverdueView } from './components/OverdueView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { CalendarView } from './components/CalendarView';
@@ -296,6 +297,11 @@ export class TaskBuJoView extends ItemView {
 				view.render();
 				break;
 			}
+			case BuJoViewMode.Inbox: {
+				const view = new InboxView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
+				view.render();
+				break;
+			}
 			case BuJoViewMode.Analytics: {
 				const view = new AnalyticsView(
 					this.contentContainer,
@@ -346,6 +352,8 @@ export class TaskBuJoView extends ItemView {
 			(_topic: SprintTopic) => this.refresh(),
 			undefined,
 			this.sprintService,
+			undefined,
+			this.settings,
 		).open();
 	}
 
@@ -358,6 +366,8 @@ export class TaskBuJoView extends ItemView {
 			(_topic: SprintTopic) => this.refresh(),
 			undefined,
 			this.sprintService,
+			undefined,
+			this.settings,
 		).open();
 	}
 
@@ -370,6 +380,8 @@ export class TaskBuJoView extends ItemView {
 			(_topic: SprintTopic) => this.refresh(),
 			topic,
 			this.sprintService,
+			undefined,
+			this.settings,
 		).open();
 	}
 

@@ -81,7 +81,7 @@ export class SyntaxReferenceModal extends Modal {
 			['', ''],
 			['#type/task', 'Force classify as Task'],
 			['#type/openpoint', 'Force classify as Open Point'],
-			['#type/goal', 'Force classify as Goal'],
+			['#type/inbox', 'Force classify as Inbox'],
 			['', ''],
 			['#work/name or #w/CODE', 'Work type tag'],
 			['#purpose/name or #p/CODE', 'Purpose tag'],
@@ -90,7 +90,7 @@ export class SyntaxReferenceModal extends Modal {
 			['', ''],
 			['## Tasks', 'Heading → items are Tasks'],
 			['## Open Points', 'Heading → items are Open Points'],
-			['## Goals', 'Heading → items are Goals'],
+			['## Inbox', 'Heading → items are quick-capture Inbox'],
 		];
 
 		const table = contentEl.createEl('table', { cls: 'task-bujo-syntax-table' });

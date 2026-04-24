@@ -26,6 +26,7 @@ export class ViewSwitcher {
 			{ mode: BuJoViewMode.Calendar, label: 'Calendar' },
 			{ mode: BuJoViewMode.Sprint, label: 'Sprint' },
 			{ mode: BuJoViewMode.Topics, label: 'Topics' },
+			{ mode: BuJoViewMode.Inbox, label: '\u{1F4E5} Inbox' },
 			{ mode: BuJoViewMode.Overdue, label: 'Overdue' },
 			{ mode: BuJoViewMode.Overview, label: 'Overview' },
 			{ mode: BuJoViewMode.Analytics, label: 'Analytics' },

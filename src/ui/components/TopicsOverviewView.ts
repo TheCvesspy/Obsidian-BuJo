@@ -43,6 +43,8 @@ export class TopicsOverviewView {
 	private el: HTMLElement;
 	private subMode: SubMode = 'list';
 	private scope: ScopeFilter = 'all';
+	/** 'all' | 'unassigned' | team member email. Persists across re-renders of this view instance. */
+	private assigneeFilter: string = 'all';
 
 	constructor(
 		private container: HTMLElement,
@@ -76,6 +78,8 @@ export class TopicsOverviewView {
 		this.renderScopeButton(scopeGroup, 'active', 'Active sprint');
 		this.renderScopeButton(scopeGroup, 'backlog', 'Backlog');
 		this.renderScopeButton(scopeGroup, 'archived', 'Archived');
+
+		this.renderAssigneeFilter(header);
 
 		const newBtn = header.createEl('button', { cls: 'task-bujo-btn', text: '+ Topic' });
 		newBtn.addEventListener('click', () => this.onNewTopic());
@@ -131,6 +135,52 @@ export class TopicsOverviewView {
 		});
 	}
 
+	/** Assignee filter dropdown. Hidden when no team members are configured so it doesn't
+	 *  add noise for users who don't use the team feature.
+	 *  Adds "Mine" and "Assigned out" options when `settings.jiraEmail` is configured,
+	 *  turning the filter into a lightweight coordination lens. */
+	private renderAssigneeFilter(parent: HTMLElement): void {
+		const active = (this.settings.teamMembers ?? []).filter(m => m.active);
+		if (active.length === 0) return;
+
+		const wrapper = parent.createDiv({ cls: 'task-bujo-topics-assigneefilter' });
+		const select = wrapper.createEl('select', { cls: 'task-bujo-topics-assignee-select' });
+		const addOpt = (value: string, label: string, disabled = false) => {
+			const opt = select.createEl('option', { text: label });
+			opt.value = value;
+			if (disabled) opt.disabled = true;
+			if (value === this.assigneeFilter) opt.selected = true;
+		};
+		addOpt('all', 'All assignees');
+
+		// "Mine" and "Assigned out" — only show when we know who "me" is.
+		const me = this.settings.jiraEmail?.trim();
+		if (me) {
+			addOpt('mine', '\u{1F464} Mine');
+			addOpt('assigned-out', '\u{1F4E8} Assigned out');
+		}
+
+		addOpt('unassigned', '\u2205 Unassigned');
+		addOpt('__sep__', '──────────', true);
+
+		for (const m of active) {
+			addOpt(m.email, m.nickname || m.fullName || m.email);
+		}
+		// Preserve an out-of-team current selection so it doesn't silently reset on re-render.
+		const reserved = new Set(['all', 'mine', 'assigned-out', 'unassigned', '__sep__']);
+		if (
+			!reserved.has(this.assigneeFilter)
+			&& !active.some(m => m.email === this.assigneeFilter)
+		) {
+			addOpt(this.assigneeFilter, `${this.assigneeFilter} · inactive`);
+		}
+		select.addEventListener('change', () => {
+			if (select.value === '__sep__') return;  // separator shouldn't be selectable but guard anyway
+			this.assigneeFilter = select.value;
+			this.render();
+		});
+	}
+
 	private applyFilters(topics: SprintTopic[]): SprintTopic[] {
 		const activeSprint: Sprint | null = this.sprintService.getActiveSprint();
 		const activeId = activeSprint?.id ?? null;
@@ -157,6 +207,18 @@ export class TopicsOverviewView {
 				t.jira.some(k => k.toLowerCase().includes(q)) ||
 				t.linkedPages.some(p => p.toLowerCase().includes(q))
 			);
+		}
+
+		if (this.assigneeFilter === 'unassigned') {
+			filtered = filtered.filter(t => !t.assignee);
+		} else if (this.assigneeFilter === 'mine') {
+			const me = this.settings.jiraEmail?.trim();
+			if (me) filtered = filtered.filter(t => t.assignee === me);
+		} else if (this.assigneeFilter === 'assigned-out') {
+			const me = this.settings.jiraEmail?.trim();
+			if (me) filtered = filtered.filter(t => !!t.assignee && t.assignee !== me);
+		} else if (this.assigneeFilter !== 'all') {
+			filtered = filtered.filter(t => t.assignee === this.assigneeFilter);
 		}
 
 		return filtered;
@@ -403,6 +465,7 @@ export class TopicsOverviewView {
 		opts: { draggable?: boolean } = {},
 	): void {
 		const jiraLookup = this.makeJiraLookup();
+		const assigneeLookup = this.makeAssigneeLookup();
 		renderTopicCard(parent, topic, {
 			draggable: opts.draggable ?? false,
 			isDragging: this.isDragging,
@@ -412,6 +475,8 @@ export class TopicsOverviewView {
 				await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
 			},
 			jiraLookup,
+			assigneeLookup,
+			nudgeThresholdDays: this.settings.nudgeThresholdDays,
 		});
 
 		// Add an "Edit" affordance — clicking the card title opens the file; a small edit
@@ -461,6 +526,18 @@ export class TopicsOverviewView {
 			loading: svc.isLoading(key),
 			error: svc.getError(key),
 		});
+	}
+
+	/** Build a per-email assignee lookup resolving the "logged team" for display. */
+	private makeAssigneeLookup() {
+		const members = this.settings.teamMembers ?? [];
+		if (members.length === 0) return undefined;
+		const byEmail = new Map(members.map(m => [m.email, m]));
+		return (email: string) => {
+			const m = byEmail.get(email);
+			if (!m) return null;
+			return { label: m.nickname || m.fullName || m.email, isInactive: !m.active };
+		};
 	}
 
 	destroy(): void {

@@ -62,3 +62,14 @@ export function createStatusMarker(statusChar: string): HTMLElement {
 	}
 	return marker;
 }
+
+/** Cadence chip used on Team Overview cards.
+ *  `state` maps to a colour via CSS — overdue=red, due-soon=amber, on-track=green,
+ *  never=muted, suspended=grey-striped. */
+export function createCadenceChip(state: string, label: string): HTMLElement {
+	const chip = document.createElement('span');
+	chip.addClass('task-bujo-cadence-chip');
+	chip.addClass(`task-bujo-cadence-${state}`);
+	chip.textContent = label;
+	return chip;
+}

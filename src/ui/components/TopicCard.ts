@@ -16,6 +16,12 @@ export interface TopicCardOptions {
 	/** Lookup live JIRA data for a given key. Called once per key in `topic.jira[]`.
 	 *  Return `{info: null, loading: false, error: null}` (or omit) to render the key bare. */
 	jiraLookup?: (key: string) => { info: JiraIssueInfo | null; loading: boolean; error: string | null };
+	/** Lookup team-member display info by email. Return null for unknown (removed) members;
+	 *  the card falls back to the raw email. `isInactive` styles the chip as muted. */
+	assigneeLookup?: (email: string) => { label: string; isInactive: boolean } | null;
+	/** Number of days after `lastNudged` before a waiting-on chip is marked stale.
+	 *  Default 7. */
+	nudgeThresholdDays?: number;
 }
 
 const STATUS_TRANSITIONS: Record<TopicStatus, { left: TopicStatus | null; right: TopicStatus | null }> = {
@@ -29,6 +35,16 @@ const STATUS_LABELS: Record<TopicStatus, string> = {
 	'in-progress': 'In Progress',
 	'done': 'Done',
 };
+
+/** Days between `isoDate` (YYYY-MM-DD) and today. Returns null for invalid input. */
+function computeDaysSince(isoDate: string | null): number | null {
+	if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
+	const then = new Date(isoDate + 'T00:00:00').getTime();
+	if (isNaN(then)) return null;
+	const now = new Date();
+	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	return Math.floor((today - then) / (24 * 60 * 60 * 1000));
+}
 
 /** Render a Topic card into the given container. Returns the card element. */
 export function renderTopicCard(
@@ -130,10 +146,57 @@ export function renderTopicCard(
 		}
 	}
 
+	// Optional assignee chip (shown when the topic has one set)
+	if (topic.assignee) {
+		const lookup = opts.assigneeLookup?.(topic.assignee) ?? null;
+		const label = lookup?.label ?? topic.assignee;
+		const chip = card.createDiv({ cls: 'task-bujo-kanban-card-assignee' });
+		chip.setText(label);
+		if (!lookup || lookup.isInactive) {
+			chip.addClass('task-bujo-kanban-card-assignee-stale');
+		}
+		chip.setAttribute('title', lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
+	}
+
+	// Optional waiting-on chip. If waitingOn looks like an email and resolves to a team
+	// member we show the nickname; otherwise we render the raw value (free-text blocker).
+	if (topic.waitingOn) {
+		const looksLikeEmail = topic.waitingOn.includes('@');
+		const lookup = looksLikeEmail ? opts.assigneeLookup?.(topic.waitingOn) ?? null : null;
+		const label = lookup?.label ?? topic.waitingOn;
+		const daysSinceNudge = computeDaysSince(topic.lastNudged);
+		const threshold = opts.nudgeThresholdDays ?? 7;
+		const suffix = topic.lastNudged === null
+			? ' · never nudged'
+			: daysSinceNudge !== null
+				? ` · ${daysSinceNudge}d`
+				: '';
+		const chip = card.createDiv({ cls: 'task-bujo-kanban-card-waiting' });
+		chip.setText(`\u23F3 ${label}${suffix}`);
+		const isStale = topic.lastNudged === null
+			|| (daysSinceNudge !== null && daysSinceNudge > threshold);
+		if (isStale) chip.addClass('task-bujo-kanban-card-waiting-stale');
+		chip.setAttribute('title', `Waiting on: ${label}${suffix}`);
+	}
+
 	// Linked pages
 	if (topic.linkedPages.length > 0) {
 		const linksText = topic.linkedPages.map(p => `[[${p}]]`).join(', ');
 		card.createDiv({ cls: 'task-bujo-kanban-card-links', text: linksText });
+	}
+
+	// External references — Confluence, Figma, SAP, etc.
+	if (topic.refs.length > 0) {
+		const refsRow = card.createDiv({ cls: 'task-bujo-kanban-card-refs' });
+		for (const ref of topic.refs) {
+			const chip = refsRow.createSpan({ cls: 'task-bujo-kanban-card-ref-chip' });
+			chip.setText(`${ref.label} \u2197`);
+			chip.setAttribute('title', ref.url);
+			chip.addEventListener('click', (e) => {
+				e.stopPropagation();
+				window.open(ref.url, '_blank');
+			});
+		}
 	}
 
 	// Task progress bar

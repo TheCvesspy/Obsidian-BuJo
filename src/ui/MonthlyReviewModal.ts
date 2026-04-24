@@ -1,10 +1,9 @@
 import { App, Modal } from 'obsidian';
 import { MonthlyAnalyticsService, MonthlyStats } from '../services/monthlyAnalyticsService';
 import { MonthlyNoteService } from '../services/monthlyNoteService';
-import { MonthlySnapshot, PluginSettings, TaskStatus } from '../types';
+import { MonthlySnapshot, PluginSettings } from '../types';
 import { TaskStore } from '../services/taskStore';
-import { getMonthId, formatMonthDisplay, formatMonthIdDisplay, parseMonthId } from '../utils/monthUtils';
-import { getChildProgress } from '../utils/taskHierarchy';
+import { formatMonthDisplay, formatMonthIdDisplay } from '../utils/monthUtils';
 
 export class MonthlyReviewModal extends Modal {
 	private stats: MonthlyStats;
@@ -14,8 +13,8 @@ export class MonthlyReviewModal extends Modal {
 		app: App,
 		private monthlyAnalytics: MonthlyAnalyticsService,
 		private monthlyNotes: MonthlyNoteService,
-		private store: TaskStore,
-		private settings: PluginSettings,
+		_store: TaskStore,
+		_settings: PluginSettings,
 		private monthlyHistory: MonthlySnapshot[],
 		private onSaveSnapshot: (snapshot: MonthlySnapshot) => void,
 	) {
@@ -39,7 +38,6 @@ export class MonthlyReviewModal extends Modal {
 			{ label: 'Migrated', value: String(this.stats.totalMigrated) },
 			{ label: 'Cancelled', value: String(this.stats.totalCancelled) },
 			{ label: 'Completion Rate', value: `${this.stats.completionRate.toFixed(0)}%` },
-			{ label: 'Goals', value: `${this.stats.goalsCompleted}/${this.stats.goalsTotal}` },
 		];
 
 		for (const item of summaryItems) {
@@ -47,9 +45,6 @@ export class MonthlyReviewModal extends Modal {
 			row.createSpan({ cls: 'task-bujo-review-stat-label', text: item.label });
 			row.createSpan({ cls: 'task-bujo-review-stat-value', text: item.value });
 		}
-
-		// Goal progress
-		this.renderGoalProgress(contentEl);
 
 		// Reflections textarea
 		await this.renderReflections(contentEl);
@@ -67,7 +62,6 @@ export class MonthlyReviewModal extends Modal {
 			text: 'Save Snapshot & Close',
 		});
 		saveBtn.addEventListener('click', async () => {
-			// Save reflections to monthly note
 			await this.monthlyNotes.writeReflections(new Date(), this.reflectionsText);
 			const snapshot = this.monthlyAnalytics.createSnapshot(this.stats, this.reflectionsText);
 			this.onSaveSnapshot(snapshot);
@@ -78,43 +72,6 @@ export class MonthlyReviewModal extends Modal {
 		closeBtn.addEventListener('click', () => this.close());
 	}
 
-	private renderGoalProgress(container: HTMLElement): void {
-		const monthId = getMonthId(new Date());
-		const monthlyNotePath = `${this.settings.monthlyNotePath}/${monthId}.md`;
-		const goals = this.store.getGoalsForPath(monthlyNotePath);
-
-		if (goals.length === 0) return;
-
-		const section = container.createDiv({ cls: 'task-bujo-review-breakdown' });
-		section.createEl('h3', { text: 'Goal Progress' });
-
-		for (const goal of goals) {
-			const row = section.createDiv({ cls: 'task-bujo-review-breakdown-row' });
-			row.createSpan({ cls: 'task-bujo-review-breakdown-name', text: goal.text });
-
-			const barWrap = row.createDiv({ cls: 'task-bujo-review-breakdown-bar-wrap' });
-
-			let pct: number;
-			if (goal.childrenIds.length > 0) {
-				const progress = getChildProgress(goal, (id) => this.store.getTaskById(id));
-				pct = progress.total > 0 ? (progress.completed / progress.total) * 100 : 0;
-				row.createSpan({
-					cls: 'task-bujo-review-breakdown-value',
-					text: `${progress.completed}/${progress.total}`,
-				});
-			} else {
-				pct = goal.status === TaskStatus.Done ? 100 : 0;
-				row.createSpan({
-					cls: 'task-bujo-review-breakdown-value',
-					text: goal.status === TaskStatus.Done ? 'Done' : 'Open',
-				});
-			}
-
-			const bar = barWrap.createDiv({ cls: 'task-bujo-review-breakdown-bar' });
-			bar.style.width = `${pct}%`;
-		}
-	}
-
 	private async renderReflections(container: HTMLElement): Promise<void> {
 		const section = container.createDiv({ cls: 'task-bujo-monthly-reflections-section' });
 		section.createEl('h3', { text: 'Reflections' });
@@ -123,7 +80,6 @@ export class MonthlyReviewModal extends Modal {
 			cls: 'task-bujo-text-muted',
 		});
 
-		// Load existing reflections
 		this.reflectionsText = await this.monthlyNotes.readReflections(new Date());
 
 		const textarea = section.createEl('textarea', {
@@ -148,7 +104,7 @@ export class MonthlyReviewModal extends Modal {
 				: '0';
 			const row = section.createDiv({ cls: 'task-bujo-review-comparison-row' });
 			row.createSpan({ text: formatMonthIdDisplay(snap.monthId) });
-			row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%) · Goals: ${snap.goalsCompleted}/${snap.goalsTotal}` });
+			row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%)` });
 		}
 	}
 

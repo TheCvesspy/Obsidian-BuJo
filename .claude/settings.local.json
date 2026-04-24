@@ -7,7 +7,13 @@
       "Bash(node esbuild.config.mjs production)",
       "Bash(find /c/Users/on079542 -path */.obsidian/plugins/obsidian-task-bujo -type d)",
       "Bash(ls *.md)",
-      "Bash(ls *.ts)"
+      "Bash(ls *.ts)",
+      "Bash(echo \"exit=$?\")",
+      "Read(//c/c/Users/on079542/Documents/Projects/Obsidian Task Manager/**)",
+      "Bash(echo \"tsc=$?\")",
+      "Bash(echo \"esbuild=$?\")",
+      "Bash(cp \"C:\\\\Users\\\\on079542\\\\Documents\\\\Projects\\\\Obsidian Task Manager\\\\main.js\" \"/c/Users/on079542/Obsidian Vaults/QuillWork/.obsidian/plugins/obsidian-task-bujo/main.js\")",
+      "Read(//c/Users/on079542/Documents/Projects/Obsidian Task Manager/**)"
     ]
   }
 }

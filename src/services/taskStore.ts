@@ -18,7 +18,7 @@ export class TaskStore {
     // Cached category indices — rebuilt on setTasks()
     private taskItems: TaskItem[] = [];
     private openPointItems: TaskItem[] = [];
-    private goalItems: TaskItem[] = [];
+    private inboxItems: TaskItem[] = [];
     private uncategorizedItems: TaskItem[] = [];
 
     // Hierarchy lookup — rebuilt on setTasks()
@@ -38,7 +38,7 @@ export class TaskStore {
     private rebuildIndices(): void {
         this.taskItems = [];
         this.openPointItems = [];
-        this.goalItems = [];
+        this.inboxItems = [];
         this.uncategorizedItems = [];
         this.taskByIdMap = new Map();
         for (const t of this.tasks) {
@@ -50,8 +50,8 @@ export class TaskStore {
                 case ItemCategory.OpenPoint:
                     this.openPointItems.push(t);
                     break;
-                case ItemCategory.Goal:
-                    this.goalItems.push(t);
+                case ItemCategory.Inbox:
+                    this.inboxItems.push(t);
                     break;
                 case ItemCategory.Uncategorized:
                     this.uncategorizedItems.push(t);
@@ -88,14 +88,9 @@ export class TaskStore {
         return this.openPointItems;
     }
 
-    /** Get all items classified as Goals */
-    getGoals(): TaskItem[] {
-        return this.goalItems;
-    }
-
-    /** Get root goals from a specific file path */
-    getGoalsForPath(path: string): TaskItem[] {
-        return this.goalItems.filter(t => t.parentId === null && t.sourcePath === path);
+    /** Get all items classified as Inbox (quick-capture, needs triage) */
+    getInbox(): TaskItem[] {
+        return this.inboxItems;
     }
 
     /** Get uncategorized items */

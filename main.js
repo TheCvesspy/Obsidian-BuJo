@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => TaskBuJoPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian26 = require("obsidian");
+var import_obsidian32 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_WORK_TYPES = [
@@ -55,17 +55,19 @@ var DEFAULT_SETTINGS = {
   migrationPromptOnStartup: true,
   taskHeadings: ["Tasks", "TODO", "Action Items"],
   openPointHeadings: ["Open Points", "Questions", "Discussion Points"],
+  inboxHeadings: ["Inbox", "Triage"],
+  defaultQuickAddTarget: "tasks",
   workTypes: DEFAULT_WORK_TYPES,
   purposes: DEFAULT_PURPOSES,
   weekStartDay: 1,
   monthlyNotePath: "BuJo/Monthly",
-  monthlyMigrationPromptOnStartup: true,
-  goalHeadings: ["Goals"],
   sprintTopicsPath: "BuJo/Sprints/Topics",
   sprintWorkDaysOnly: false,
   archiveFolderPath: "BuJo/Archive",
   archiveGroupBy: "month",
   urgencyThresholdDays: 2,
+  nudgeThresholdDays: 7,
+  teamFolderPath: "BuJo/Team",
   // JIRA module defaults — OFF until explicitly configured
   jiraEnabled: false,
   jiraBaseUrl: "",
@@ -75,7 +77,11 @@ var DEFAULT_SETTINGS = {
   jiraDashboardProjects: [],
   jiraDashboardTtlMinutes: 10,
   jiraSprintFieldId: "customfield_10020",
-  jiraDashboardCollapsedSections: {}
+  jiraDashboardCollapsedSections: {},
+  // Team tracking defaults — OFF until you add members + toggle on
+  jiraTeamEnabled: false,
+  teamMembers: [],
+  jiraDashboardActiveTab: "mine"
 };
 var DEFAULT_PLUGIN_DATA = {
   settings: DEFAULT_SETTINGS,
@@ -83,13 +89,13 @@ var DEFAULT_PLUGIN_DATA = {
   lastMigrationDate: null,
   weeklyHistory: [],
   lastWeeklyReviewWeek: null,
-  lastMonthlyMigrationMonth: null,
   monthlyHistory: []
 };
 
 // src/constants.ts
 var VIEW_TYPE_TASK_BUJO = "task-bujo-view";
 var VIEW_TYPE_JIRA_DASHBOARD = "task-bujo-jira-dashboard";
+var VIEW_TYPE_TEAM_DASHBOARD = "task-bujo-team-dashboard";
 var CHECKBOX_REGEX = /^(\s*)-\s*\[([ x><!-])\]\s+(.*)$/i;
 var HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 var PRIORITY_TAG_REGEX = /#priority\/(high|medium|low)/i;
@@ -106,9 +112,10 @@ var SYNC_CLEAR_DELAY_MS = 500;
 var SCAN_BATCH_SIZE = 50;
 
 // src/settings.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // src/utils/pathUtils.ts
+var import_obsidian = require("obsidian");
 function getEffectiveState(filePath, folderStates) {
   const normalizedPath = filePath.replace(/\\/g, "/");
   const segments = normalizedPath.split("/");
@@ -128,9 +135,30 @@ function getEffectiveState(filePath, folderStates) {
 function shouldIncludeFile(filePath, folderStates) {
   return getEffectiveState(filePath, folderStates) === "include";
 }
+async function ensureFolderExists(vault, folderPath) {
+  if (!folderPath)
+    return;
+  const existing = vault.getAbstractFileByPath(folderPath);
+  if (existing instanceof import_obsidian.TFolder)
+    return;
+  const parts = folderPath.split("/");
+  let current = "";
+  for (const part of parts) {
+    current = current ? `${current}/${part}` : part;
+    if (!(vault.getAbstractFileByPath(current) instanceof import_obsidian.TFolder)) {
+      try {
+        await vault.createFolder(current);
+      } catch (e) {
+      }
+    }
+  }
+}
+function sanitizePathSegment(name) {
+  return name.replace(/[\\/:*?"<>|#^[\]]/g, "").replace(/\s+/g, " ").trim();
+}
 
 // src/settings.ts
-var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
+var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /** Tracks which folder paths are collapsed (persists across re-renders) */
@@ -161,13 +189,13 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
     });
     this.renderFolderTree(containerEl);
     containerEl.createEl("h2", { text: "Display" });
-    new import_obsidian.Setting(containerEl).setName("Show completed tasks").setDesc("Show or hide completed tasks in the task list.").addToggle(
+    new import_obsidian2.Setting(containerEl).setName("Show completed tasks").setDesc("Show or hide completed tasks in the task list.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showCompletedTasks).onChange(async (value) => {
         this.plugin.settings.showCompletedTasks = value;
         await this.plugin.saveSettings(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Default grouping mode").setDesc("How tasks are grouped by default.").addDropdown(
+    new import_obsidian2.Setting(containerEl).setName("Default grouping mode").setDesc("How tasks are grouped by default.").addDropdown(
       (dropdown) => dropdown.addOptions({
         ["byPage" /* ByPage */]: "By Page",
         ["byPriority" /* ByPriority */]: "By Priority",
@@ -177,7 +205,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Default view mode").setDesc("The view mode shown when the plugin opens.").addDropdown(
+    new import_obsidian2.Setting(containerEl).setName("Default view mode").setDesc("The view mode shown when the plugin opens.").addDropdown(
       (dropdown) => dropdown.addOptions({
         ["daily" /* Daily */]: "Daily",
         ["weekly" /* Weekly */]: "Weekly",
@@ -185,6 +213,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         ["calendar" /* Calendar */]: "Calendar",
         ["sprint" /* Sprint */]: "Sprint",
         ["topics" /* Topics */]: "Topics",
+        ["inbox" /* Inbox */]: "Inbox",
         ["overdue" /* Overdue */]: "Overdue",
         ["overview" /* Overview */]: "Overview",
         ["analytics" /* Analytics */]: "Analytics"
@@ -194,51 +223,51 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
       })
     );
     containerEl.createEl("h2", { text: "Classification" });
-    new import_obsidian.Setting(containerEl).setName("Task headings").setDesc("Comma-separated heading names that identify task sections.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Task headings").setDesc("Comma-separated heading names that identify task sections.").addText(
       (text) => text.setPlaceholder("Tasks, TODO, Action Items").setValue(this.plugin.settings.taskHeadings.join(", ")).onChange((value) => {
         this.plugin.settings.taskHeadings = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
         this.debouncedSave(true);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Open point headings").setDesc("Comma-separated heading names that identify open-point sections.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Open point headings").setDesc("Comma-separated heading names that identify open-point sections.").addText(
       (text) => text.setPlaceholder("Open Points, Questions, Discussion Points").setValue(this.plugin.settings.openPointHeadings.join(", ")).onChange((value) => {
         this.plugin.settings.openPointHeadings = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
         this.debouncedSave(true);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Goal headings").setDesc("Comma-separated heading names that identify goal sections.").addText(
-      (text) => text.setPlaceholder("Goals").setValue(this.plugin.settings.goalHeadings.join(", ")).onChange((value) => {
-        this.plugin.settings.goalHeadings = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+    new import_obsidian2.Setting(containerEl).setName("Inbox headings").setDesc("Comma-separated heading names that identify quick-capture inbox sections.").addText(
+      (text) => text.setPlaceholder("Inbox, Triage").setValue(this.plugin.settings.inboxHeadings.join(", ")).onChange((value) => {
+        this.plugin.settings.inboxHeadings = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
         this.debouncedSave(true);
       })
     );
+    new import_obsidian2.Setting(containerEl).setName("Default quick-add target").setDesc("Where the Add Task bar writes by default: under ## Tasks or ## Inbox.").addDropdown(
+      (dropdown) => dropdown.addOptions({ tasks: "Tasks", inbox: "Inbox" }).setValue(this.plugin.settings.defaultQuickAddTarget).onChange((value) => {
+        this.plugin.settings.defaultQuickAddTarget = value;
+        this.debouncedSave(false);
+      })
+    );
     containerEl.createEl("h2", { text: "BuJo" });
-    new import_obsidian.Setting(containerEl).setName("Daily note folder path").setDesc("Folder where daily notes are stored.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Daily note folder path").setDesc("Folder where daily notes are stored.").addText(
       (text) => text.setPlaceholder("BuJo/Daily").setValue(this.plugin.settings.dailyNotePath).onChange((value) => {
         this.plugin.settings.dailyNotePath = value.trim();
         this.debouncedSave(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Migration prompt on startup").setDesc("Prompt to migrate incomplete tasks when Obsidian starts.").addToggle(
+    new import_obsidian2.Setting(containerEl).setName("Migration prompt on startup").setDesc("Prompt to migrate incomplete tasks when Obsidian starts.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.migrationPromptOnStartup).onChange(async (value) => {
         this.plugin.settings.migrationPromptOnStartup = value;
         await this.plugin.saveSettings(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Monthly note folder path").setDesc("Folder where monthly notes are stored.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Monthly note folder path").setDesc("Folder where monthly notes are stored.").addText(
       (text) => text.setPlaceholder("BuJo/Monthly").setValue(this.plugin.settings.monthlyNotePath).onChange((value) => {
         this.plugin.settings.monthlyNotePath = value.trim();
         this.debouncedSave(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Monthly migration prompt on startup").setDesc("Prompt to migrate incomplete goals at the start of each month.").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.monthlyMigrationPromptOnStartup).onChange(async (value) => {
-        this.plugin.settings.monthlyMigrationPromptOnStartup = value;
-        await this.plugin.saveSettings(false);
-      })
-    );
     containerEl.createEl("h2", { text: "Sprints" });
-    new import_obsidian.Setting(containerEl).setName("Default sprint length").setDesc("Length of a sprint in days.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Default sprint length").setDesc("Length of a sprint in days.").addText(
       (text) => text.setPlaceholder("14").setValue(String(this.plugin.settings.defaultSprintLength)).onChange((value) => {
         const parsed = parseInt(value, 10);
         if (!isNaN(parsed) && parsed > 0) {
@@ -247,32 +276,32 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         }
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Sprint topics folder path").setDesc("Folder where sprint topic files are stored.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Sprint topics folder path").setDesc("Folder where sprint topic files are stored.").addText(
       (text) => text.setPlaceholder("BuJo/Sprints/Topics").setValue(this.plugin.settings.sprintTopicsPath).onChange((value) => {
         this.plugin.settings.sprintTopicsPath = value.trim();
         this.debouncedSave(true);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Auto-start next sprint").setDesc("Automatically start a new sprint when the current one ends.").addToggle(
+    new import_obsidian2.Setting(containerEl).setName("Auto-start next sprint").setDesc("Automatically start a new sprint when the current one ends.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoStartNextSprint).onChange(async (value) => {
         this.plugin.settings.autoStartNextSprint = value;
         await this.plugin.saveSettings(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Count work days only").setDesc("Sprint duration and remaining days count only Mon\u2013Fri (excludes weekends).").addToggle(
+    new import_obsidian2.Setting(containerEl).setName("Count work days only").setDesc("Sprint duration and remaining days count only Mon\u2013Fri (excludes weekends).").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.sprintWorkDaysOnly).onChange(async (value) => {
         this.plugin.settings.sprintWorkDaysOnly = value;
         await this.plugin.saveSettings(false);
       })
     );
     containerEl.createEl("h2", { text: "Archive" });
-    new import_obsidian.Setting(containerEl).setName("Archive folder path").setDesc("Folder where completed tasks are archived.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Archive folder path").setDesc("Folder where completed tasks are archived.").addText(
       (text) => text.setPlaceholder("BuJo/Archive").setValue(this.plugin.settings.archiveFolderPath).onChange((value) => {
         this.plugin.settings.archiveFolderPath = value.trim();
         this.debouncedSave(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Archive grouping").setDesc("How archived tasks are organized into files.").addDropdown(
+    new import_obsidian2.Setting(containerEl).setName("Archive grouping").setDesc("How archived tasks are organized into files.").addDropdown(
       (dropdown) => dropdown.addOptions({
         "month": "By Month (2026-03.md)",
         "source": "By Source File"
@@ -282,7 +311,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
       })
     );
     containerEl.createEl("h2", { text: "Views" });
-    new import_obsidian.Setting(containerEl).setName("Urgency threshold (days)").setDesc('Tasks due within this many days are considered "urgent" in the Eisenhower view.').addText(
+    new import_obsidian2.Setting(containerEl).setName("Urgency threshold (days)").setDesc('Tasks due within this many days are considered "urgent" in the Eisenhower view.').addText(
       (text) => text.setPlaceholder("2").setValue(String(this.plugin.settings.urgencyThresholdDays)).onChange((value) => {
         const parsed = parseInt(value, 10);
         if (!isNaN(parsed) && parsed >= 0) {
@@ -291,8 +320,17 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         }
       })
     );
+    new import_obsidian2.Setting(containerEl).setName("Nudge threshold (days)").setDesc("Topics waiting on someone show up in the morning review after this many days without a nudge.").addText(
+      (text) => text.setPlaceholder("7").setValue(String(this.plugin.settings.nudgeThresholdDays)).onChange((value) => {
+        const parsed = parseInt(value, 10);
+        if (!isNaN(parsed) && parsed >= 0) {
+          this.plugin.settings.nudgeThresholdDays = parsed;
+          this.debouncedSave(false);
+        }
+      })
+    );
     containerEl.createEl("h2", { text: "Analytics" });
-    new import_obsidian.Setting(containerEl).setName("Week start day").setDesc("First day of the week for analytics.").addDropdown(
+    new import_obsidian2.Setting(containerEl).setName("Week start day").setDesc("First day of the week for analytics.").addDropdown(
       (dropdown) => dropdown.addOptions({
         "0": "Sunday",
         "1": "Monday",
@@ -306,7 +344,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings(false);
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Work types").setDesc('Comma-separated: Name(Code). E.g. "Deep Work(DW), Review(RV)"').addText(
+    new import_obsidian2.Setting(containerEl).setName("Work types").setDesc('Comma-separated: Name(Code). E.g. "Deep Work(DW), Review(RV)"').addText(
       (text) => text.setPlaceholder("Deep Work(DW), Review(RV), ...").setValue(this.formatTagCategories(this.plugin.settings.workTypes)).onChange((value) => {
         const parsed = this.parseTagCategories(value);
         if (parsed.length > 0) {
@@ -315,7 +353,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         }
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Purposes").setDesc('Comma-separated: Name(Code). E.g. "Delivery(D), Capability(CA)"').addText(
+    new import_obsidian2.Setting(containerEl).setName("Purposes").setDesc('Comma-separated: Name(Code). E.g. "Delivery(D), Capability(CA)"').addText(
       (text) => text.setPlaceholder("Delivery(D), Capability(CA), ...").setValue(this.formatTagCategories(this.plugin.settings.purposes)).onChange((value) => {
         const parsed = this.parseTagCategories(value);
         if (parsed.length > 0) {
@@ -329,7 +367,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
       text: 'Optional module. When enabled, topics with a "jira" frontmatter field (e.g. jira: PROJ-123) will fetch live status and assignee data from your JIRA Cloud instance. Credentials are stored in the plugin data file, alongside your vault.',
       cls: "setting-item-description"
     });
-    new import_obsidian.Setting(containerEl).setName("Enable JIRA integration").setDesc("Master switch. When off, no fetches happen and no JIRA UI appears on cards.").addToggle(
+    new import_obsidian2.Setting(containerEl).setName("Enable JIRA integration").setDesc("Master switch. When off, no fetches happen and no JIRA UI appears on cards.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.jiraEnabled).onChange(async (value) => {
         this.plugin.settings.jiraEnabled = value;
         await this.plugin.saveSettings(false);
@@ -337,26 +375,26 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
       })
     );
     if (this.plugin.settings.jiraEnabled) {
-      new import_obsidian.Setting(containerEl).setName("JIRA base URL").setDesc("Your Atlassian Cloud URL, e.g. https://mycompany.atlassian.net (no trailing slash).").addText(
+      new import_obsidian2.Setting(containerEl).setName("JIRA base URL").setDesc("Your Atlassian Cloud URL, e.g. https://mycompany.atlassian.net (no trailing slash).").addText(
         (text) => text.setPlaceholder("https://mycompany.atlassian.net").setValue(this.plugin.settings.jiraBaseUrl).onChange((value) => {
           this.plugin.settings.jiraBaseUrl = value.trim().replace(/\/+$/, "");
           this.debouncedSave(false);
         })
       );
-      new import_obsidian.Setting(containerEl).setName("Email").setDesc("Your Atlassian account email (used as the Basic-auth username).").addText(
+      new import_obsidian2.Setting(containerEl).setName("Email").setDesc("Your Atlassian account email (used as the Basic-auth username).").addText(
         (text) => text.setPlaceholder("you@example.com").setValue(this.plugin.settings.jiraEmail).onChange((value) => {
           this.plugin.settings.jiraEmail = value.trim();
           this.debouncedSave(false);
         })
       );
-      new import_obsidian.Setting(containerEl).setName("API token").setDesc("Personal API token from id.atlassian.com. Stored in plugin data.json \u2014 as sensitive as the rest of your vault.").addText((text) => {
+      new import_obsidian2.Setting(containerEl).setName("API token").setDesc("Personal API token from id.atlassian.com. Stored in plugin data.json \u2014 as sensitive as the rest of your vault.").addText((text) => {
         text.inputEl.type = "password";
         text.setPlaceholder("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022").setValue(this.plugin.settings.jiraApiToken).onChange((value) => {
           this.plugin.settings.jiraApiToken = value.trim();
           this.debouncedSave(false);
         });
       });
-      new import_obsidian.Setting(containerEl).setName("Cache TTL (minutes)").setDesc("How long to keep fetched issue data before re-hitting the API.").addText(
+      new import_obsidian2.Setting(containerEl).setName("Cache TTL (minutes)").setDesc("How long to keep fetched issue data before re-hitting the API.").addText(
         (text) => text.setPlaceholder("10").setValue(String(this.plugin.settings.jiraCacheTtlMinutes)).onChange((value) => {
           const parsed = parseInt(value, 10);
           if (!isNaN(parsed) && parsed >= 0) {
@@ -370,13 +408,13 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
         text: "Controls the JIRA Dashboard view \u2014 a read-only list of issues where you are assignee, reporter, or watcher. One JQL round-trip per refresh; no background polling.",
         cls: "setting-item-description"
       });
-      new import_obsidian.Setting(containerEl).setName("Dashboard projects").setDesc('Comma-separated JIRA project keys to limit the dashboard search (e.g. "PROJ, DEV"). Leave empty to include all projects you can see.').addText(
+      new import_obsidian2.Setting(containerEl).setName("Dashboard projects").setDesc('Comma-separated JIRA project keys to limit the dashboard search (e.g. "PROJ, DEV"). Leave empty to include all projects you can see.').addText(
         (text) => text.setPlaceholder("PROJ, DEV").setValue(this.plugin.settings.jiraDashboardProjects.join(", ")).onChange((value) => {
           this.plugin.settings.jiraDashboardProjects = value.split(",").map((s) => s.trim().toUpperCase()).filter((s) => s.length > 0);
           this.debouncedSave(false);
         })
       );
-      new import_obsidian.Setting(containerEl).setName("Dashboard cache TTL (minutes)").setDesc("How long to cache the dashboard result before auto-refresh (when the view is visible). Separate from the per-issue cache above.").addText(
+      new import_obsidian2.Setting(containerEl).setName("Dashboard cache TTL (minutes)").setDesc("How long to cache the dashboard result before auto-refresh (when the view is visible). Separate from the per-issue cache above.").addText(
         (text) => text.setPlaceholder("10").setValue(String(this.plugin.settings.jiraDashboardTtlMinutes)).onChange((value) => {
           const parsed = parseInt(value, 10);
           if (!isNaN(parsed) && parsed >= 0) {
@@ -385,25 +423,171 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
           }
         })
       );
-      new import_obsidian.Setting(containerEl).setName("Sprint custom field ID").setDesc('JIRA custom field ID for the Sprint field. Most Cloud instances use "customfield_10020" \u2014 change only if your JIRA is configured differently.').addText(
+      new import_obsidian2.Setting(containerEl).setName("Sprint custom field ID").setDesc('JIRA custom field ID for the Sprint field. Most Cloud instances use "customfield_10020" \u2014 change only if your JIRA is configured differently.').addText(
         (text) => text.setPlaceholder("customfield_10020").setValue(this.plugin.settings.jiraSprintFieldId).onChange((value) => {
           this.plugin.settings.jiraSprintFieldId = value.trim();
           this.debouncedSave(false);
         })
       );
-      new import_obsidian.Setting(containerEl).setName("Test connection").setDesc("Verify your credentials by calling /rest/api/3/myself.").addButton(
+      new import_obsidian2.Setting(containerEl).setName("Test connection").setDesc("Verify your credentials by calling /rest/api/3/myself.").addButton(
         (btn) => btn.setButtonText("Test connection").onClick(async () => {
           btn.setDisabled(true);
           btn.setButtonText("Testing\u2026");
           try {
             const result = await this.plugin.jiraService.testConnection();
-            new import_obsidian.Notice(result.ok ? `\u2713 ${result.message}` : `\u2717 ${result.message}`);
+            new import_obsidian2.Notice(result.ok ? `\u2713 ${result.message}` : `\u2717 ${result.message}`);
           } finally {
             btn.setDisabled(false);
             btn.setButtonText("Test connection");
           }
         })
       );
+      containerEl.createEl("h3", { text: "Team Members" });
+      containerEl.createEl("p", {
+        text: 'Configure your team so the JIRA Dashboard can show a workload heatmap and per-person sections. Email is used as the JIRA identity. Toggle "Show team section" off to hide the block without losing the list.',
+        cls: "setting-item-description"
+      });
+      new import_obsidian2.Setting(containerEl).setName("Show team section on JIRA Dashboard").setDesc("When on, the dashboard runs a second JQL scoped to the team and renders a workload heatmap plus one section per active member.").addToggle(
+        (toggle) => toggle.setValue(this.plugin.settings.jiraTeamEnabled).onChange(async (value) => {
+          this.plugin.settings.jiraTeamEnabled = value;
+          await this.plugin.saveSettings(false);
+        })
+      );
+      this.renderTeamMembersList(containerEl);
+    }
+    this.renderTeamManagementSection(containerEl);
+  }
+  /** Team-management section: person-page folder + one-shot generator from
+   *  the existing `teamMembers[]` list. */
+  renderTeamManagementSection(containerEl) {
+    containerEl.createEl("h2", { text: "Team Management" });
+    containerEl.createEl("p", {
+      text: "One folder per teammate with a canonical person page and a 1on1/ subfolder for dated 1:1 session notes. The Team tab in the BuJo view surfaces cadence signals so you don't miss 1:1s.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian2.Setting(containerEl).setName("Team folder path").setDesc("Where person pages live. Each teammate gets a subfolder: {folder}/Alice Smith/Alice Smith.md.").addText(
+      (text) => text.setPlaceholder("BuJo/Team").setValue(this.plugin.settings.teamFolderPath).onChange((value) => {
+        this.plugin.settings.teamFolderPath = value.trim() || "BuJo/Team";
+        this.debouncedSave(true);
+      })
+    );
+    new import_obsidian2.Setting(containerEl).setName("Generate person pages from team members").setDesc("For each entry in the team-member list above, create a skeleton person page (if it doesn't already exist). Safe to run repeatedly \u2014 existing pages are never overwritten.").addButton(
+      (btn) => btn.setButtonText("Generate").onClick(async () => {
+        btn.setDisabled(true);
+        btn.setButtonText("Generating\u2026");
+        try {
+          let created = 0;
+          let skipped = 0;
+          for (const member of this.plugin.settings.teamMembers) {
+            if (!member.fullName) {
+              skipped++;
+              continue;
+            }
+            const made = await this.plugin.teamMemberService.ensurePageFromSettings(member);
+            made ? created++ : skipped++;
+          }
+          if (created === 0) {
+            new import_obsidian2.Notice(`No new pages created \u2014 all ${skipped} member(s) already have pages.`);
+          } else {
+            new import_obsidian2.Notice(`Created ${created} person page(s). Open the Team tab in BuJo view to see them.`);
+          }
+        } catch (e) {
+          new import_obsidian2.Notice(`Generation failed: ${e instanceof Error ? e.message : "unknown error"}`);
+        } finally {
+          btn.setDisabled(false);
+          btn.setButtonText("Generate");
+        }
+      })
+    );
+  }
+  /** Render the editable team member list. Rebuilds the whole block on any change
+   *  because Obsidian Settings don't trivially support in-place row edits. Cheap
+   *  given typical team sizes (5–15 people). */
+  renderTeamMembersList(containerEl) {
+    const listWrap = containerEl.createDiv({ cls: "task-bujo-team-members-list" });
+    const rerender = () => {
+      listWrap.empty();
+      this.renderTeamMembersRows(listWrap);
+    };
+    this.renderTeamMembersRows(listWrap);
+    new import_obsidian2.Setting(containerEl).addButton(
+      (btn) => btn.setButtonText("+ Add team member").setCta().onClick(async () => {
+        this.plugin.settings.teamMembers.push({
+          fullName: "",
+          nickname: "",
+          email: "",
+          active: true
+        });
+        await this.plugin.saveSettings(false);
+        rerender();
+      })
+    );
+  }
+  renderTeamMembersRows(listEl) {
+    const members = this.plugin.settings.teamMembers;
+    if (members.length === 0) {
+      listEl.createDiv({
+        cls: "task-bujo-empty",
+        text: 'No team members configured yet. Click "+ Add team member" to start.'
+      });
+      return;
+    }
+    for (let i = 0; i < members.length; i++) {
+      const row = listEl.createDiv({ cls: "task-bujo-team-member-row" });
+      const inputsRow = row.createDiv({ cls: "task-bujo-team-member-inputs" });
+      const nameInput = inputsRow.createEl("input", {
+        cls: "task-bujo-team-member-input",
+        type: "text",
+        attr: { placeholder: "Full name", value: members[i].fullName }
+      });
+      nameInput.addEventListener("change", async () => {
+        this.plugin.settings.teamMembers[i].fullName = nameInput.value.trim();
+        await this.plugin.saveSettings(false);
+      });
+      const nickInput = inputsRow.createEl("input", {
+        cls: "task-bujo-team-member-input task-bujo-team-member-input-nick",
+        type: "text",
+        attr: { placeholder: "Nickname", value: members[i].nickname }
+      });
+      nickInput.addEventListener("change", async () => {
+        this.plugin.settings.teamMembers[i].nickname = nickInput.value.trim();
+        await this.plugin.saveSettings(false);
+      });
+      const emailInput = inputsRow.createEl("input", {
+        cls: "task-bujo-team-member-input task-bujo-team-member-input-email",
+        type: "email",
+        attr: { placeholder: "email@domain.com", value: members[i].email }
+      });
+      emailInput.addEventListener("change", async () => {
+        const raw = emailInput.value.trim();
+        if (raw && !raw.includes("@")) {
+          new import_obsidian2.Notice('Email looks malformed \u2014 expected "name@domain.com".');
+        }
+        this.plugin.settings.teamMembers[i].email = raw;
+        await this.plugin.saveSettings(false);
+      });
+      const controlsRow = row.createDiv({ cls: "task-bujo-team-member-controls" });
+      const activeLabel = controlsRow.createEl("label", { cls: "task-bujo-team-member-active" });
+      const activeCheck = activeLabel.createEl("input", {
+        type: "checkbox",
+        attr: members[i].active ? { checked: "true" } : {}
+      });
+      activeCheck.checked = members[i].active;
+      activeLabel.createSpan({ text: " Active" });
+      activeCheck.addEventListener("change", async () => {
+        this.plugin.settings.teamMembers[i].active = activeCheck.checked;
+        await this.plugin.saveSettings(false);
+      });
+      const removeBtn = controlsRow.createEl("button", {
+        cls: "task-bujo-team-member-remove",
+        text: "Remove"
+      });
+      removeBtn.addEventListener("click", async () => {
+        this.plugin.settings.teamMembers.splice(i, 1);
+        await this.plugin.saveSettings(false);
+        listEl.empty();
+        this.renderTeamMembersRows(listEl);
+      });
     }
   }
   /** Build folder tree from vault and render it */
@@ -434,7 +618,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
     const rootFolder = this.app.vault.getRoot();
     const nodes = [];
     for (const child of rootFolder.children) {
-      if (child instanceof import_obsidian.TFolder) {
+      if (child instanceof import_obsidian2.TFolder) {
         nodes.push(this.folderToNode(child));
       }
     }
@@ -444,7 +628,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
   folderToNode(folder) {
     const children = [];
     for (const child of folder.children) {
-      if (child instanceof import_obsidian.TFolder) {
+      if (child instanceof import_obsidian2.TFolder) {
         children.push(this.folderToNode(child));
       }
     }
@@ -550,7 +734,7 @@ var TaskBuJoSettingTab = class extends import_obsidian.PluginSettingTab {
 };
 
 // src/services/vaultScanner.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/parser/dateParser.ts
 var DAY_NAMES = {
@@ -866,14 +1050,46 @@ function parseFrontmatter(content) {
   if (!match)
     return {};
   const result = {};
-  for (const line of match[1].split("\n")) {
+  const lines = match[1].split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
     const colonIdx = line.indexOf(":");
-    if (colonIdx < 0)
+    if (colonIdx < 0) {
+      i++;
       continue;
+    }
     const key = line.slice(0, colonIdx).trim();
     const value = line.slice(colonIdx + 1).trim();
-    if (key)
-      result[key] = value;
+    if (!key) {
+      i++;
+      continue;
+    }
+    if (value === "|") {
+      const collected = [];
+      i++;
+      while (i < lines.length) {
+        const next = lines[i];
+        if (next.length === 0) {
+          collected.push("");
+          i++;
+          continue;
+        }
+        if (/^\s/.test(next)) {
+          const stripped = next.replace(/^(\t| {1,4})/, "");
+          collected.push(stripped);
+          i++;
+        } else {
+          break;
+        }
+      }
+      while (collected.length > 0 && collected[collected.length - 1] === "")
+        collected.pop();
+      result[key] = collected.join("\n");
+      continue;
+    }
+    result[key] = value;
+    i++;
   }
   return result;
 }
@@ -897,7 +1113,7 @@ function extractSection(body, heading) {
   return results;
 }
 function parseTopicFile(content, filePath) {
-  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
   const fm = parseFrontmatter(content);
   const body = getBody(content);
   let title = (_b = (_a = filePath.split("/").pop()) == null ? void 0 : _a.replace(/\.md$/, "")) != null ? _b : "Untitled";
@@ -942,13 +1158,21 @@ function parseTopicFile(content, filePath) {
   const effort = effortRaw === "xs" ? "xs" : effortRaw === "s" ? "s" : effortRaw === "m" ? "m" : effortRaw === "l" ? "l" : effortRaw === "xl" ? "xl" : null;
   const dueDateRaw = (_h = fm["dueDate"]) == null ? void 0 : _h.trim();
   const dueDate = dueDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw) ? dueDateRaw : null;
-  const sprintHistoryRaw = (_j = (_i = fm["sprintHistory"]) == null ? void 0 : _i.trim()) != null ? _j : "";
+  const assigneeRaw = (_i = fm["assignee"]) == null ? void 0 : _i.trim();
+  const assignee = assigneeRaw ? assigneeRaw : null;
+  const waitingOnRaw = (_j = fm["waitingOn"]) == null ? void 0 : _j.trim();
+  const waitingOn = waitingOnRaw ? waitingOnRaw : null;
+  const lastNudgedRaw = (_k = fm["lastNudged"]) == null ? void 0 : _k.trim();
+  const lastNudged = lastNudgedRaw && /^\d{4}-\d{2}-\d{2}$/.test(lastNudgedRaw) ? lastNudgedRaw : null;
+  const refsRaw = (_l = fm["refs"]) != null ? _l : "";
+  const refs = parseRefsField(refsRaw);
+  const sprintHistoryRaw = (_n = (_m = fm["sprintHistory"]) == null ? void 0 : _m.trim()) != null ? _n : "";
   let sprintHistory = sprintHistoryRaw ? sprintHistoryRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
   const sprintId = fm["sprint"] || null;
   if (sprintHistory.length === 0 && sprintId) {
     sprintHistory = [sprintId];
   }
-  const jiraRaw = (_k = fm["jira"]) != null ? _k : "";
+  const jiraRaw = (_o = fm["jira"]) != null ? _o : "";
   const seenKeys = /* @__PURE__ */ new Set();
   const jira = [];
   ISSUE_KEY_REGEX_G.lastIndex = 0;
@@ -974,26 +1198,143 @@ function parseTopicFile(content, filePath) {
     impact,
     effort,
     dueDate,
-    sprintHistory
+    sprintHistory,
+    assignee,
+    waitingOn,
+    lastNudged,
+    refs
   };
+}
+function parseRefsField(raw) {
+  if (!raw)
+    return [];
+  const out = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed)
+      continue;
+    const pipeIdx = trimmed.indexOf("|");
+    if (pipeIdx < 0)
+      continue;
+    const label = trimmed.slice(0, pipeIdx).trim();
+    const url = trimmed.slice(pipeIdx + 1).trim();
+    if (!label || !url)
+      continue;
+    if (!/^https?:\/\//.test(url))
+      continue;
+    out.push({ label, url });
+  }
+  return out;
+}
+function serializeRefs(refs) {
+  return refs.map((r) => `${r.label} | ${r.url}`).join("\n");
+}
+function foldedScalar(text) {
+  return { foldedScalar: text };
 }
 function serializeFrontmatter(fields) {
   const lines = ["---"];
   for (const [key, value] of Object.entries(fields)) {
     if (value === null || value === void 0)
       continue;
+    if (typeof value === "object" && "foldedScalar" in value) {
+      const body = value.foldedScalar;
+      if (!body.trim())
+        continue;
+      lines.push(`${key}: |`);
+      for (const bodyLine of body.split("\n")) {
+        lines.push(`  ${bodyLine}`);
+      }
+      continue;
+    }
     lines.push(`${key}: ${value}`);
   }
   lines.push("---");
   return lines.join("\n");
 }
 
+// src/parser/teamMemberParser.ts
+var VALID_STATUS = /* @__PURE__ */ new Set(["active", "on_leave", "departed"]);
+var VALID_CADENCE = /* @__PURE__ */ new Set(["weekly", "biweekly", "monthly", "skip"]);
+var ISO_DATE_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
+var ONE_ON_ONE_FILENAME_REGEX = /(\d{4})-(\d{2})-(\d{2})\.md$/;
+function parseTeamMemberPage(content, filePath, sessionPaths = []) {
+  var _a, _b, _c;
+  const fm = parseFrontmatter(content);
+  const lastSlash = filePath.lastIndexOf("/");
+  const folderPath = lastSlash >= 0 ? filePath.substring(0, lastSlash) : "";
+  const basename = (lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath).replace(/\.md$/, "");
+  const statusRaw = ((_a = fm["status"]) != null ? _a : "").trim().toLowerCase();
+  const status = VALID_STATUS.has(statusRaw) ? statusRaw : "active";
+  const cadenceRaw = ((_b = fm["cadence"]) != null ? _b : "").trim().toLowerCase();
+  const cadence = VALID_CADENCE.has(cadenceRaw) ? cadenceRaw : "weekly";
+  const role = trimOrNull(fm["role"]);
+  const email = trimOrNull(fm["email"]);
+  const jiraIdentity = (_c = trimOrNull(fm["jira_identity"])) != null ? _c : email;
+  const startDate = parseISODate(trimOrNull(fm["start_date"]));
+  const lastOneOnOne = computeLastSessionDate(sessionPaths);
+  return {
+    filePath,
+    folderPath,
+    name: basename,
+    status,
+    role,
+    email,
+    startDate,
+    cadence,
+    jiraIdentity,
+    lastOneOnOne,
+    sessionPaths
+  };
+}
+function parseOneOnOneSession(filePath) {
+  const oneOnOneIdx = filePath.lastIndexOf("/1on1/");
+  const memberFolderPath = oneOnOneIdx >= 0 ? filePath.substring(0, oneOnOneIdx) : "";
+  const match = filePath.match(ONE_ON_ONE_FILENAME_REGEX);
+  let sessionDate = null;
+  if (match) {
+    const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (!Number.isNaN(d.getTime()))
+      sessionDate = d;
+  }
+  return { filePath, memberFolderPath, sessionDate };
+}
+function computeLastSessionDate(sessionPaths) {
+  let best = null;
+  for (const p of sessionPaths) {
+    const match = p.match(ONE_ON_ONE_FILENAME_REGEX);
+    if (!match)
+      continue;
+    const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (Number.isNaN(d.getTime()))
+      continue;
+    if (!best || d > best)
+      best = d;
+  }
+  return best;
+}
+function trimOrNull(value) {
+  if (value === void 0)
+    return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function parseISODate(value) {
+  if (!value)
+    return null;
+  const match = value.match(ISO_DATE_REGEX);
+  if (!match)
+    return null;
+  const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 // src/parser/headingClassifier.ts
 var HeadingClassifier = class {
-  constructor(taskHeadings, openPointHeadings, goalHeadings = []) {
+  constructor(taskHeadings, openPointHeadings, inboxHeadings = []) {
     this.taskHeadings = taskHeadings.map((h) => h.toLowerCase());
     this.openPointHeadings = openPointHeadings.map((h) => h.toLowerCase());
-    this.goalHeadings = goalHeadings.map((h) => h.toLowerCase());
+    this.inboxHeadings = inboxHeadings.map((h) => h.toLowerCase());
   }
   classify(headingText, inlineTypeTag) {
     if (inlineTypeTag) {
@@ -1002,14 +1343,14 @@ var HeadingClassifier = class {
         return "task" /* Task */;
       if (tag === "openpoint")
         return "openpoint" /* OpenPoint */;
-      if (tag === "goal")
-        return "goal" /* Goal */;
+      if (tag === "inbox")
+        return "inbox" /* Inbox */;
     }
     if (headingText) {
       const lower = headingText.toLowerCase();
-      for (const h of this.goalHeadings) {
+      for (const h of this.inboxHeadings) {
         if (lower.includes(h))
-          return "goal" /* Goal */;
+          return "inbox" /* Inbox */;
       }
       for (const h of this.taskHeadings) {
         if (lower.includes(h))
@@ -1033,10 +1374,16 @@ var VaultScanner = class {
     this.cachedAllTasks = null;
     this.topicsByFile = /* @__PURE__ */ new Map();
     this.cachedAllTopics = null;
+    // Team pages are stored without session composition — `getAllTeamPages` folds
+    // in `sessionsByFile` on read so there's only one source of truth per field.
+    this.teamPagesByFile = /* @__PURE__ */ new Map();
+    this.sessionsByFile = /* @__PURE__ */ new Map();
+    this.cachedAllTeamPages = null;
     this.debounceTimers = /* @__PURE__ */ new Map();
     this.eventRefs = [];
     this.onChangeCallbacks = [];
     this.onTopicsChangeCallbacks = [];
+    this.onTeamChangeCallbacks = [];
     this.writer = null;
     this.cachedClassifier = null;
   }
@@ -1053,6 +1400,30 @@ var VaultScanner = class {
     const topicsPath = this.getSettings().sprintTopicsPath;
     return topicsPath.length > 0 && path.startsWith(topicsPath + "/");
   }
+  /** Check if a file is a person page: {teamFolderPath}/{Name}/{Name}.md.
+   *  A file qualifies only when its basename (minus .md) matches its parent folder name —
+   *  this distinguishes the canonical page from other notes a user might drop inside the folder. */
+  isTeamMemberFile(path) {
+    const teamPath = this.getSettings().teamFolderPath;
+    if (!teamPath || !path.startsWith(teamPath + "/"))
+      return false;
+    const rel = path.substring(teamPath.length + 1);
+    const parts = rel.split("/");
+    if (parts.length !== 2)
+      return false;
+    if (!parts[1].endsWith(".md"))
+      return false;
+    return parts[0] === parts[1].replace(/\.md$/, "");
+  }
+  /** Check if a file is a 1:1 session: {teamFolderPath}/{Name}/1on1/*.md */
+  isOneOnOneFile(path) {
+    const teamPath = this.getSettings().teamFolderPath;
+    if (!teamPath || !path.startsWith(teamPath + "/"))
+      return false;
+    const rel = path.substring(teamPath.length + 1);
+    const parts = rel.split("/");
+    return parts.length === 3 && parts[1] === "1on1" && /^\d{4}-\d{2}-\d{2}\.md$/.test(parts[2]);
+  }
   /** Perform initial full scan of the vault */
   async fullScan() {
     const settings = this.getSettings();
@@ -1063,23 +1434,37 @@ var VaultScanner = class {
     this.cachedAllTasks = null;
     this.topicsByFile.clear();
     this.cachedAllTopics = null;
-    const classifier = new HeadingClassifier(settings.taskHeadings, settings.openPointHeadings, settings.goalHeadings);
+    this.teamPagesByFile.clear();
+    this.sessionsByFile.clear();
+    this.cachedAllTeamPages = null;
+    const classifier = new HeadingClassifier(settings.taskHeadings, settings.openPointHeadings, settings.inboxHeadings);
     this.cachedClassifier = classifier;
     let topicsChanged = false;
+    let teamChanged = false;
     for (let i = 0; i < files.length; i += SCAN_BATCH_SIZE) {
       const batch = files.slice(i, i + SCAN_BATCH_SIZE);
       const results = await Promise.all(
         batch.map(async (file) => {
-          const content = await this.vault.cachedRead(file);
-          const isTopic = this.isTopicFile(file.path);
-          return {
-            path: file.path,
-            tasks: parseTasksFromContent(content, file.path, classifier, settings.workTypes, settings.purposes),
-            topic: isTopic ? parseTopicFile(content, file.path) : null
-          };
+          try {
+            const isTopic = this.isTopicFile(file.path);
+            const isTeamMember = this.isTeamMemberFile(file.path);
+            const isOneOnOne = this.isOneOnOneFile(file.path);
+            const needsContent = !isOneOnOne;
+            const content = needsContent ? await this.vault.cachedRead(file) : "";
+            return {
+              path: file.path,
+              tasks: parseTasksFromContent(content, file.path, classifier, settings.workTypes, settings.purposes),
+              topic: isTopic ? parseTopicFile(content, file.path) : null,
+              teamPage: isTeamMember ? parseTeamMemberPage(content, file.path) : null,
+              session: isOneOnOne ? parseOneOnOneSession(file.path) : null
+            };
+          } catch (e) {
+            console.warn("[BuJo scan] failed to process", file.path, e);
+            return { path: file.path, tasks: [], topic: null, teamPage: null, session: null };
+          }
         })
       );
-      for (const { path, tasks, topic } of results) {
+      for (const { path, tasks, topic, teamPage, session } of results) {
         if (tasks.length > 0) {
           this.tasksByFile.set(path, tasks);
         }
@@ -1087,11 +1472,21 @@ var VaultScanner = class {
           this.topicsByFile.set(path, topic);
           topicsChanged = true;
         }
+        if (teamPage) {
+          this.teamPagesByFile.set(path, teamPage);
+          teamChanged = true;
+        }
+        if (session) {
+          this.sessionsByFile.set(path, session);
+          teamChanged = true;
+        }
       }
     }
     this.notifyChange();
     if (topicsChanged)
       this.notifyTopicsChange();
+    if (teamChanged)
+      this.notifyTeamChange();
   }
   /** Get all tasks across all scanned files */
   getAllTasks() {
@@ -1114,13 +1509,14 @@ var VaultScanner = class {
    */
   registerEvents() {
     const modifyRef = this.vault.on("modify", (file) => {
-      if (file instanceof import_obsidian2.TFile && file.extension === "md") {
+      if (file instanceof import_obsidian3.TFile && file.extension === "md") {
         this.debounceScanFile(file);
       }
     });
     const deleteRef = this.vault.on("delete", (file) => {
       this.cancelDebounce(file.path);
       let changed = false;
+      let teamChanged = false;
       if (this.tasksByFile.delete(file.path)) {
         this.cachedAllTasks = null;
         changed = true;
@@ -1129,8 +1525,18 @@ var VaultScanner = class {
         this.cachedAllTopics = null;
         this.notifyTopicsChange();
       }
+      if (this.teamPagesByFile.delete(file.path)) {
+        this.cachedAllTeamPages = null;
+        teamChanged = true;
+      }
+      if (this.sessionsByFile.delete(file.path)) {
+        this.cachedAllTeamPages = null;
+        teamChanged = true;
+      }
       if (changed)
         this.notifyChange();
+      if (teamChanged)
+        this.notifyTeamChange();
     });
     const renameRef = this.vault.on("rename", (file, oldPath) => {
       this.cancelDebounce(oldPath);
@@ -1139,14 +1545,25 @@ var VaultScanner = class {
       if (this.topicsByFile.delete(oldPath)) {
         this.cachedAllTopics = null;
       }
-      if (file instanceof import_obsidian2.TFile && file.extension === "md") {
+      let teamChanged = false;
+      if (this.teamPagesByFile.delete(oldPath)) {
+        this.cachedAllTeamPages = null;
+        teamChanged = true;
+      }
+      if (this.sessionsByFile.delete(oldPath)) {
+        this.cachedAllTeamPages = null;
+        teamChanged = true;
+      }
+      if (file instanceof import_obsidian3.TFile && file.extension === "md") {
         this.debounceScanFile(file);
       } else {
         this.notifyChange();
+        if (teamChanged)
+          this.notifyTeamChange();
       }
     });
     const createRef = this.vault.on("create", (file) => {
-      if (file instanceof import_obsidian2.TFile && file.extension === "md") {
+      if (file instanceof import_obsidian3.TFile && file.extension === "md") {
         this.debounceScanFile(file);
       }
     });
@@ -1163,6 +1580,45 @@ var VaultScanner = class {
     }
     return this.cachedAllTopics;
   }
+  /** Get all team pages, composed with their current session data.
+   *  `sessionPaths` and `lastOneOnOne` are (re)derived here from `sessionsByFile`
+   *  so adding/deleting a session file doesn't require rewriting the person page. */
+  getAllTeamPages() {
+    if (this.cachedAllTeamPages)
+      return this.cachedAllTeamPages;
+    const sessionsByMember = /* @__PURE__ */ new Map();
+    this.sessionsByFile.forEach((session) => {
+      var _a;
+      const list = (_a = sessionsByMember.get(session.memberFolderPath)) != null ? _a : [];
+      list.push(session);
+      sessionsByMember.set(session.memberFolderPath, list);
+    });
+    const result = [];
+    this.teamPagesByFile.forEach((page) => {
+      var _a;
+      const sessions = (_a = sessionsByMember.get(page.folderPath)) != null ? _a : [];
+      let lastOneOnOne = null;
+      const sessionPaths = [];
+      for (const s of sessions) {
+        sessionPaths.push(s.filePath);
+        if (s.sessionDate && (!lastOneOnOne || s.sessionDate > lastOneOnOne)) {
+          lastOneOnOne = s.sessionDate;
+        }
+      }
+      result.push({ ...page, sessionPaths, lastOneOnOne });
+    });
+    this.cachedAllTeamPages = result;
+    return result;
+  }
+  /** Get 1:1 sessions belonging to a specific person (by their folder path). */
+  getSessionsForMember(memberFolderPath) {
+    const out = [];
+    this.sessionsByFile.forEach((s) => {
+      if (s.memberFolderPath === memberFolderPath)
+        out.push(s);
+    });
+    return out;
+  }
   /** Register a callback for when tasks change */
   onChange(callback) {
     this.onChangeCallbacks.push(callback);
@@ -1170,6 +1626,10 @@ var VaultScanner = class {
   /** Register a callback for when topics change */
   onTopicsChange(callback) {
     this.onTopicsChangeCallbacks.push(callback);
+  }
+  /** Register a callback for when team pages or 1:1 sessions change. */
+  onTeamChange(callback) {
+    this.onTeamChangeCallbacks.push(callback);
   }
   /** Clean up */
   destroy() {
@@ -1180,6 +1640,7 @@ var VaultScanner = class {
     this.eventRefs = [];
     this.onChangeCallbacks = [];
     this.onTopicsChangeCallbacks = [];
+    this.onTeamChangeCallbacks = [];
   }
   /** Per-file debounce so concurrent edits to different files don't cancel each other */
   debounceScanFile(file) {
@@ -1209,12 +1670,23 @@ var VaultScanner = class {
         this.cachedAllTopics = null;
         this.notifyTopicsChange();
       }
+      let teamChanged = false;
+      if (this.teamPagesByFile.delete(file.path)) {
+        this.cachedAllTeamPages = null;
+        teamChanged = true;
+      }
+      if (this.sessionsByFile.delete(file.path)) {
+        this.cachedAllTeamPages = null;
+        teamChanged = true;
+      }
+      if (teamChanged)
+        this.notifyTeamChange();
       return;
     }
     if ((_a = this.writer) == null ? void 0 : _a.isSyncing)
       return;
     const content = await this.vault.read(file);
-    const classifier = (_b = this.cachedClassifier) != null ? _b : new HeadingClassifier(settings.taskHeadings, settings.openPointHeadings, settings.goalHeadings);
+    const classifier = (_b = this.cachedClassifier) != null ? _b : new HeadingClassifier(settings.taskHeadings, settings.openPointHeadings, settings.inboxHeadings);
     const newTasks = parseTasksFromContent(content, file.path, classifier, settings.workTypes, settings.purposes);
     const oldTasks = (_c = this.tasksByFile.get(file.path)) != null ? _c : [];
     if (this.writer) {
@@ -1232,6 +1704,15 @@ var VaultScanner = class {
       this.topicsByFile.set(file.path, topic);
       this.cachedAllTopics = null;
       this.notifyTopicsChange();
+    }
+    if (this.isTeamMemberFile(file.path)) {
+      this.teamPagesByFile.set(file.path, parseTeamMemberPage(content, file.path));
+      this.cachedAllTeamPages = null;
+      this.notifyTeamChange();
+    } else if (this.isOneOnOneFile(file.path)) {
+      this.sessionsByFile.set(file.path, parseOneOnOneSession(file.path));
+      this.cachedAllTeamPages = null;
+      this.notifyTeamChange();
     }
   }
   /**
@@ -1262,6 +1743,11 @@ var VaultScanner = class {
   }
   notifyTopicsChange() {
     for (const callback of this.onTopicsChangeCallbacks) {
+      callback();
+    }
+  }
+  notifyTeamChange() {
+    for (const callback of this.onTeamChangeCallbacks) {
       callback();
     }
   }
@@ -1389,7 +1875,7 @@ var TaskStore = class {
     // Cached category indices — rebuilt on setTasks()
     this.taskItems = [];
     this.openPointItems = [];
-    this.goalItems = [];
+    this.inboxItems = [];
     this.uncategorizedItems = [];
     // Hierarchy lookup — rebuilt on setTasks()
     this.taskByIdMap = /* @__PURE__ */ new Map();
@@ -1408,7 +1894,7 @@ var TaskStore = class {
   rebuildIndices() {
     this.taskItems = [];
     this.openPointItems = [];
-    this.goalItems = [];
+    this.inboxItems = [];
     this.uncategorizedItems = [];
     this.taskByIdMap = /* @__PURE__ */ new Map();
     for (const t of this.tasks) {
@@ -1420,8 +1906,8 @@ var TaskStore = class {
         case "openpoint" /* OpenPoint */:
           this.openPointItems.push(t);
           break;
-        case "goal" /* Goal */:
-          this.goalItems.push(t);
+        case "inbox" /* Inbox */:
+          this.inboxItems.push(t);
           break;
         case "uncategorized" /* Uncategorized */:
           this.uncategorizedItems.push(t);
@@ -1451,13 +1937,9 @@ var TaskStore = class {
   getOpenPoints() {
     return this.openPointItems;
   }
-  /** Get all items classified as Goals */
-  getGoals() {
-    return this.goalItems;
-  }
-  /** Get root goals from a specific file path */
-  getGoalsForPath(path) {
-    return this.goalItems.filter((t) => t.parentId === null && t.sourcePath === path);
+  /** Get all items classified as Inbox (quick-capture, needs triage) */
+  getInbox() {
+    return this.inboxItems;
   }
   /** Get uncategorized items */
   getUncategorized() {
@@ -1648,39 +2130,32 @@ var TaskStore = class {
 };
 
 // src/services/taskWriter.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 var TaskWriter = class {
   constructor(vault) {
     this.vault = vault;
-    this.syncing = false;
+    // Depth counter (not boolean): overlapping syncs can't prematurely clear each other.
+    // Decrement is deferred via setTimeout(SYNC_CLEAR_DELAY_MS) so the vault modify event
+    // and the scanner's ~300ms debounced scan both still see isSyncing=true.
+    this.syncDepth = 0;
   }
   /** Whether a sync write is in progress (used to avoid re-scan loops) */
   get isSyncing() {
-    return this.syncing;
+    return this.syncDepth > 0;
   }
   /** Update the status checkbox of a task in its source file */
   async setStatus(task, newStatus) {
-    const line = this.findTaskLine(task, await this.readLines(task));
-    if (line === null)
-      return false;
-    const { lines, index, file } = line;
-    lines[index] = lines[index].replace(/\[([ x><!-])\]/i, `[${newStatus}]`);
-    await this.vault.modify(file, lines.join("\n"));
-    return true;
+    return this.processTaskLine(
+      task,
+      (line) => line.replace(/\[([ x><!-])\]/i, `[${newStatus}]`)
+    );
   }
   /** Update the @due date of a task in its source file */
   async updateDueDate(task, newDateRaw) {
-    const line = this.findTaskLine(task, await this.readLines(task));
-    if (line === null)
-      return false;
-    const { lines, index, file } = line;
-    if (DUE_DATE_REGEX.test(lines[index])) {
-      lines[index] = lines[index].replace(DUE_DATE_REGEX, `@due ${newDateRaw}`);
-    } else {
-      lines[index] = `${lines[index]} @due ${newDateRaw}`;
-    }
-    await this.vault.modify(file, lines.join("\n"));
-    return true;
+    return this.processTaskLine(
+      task,
+      (line) => DUE_DATE_REGEX.test(line) ? line.replace(DUE_DATE_REGEX, `@due ${newDateRaw}`) : `${line} @due ${newDateRaw}`
+    );
   }
   /**
    * Sync a forwarded copy's status back to its original task.
@@ -1695,31 +2170,31 @@ var TaskWriter = class {
     const originalFile = this.resolveWikiLink(task.migratedFrom);
     if (!originalFile)
       return false;
-    const content = await this.vault.read(originalFile);
-    const lines = content.split("\n");
     const cleanText = task.text.trim();
     let found = false;
-    for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(CHECKBOX_REGEX);
-      if (!match)
-        continue;
-      const statusChar = match[2];
-      if (statusChar !== ">")
-        continue;
-      const lineText = match[3].replace(/#priority\/\w+/g, "").replace(/@due\s+\S+/g, "").replace(/#type\/\w+/g, "").replace(/\s{2,}/g, " ").trim();
-      if (lineText === cleanText) {
-        this.syncing = true;
-        try {
-          lines[i] = lines[i].replace(/\[([ x><!-])\]/i, `[${newStatus}]`);
-          await this.vault.modify(originalFile, lines.join("\n"));
-          found = true;
-        } finally {
-          setTimeout(() => {
-            this.syncing = false;
-          }, SYNC_CLEAR_DELAY_MS);
+    this.syncDepth++;
+    try {
+      await this.vault.process(originalFile, (content) => {
+        const lines = content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          const match = lines[i].match(CHECKBOX_REGEX);
+          if (!match)
+            continue;
+          if (match[2] !== ">")
+            continue;
+          const lineText = match[3].replace(/#priority\/\w+/g, "").replace(/@due\s+\S+/g, "").replace(/#type\/\w+/g, "").replace(/\s{2,}/g, " ").trim();
+          if (lineText === cleanText) {
+            lines[i] = lines[i].replace(/\[([ x><!-])\]/i, `[${newStatus}]`);
+            found = true;
+            break;
+          }
         }
-        break;
-      }
+        return found ? lines.join("\n") : content;
+      });
+    } finally {
+      setTimeout(() => {
+        this.syncDepth--;
+      }, SYNC_CLEAR_DELAY_MS);
     }
     return found;
   }
@@ -1738,21 +2213,24 @@ var TaskWriter = class {
     let count = 0;
     for (const [path, fileTasks] of byFile) {
       const abstract = this.vault.getAbstractFileByPath(path);
-      if (!(abstract instanceof import_obsidian3.TFile))
+      if (!(abstract instanceof import_obsidian4.TFile))
         continue;
-      const content = await this.vault.read(abstract);
-      const lines = content.split("\n");
-      for (const task of fileTasks) {
-        const result = this.findTaskLine(task, { file: abstract, lines });
-        if (result) {
-          lines[result.index] = lines[result.index].replace(
+      await this.vault.process(abstract, (content) => {
+        const lines = content.split("\n");
+        let mutated = false;
+        for (const task of fileTasks) {
+          const index = this.locateTaskLine(task, lines);
+          if (index === -1)
+            continue;
+          lines[index] = lines[index].replace(
             /\[([ x><!-])\]/i,
             `[${newStatus}]`
           );
           count++;
+          mutated = true;
         }
-      }
-      await this.vault.modify(abstract, lines.join("\n"));
+        return mutated ? lines.join("\n") : content;
+      });
     }
     return count;
   }
@@ -1765,29 +2243,38 @@ var TaskWriter = class {
       return exactPath;
     return (_a = allFiles.find((f) => f.basename === name)) != null ? _a : null;
   }
-  async readLines(task) {
-    const abstract = this.vault.getAbstractFileByPath(task.sourcePath);
-    if (!(abstract instanceof import_obsidian3.TFile))
-      return null;
-    const content = await this.vault.read(abstract);
-    return { file: abstract, lines: content.split("\n") };
+  /** Apply a transform to a task's line inside a single atomic vault.process call. */
+  async processTaskLine(task, transform) {
+    const file = this.vault.getAbstractFileByPath(task.sourcePath);
+    if (!(file instanceof import_obsidian4.TFile))
+      return false;
+    let matched = false;
+    await this.vault.process(file, (content) => {
+      const lines = content.split("\n");
+      const index = this.locateTaskLine(task, lines);
+      if (index === -1)
+        return content;
+      const updated = transform(lines[index]);
+      if (updated === lines[index])
+        return content;
+      lines[index] = updated;
+      matched = true;
+      return lines.join("\n");
+    });
+    return matched;
   }
-  findTaskLine(task, result) {
-    if (!result)
-      return null;
-    const { file, lines } = result;
+  /** Locate a task's line in freshly-read content. Prefers the recorded
+   *  lineNumber when rawLine still matches; falls back to exact-line search. */
+  locateTaskLine(task, lines) {
     if (task.lineNumber >= 0 && task.lineNumber < lines.length && lines[task.lineNumber] === task.rawLine) {
-      return { file, lines, index: task.lineNumber };
+      return task.lineNumber;
     }
-    const index = lines.indexOf(task.rawLine);
-    if (index === -1)
-      return null;
-    return { file, lines, index };
+    return lines.indexOf(task.rawLine);
   }
 };
 
 // src/services/dailyNoteService.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var DailyNoteService = class {
   constructor(vault, getSettings) {
     this.vault = vault;
@@ -1802,11 +2289,11 @@ var DailyNoteService = class {
   async getOrCreateDailyNote(date) {
     const path = this.getDailyNotePath(date);
     const existing = this.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian4.TFile) {
+    if (existing instanceof import_obsidian5.TFile) {
       return existing;
     }
     const folderPath = path.substring(0, path.lastIndexOf("/"));
-    if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian4.TFolder)) {
+    if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian5.TFolder)) {
       try {
         await this.vault.createFolder(folderPath);
       } catch (e) {
@@ -1815,6 +2302,8 @@ var DailyNoteService = class {
     const displayDate = formatDateDisplay(date);
     const year = date.getFullYear();
     const template = `# Daily Log \u2014 ${displayDate}, ${year}
+
+## Inbox
 
 ## Tasks
 
@@ -1826,35 +2315,57 @@ var DailyNoteService = class {
   /** Add a task to the daily note under ## Tasks heading */
   async addTaskToDaily(task, date) {
     const file = await this.getOrCreateDailyNote(date);
-    const content = await this.vault.read(file);
     const taskLine = this.buildTaskLine(task);
-    const newContent = this.insertAfterHeading(content, "## Tasks", taskLine);
-    await this.vault.modify(file, newContent);
+    await this.vault.process(
+      file,
+      (content) => this.insertAfterHeading(content, "## Tasks", taskLine)
+    );
   }
   /** Add a migrated task to the daily note under ## Migrated Tasks heading */
   async addMigratedTask(task, date) {
     const file = await this.getOrCreateDailyNote(date);
-    const content = await this.vault.read(file);
     const taskLine = this.buildTaskLine(task);
-    const newContent = this.insertAfterHeading(content, "## Migrated Tasks", taskLine);
-    await this.vault.modify(file, newContent);
+    await this.vault.process(
+      file,
+      (content) => this.insertAfterHeading(content, "## Migrated Tasks", taskLine)
+    );
   }
   /** Add a migrated parent task with its children as a block under ## Migrated Tasks */
   async addMigratedTaskWithChildren(parent, children, date) {
     const file = await this.getOrCreateDailyNote(date);
-    const content = await this.vault.read(file);
     const parentLine = this.buildTaskLine(parent);
     const childLines = children.map((child) => "	" + this.buildChildTaskLine(child));
     const block = [parentLine, ...childLines].join("\n");
-    const newContent = this.insertAfterHeading(content, "## Migrated Tasks", block);
-    await this.vault.modify(file, newContent);
+    await this.vault.process(
+      file,
+      (content) => this.insertAfterHeading(content, "## Migrated Tasks", block)
+    );
   }
   /** Add a raw task line to the daily note under ## Tasks heading */
   async addRawTaskLine(taskLine, date) {
     const file = await this.getOrCreateDailyNote(date);
-    const content = await this.vault.read(file);
-    const newContent = this.insertAfterHeading(content, "## Tasks", taskLine);
-    await this.vault.modify(file, newContent);
+    await this.vault.process(
+      file,
+      (content) => this.insertAfterHeading(content, "## Tasks", taskLine)
+    );
+  }
+  /** Add a raw task line to the daily note under ## Inbox heading.
+   *  If the heading is missing, it's created just above ## Tasks (or at the end). */
+  async addRawInboxLine(taskLine, date) {
+    const file = await this.getOrCreateDailyNote(date);
+    await this.vault.process(file, (content) => {
+      let updated = content;
+      if (updated.indexOf("## Inbox") === -1) {
+        const tasksIdx = updated.indexOf("## Tasks");
+        const block = "## Inbox\n\n";
+        if (tasksIdx !== -1) {
+          updated = updated.slice(0, tasksIdx) + block + updated.slice(tasksIdx);
+        } else {
+          updated = updated.trimEnd() + "\n\n" + block;
+        }
+      }
+      return this.insertAfterHeading(updated, "## Inbox", taskLine);
+    });
   }
   /** Insert a line after a heading, or append to end if heading not found */
   insertAfterHeading(content, heading, line) {
@@ -2050,7 +2561,7 @@ var SprintService = class {
 };
 
 // src/services/sprintTopicService.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 var FRONTMATTER_REGEX2 = /^---\r?\n([\s\S]*?)\r?\n---/;
 var SprintTopicService = class {
   constructor(vault, getSettings) {
@@ -2069,10 +2580,10 @@ var SprintTopicService = class {
   /** Create a new topic file with frontmatter and template sections.
    *  `jira` may be a single key or a comma-separated list of keys — stored verbatim
    *  in the `jira:` frontmatter field; the parser extracts individual keys on read. */
-  async createTopic(title, jira, priority, linkedPages, sprintId, impact = null, effort = null, dueDate = null) {
+  async createTopic(title, jira, priority, linkedPages, sprintId, impact = null, effort = null, dueDate = null, assignee = null, waitingOn = null, lastNudged = null, refs = []) {
     const filePath = this.getTopicFilePath(title);
     const folderPath = filePath.substring(0, filePath.lastIndexOf("/"));
-    if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian5.TFolder)) {
+    if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian6.TFolder)) {
       await this.ensureFolderExists(folderPath);
     }
     const frontmatter = serializeFrontmatter({
@@ -2085,7 +2596,11 @@ var SprintTopicService = class {
       impact,
       effort,
       dueDate,
-      sprintHistory: sprintId || null
+      sprintHistory: sprintId || null,
+      assignee,
+      waitingOn,
+      lastNudged,
+      refs: refs.length > 0 ? foldedScalar(serializeRefs(refs)) : null
     });
     const linkedSection = linkedPages.length > 0 ? linkedPages.map((p) => `- [[${p}]]`).join("\n") : "";
     const content = `${frontmatter}
@@ -2101,14 +2616,27 @@ ${linkedSection}
     await this.vault.create(filePath, content);
     return parseTopicFile(content, filePath);
   }
+  /** Mark a topic as nudged today. Sets `lastNudged` to the current ISO date.
+   *  Used by the morning migration modal "Just nudged" button. */
+  async markNudged(filePath) {
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    await this.updateTopicFrontmatter(filePath, { lastNudged: today });
+  }
   /** Update specific frontmatter fields in a topic file, preserving body content.
    *  Passing `null` for a value removes the key from the frontmatter entirely. */
   async updateTopicFrontmatter(filePath, updates) {
     const file = this.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof import_obsidian5.TFile))
+    if (!(file instanceof import_obsidian6.TFile))
       return;
-    const content = await this.vault.read(file);
-    const fm = parseFrontmatter(content);
+    await this.vault.process(file, (content) => {
+      const fm = parseFrontmatter(content);
+      this.applyFrontmatterUpdates(fm, updates);
+      return this.rebuildWithFrontmatter(content, fm);
+    });
+  }
+  /** Apply updates to a parsed frontmatter object.
+   *  `null`/`undefined` deletes the key; everything else stringifies. */
+  applyFrontmatterUpdates(fm, updates) {
     for (const [key, value] of Object.entries(updates)) {
       if (value === null || value === void 0) {
         delete fm[key];
@@ -2116,15 +2644,27 @@ ${linkedSection}
         fm[key] = String(value);
       }
     }
+  }
+  /** Serialize a frontmatter object and splice it back into the original content.
+   *  Empty-string values are retained — legacy callers rely on that.
+   *  Values containing newlines are emitted as a YAML folded scalar (`key: |`) so
+   *  multi-line fields like `refs:` round-trip correctly. */
+  rebuildWithFrontmatter(content, fm) {
     const fmLines = ["---"];
     for (const [key, value] of Object.entries(fm)) {
-      fmLines.push(`${key}: ${value}`);
+      if (value.includes("\n")) {
+        fmLines.push(`${key}: |`);
+        for (const bodyLine of value.split("\n")) {
+          fmLines.push(`  ${bodyLine}`);
+        }
+      } else {
+        fmLines.push(`${key}: ${value}`);
+      }
     }
     fmLines.push("---");
     const newFm = fmLines.join("\n");
     const body = content.replace(FRONTMATTER_REGEX2, "").trimStart();
-    const newContent = newFm + "\n" + body;
-    await this.vault.modify(file, newContent);
+    return newFm + "\n" + body;
   }
   /** Set the status of a topic (open, in-progress, done) */
   async setTopicStatus(filePath, status) {
@@ -2162,26 +2702,31 @@ ${linkedSection}
    *  Appends the previous sprint (if any) AND the new sprint to sprintHistory —
    *  the old one may be missing on legacy topics that were assigned before history
    *  tracking existed, so we defensively capture it here. History is cumulative:
-   *  moving to backlog does NOT remove anything. */
+   *  moving to backlog does NOT remove anything.
+   *
+   *  Entirely inside one vault.process call so reading oldSprint/history and writing
+   *  the merged result is atomic against any concurrent external edit. */
   async assignTopicToSprint(filePath, sprintId) {
     const file = this.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof import_obsidian5.TFile))
+    if (!(file instanceof import_obsidian6.TFile))
       return;
-    const content = await this.vault.read(file);
-    const fm = parseFrontmatter(content);
-    const oldSprint = (fm["sprint"] || "").trim();
-    const existing = (fm["sprintHistory"] || "").split(",").map((s) => s.trim()).filter(Boolean);
-    const merged = [...existing];
-    const seen = new Set(existing);
-    for (const s of [oldSprint, sprintId]) {
-      if (s && !seen.has(s)) {
-        merged.push(s);
-        seen.add(s);
+    await this.vault.process(file, (content) => {
+      const fm = parseFrontmatter(content);
+      const oldSprint = (fm["sprint"] || "").trim();
+      const existing = (fm["sprintHistory"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+      const merged = [...existing];
+      const seen = new Set(existing);
+      for (const s of [oldSprint, sprintId]) {
+        if (s && !seen.has(s)) {
+          merged.push(s);
+          seen.add(s);
+        }
       }
-    }
-    await this.updateTopicFrontmatter(filePath, {
-      sprint: sprintId,
-      sprintHistory: merged.length > 0 ? merged.join(",") : null
+      this.applyFrontmatterUpdates(fm, {
+        sprint: sprintId,
+        sprintHistory: merged.length > 0 ? merged.join(",") : null
+      });
+      return this.rebuildWithFrontmatter(content, fm);
     });
   }
   /** Archive a topic (mark done, clear sprint). History is preserved — go through
@@ -2199,11 +2744,11 @@ ${linkedSection}
   async getAllTopics() {
     const folderPath = this.getTopicsFolderPath();
     const folder = this.vault.getAbstractFileByPath(folderPath);
-    if (!(folder instanceof import_obsidian5.TFolder))
+    if (!(folder instanceof import_obsidian6.TFolder))
       return [];
     const topics = [];
     for (const child of folder.children) {
-      if (child instanceof import_obsidian5.TFile && child.extension === "md") {
+      if (child instanceof import_obsidian6.TFile && child.extension === "md") {
         const content = await this.vault.read(child);
         topics.push(parseTopicFile(content, child.path));
       }
@@ -2221,7 +2766,7 @@ ${linkedSection}
     let current = "";
     for (const part of parts) {
       current = current ? `${current}/${part}` : part;
-      if (!(this.vault.getAbstractFileByPath(current) instanceof import_obsidian5.TFolder)) {
+      if (!(this.vault.getAbstractFileByPath(current) instanceof import_obsidian6.TFolder)) {
         try {
           await this.vault.createFolder(current);
         } catch (e) {
@@ -2395,9 +2940,16 @@ var MigrationService = class {
     }
     return result;
   }
-  /** Normalize task text for dedup: strip "(from [[...]])" and trim whitespace */
+  /** Build the dedup identity for a task.
+   *  Two copies collapse only if their text (minus the `(from [[…]])` annotation),
+   *  priority, and due date all match — the three signals that together
+   *  distinguish a forwarded duplicate from a genuinely distinct task that
+   *  happens to share wording. Narrower than the old text-only key; prefers
+   *  keeping two tasks over silently dropping one. */
   normalizeTaskText(task) {
-    return task.text.replace(MIGRATED_FROM_REGEX, "").trim().toLowerCase();
+    const text = task.text.replace(MIGRATED_FROM_REGEX, "").trim().toLowerCase();
+    const due = task.dueDate ? formatDateISO(task.dueDate) : "";
+    return `${text}|${task.priority}|${due}`;
   }
   /** Extract YYYY-MM-DD date string from a daily note path, or null if not a daily note */
   extractDailyDate(sourcePath, dailyPrefix) {
@@ -2529,7 +3081,7 @@ var AnalyticsService = class {
 };
 
 // src/services/monthlyNoteService.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/utils/monthUtils.ts
 var MONTH_NAMES = [
@@ -2591,11 +3143,11 @@ var MonthlyNoteService = class {
   async getOrCreateMonthlyNote(date) {
     const path = this.getMonthlyNotePath(date);
     const existing = this.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian6.TFile) {
+    if (existing instanceof import_obsidian7.TFile) {
       return existing;
     }
     const folderPath = path.substring(0, path.lastIndexOf("/"));
-    if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian6.TFolder)) {
+    if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian7.TFolder)) {
       try {
         await this.vault.createFolder(folderPath);
       } catch (e) {
@@ -2604,8 +3156,6 @@ var MonthlyNoteService = class {
     const displayDate = formatMonthDisplay(date);
     const template = `# Monthly Log \u2014 ${displayDate}
 
-## Goals
-
 ## Tasks
 
 ## Reflections
@@ -2613,29 +3163,11 @@ var MonthlyNoteService = class {
     const file = await this.vault.create(path, template);
     return file;
   }
-  /** Add a migrated goal with its open sub-tasks to the monthly note under ## Goals */
-  async addMigratedGoal(goal, openChildren, date) {
-    const file = await this.getOrCreateMonthlyNote(date);
-    const content = await this.vault.read(file);
-    const goalLine = this.buildGoalLine(goal);
-    const childLines = openChildren.map((child) => "	" + this.buildChildLine(child));
-    const block = [goalLine, ...childLines].join("\n");
-    const newContent = this.insertAfterHeading(content, "## Goals", block);
-    await this.vault.modify(file, newContent);
-  }
-  /** Add a migrated goal without sub-tasks (fresh start) to the monthly note under ## Goals */
-  async addMigratedGoalOnly(goal, date) {
-    const file = await this.getOrCreateMonthlyNote(date);
-    const content = await this.vault.read(file);
-    const goalLine = this.buildGoalLine(goal);
-    const newContent = this.insertAfterHeading(content, "## Goals", goalLine);
-    await this.vault.modify(file, newContent);
-  }
   /** Read the reflections content from a monthly note */
   async readReflections(date) {
     const path = this.getMonthlyNotePath(date);
     const file = this.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian6.TFile))
+    if (!(file instanceof import_obsidian7.TFile))
       return "";
     const content = await this.vault.read(file);
     const headingStr = "## Reflections";
@@ -2653,148 +3185,21 @@ var MonthlyNoteService = class {
   /** Write reflections content to a monthly note under ## Reflections */
   async writeReflections(date, text) {
     const file = await this.getOrCreateMonthlyNote(date);
-    const content = await this.vault.read(file);
-    const headingStr = "## Reflections";
-    const headingIndex = content.indexOf(headingStr);
-    if (headingIndex === -1) {
-      const newContent2 = content.trimEnd() + "\n\n## Reflections\n\n" + text + "\n";
-      await this.vault.modify(file, newContent2);
-      return;
-    }
-    let start = content.indexOf("\n", headingIndex);
-    if (start === -1)
-      start = content.length;
-    else
-      start += 1;
-    const nextHeading = content.indexOf("\n## ", start);
-    const end = nextHeading !== -1 ? nextHeading : content.length;
-    const newContent = content.slice(0, start) + "\n" + text + "\n" + content.slice(end);
-    await this.vault.modify(file, newContent);
-  }
-  /** Insert a line after a heading, or append to end if heading not found */
-  insertAfterHeading(content, heading, line) {
-    const headingIndex = content.indexOf(heading);
-    if (headingIndex !== -1) {
-      let insertPos = content.indexOf("\n", headingIndex);
-      if (insertPos === -1)
-        insertPos = content.length;
-      else
-        insertPos += 1;
-      while (insertPos < content.length && content[insertPos] === "\n")
-        insertPos++;
-      return content.slice(0, insertPos) + line + "\n" + content.slice(insertPos);
-    }
-    return content.trimEnd() + "\n\n" + line + "\n";
-  }
-  buildGoalLine(goal) {
-    var _a;
-    let line = `- [ ] ${goal.text}`;
-    if (goal.priority !== "none" /* None */) {
-      line += ` #priority/${goal.priority}`;
-    }
-    if (goal.dueDateRaw) {
-      line += ` @due ${goal.dueDateRaw}`;
-    }
-    const originName = (_a = goal.migratedFrom) != null ? _a : this.extractFileName(goal.sourcePath);
-    line += ` (from [[${originName}]])`;
-    return line;
-  }
-  buildChildLine(task) {
-    const statusChar = task.status === "x" /* Done */ ? "x" : task.status === "-" /* Cancelled */ ? "-" : " ";
-    let line = `- [${statusChar}] ${task.text}`;
-    if (task.priority !== "none" /* None */) {
-      line += ` #priority/${task.priority}`;
-    }
-    if (task.dueDateRaw) {
-      line += ` @due ${task.dueDateRaw}`;
-    }
-    return line;
-  }
-  extractFileName(sourcePath) {
-    var _a;
-    const withExt = (_a = sourcePath.split("/").pop()) != null ? _a : sourcePath;
-    const dotIndex = withExt.lastIndexOf(".");
-    return dotIndex !== -1 ? withExt.substring(0, dotIndex) : withExt;
-  }
-};
-
-// src/services/monthlyMigrationService.ts
-var MonthlyMigrationService = class {
-  constructor(store, writer, monthlyNotes, getData, saveData, getSettings) {
-    this.store = store;
-    this.writer = writer;
-    this.monthlyNotes = monthlyNotes;
-    this.getData = getData;
-    this.saveData = saveData;
-    this.getSettings = getSettings;
-  }
-  /** Check if monthly migration is needed */
-  needsMonthlyMigration() {
-    const { lastMonthlyMigrationMonth } = this.getData();
-    const currentMonthId = getMonthId(/* @__PURE__ */ new Date());
-    if (lastMonthlyMigrationMonth === currentMonthId) {
-      return false;
-    }
-    const reviewData = this.getMonthlyReviewData();
-    return reviewData.incompleteGoals.length > 0;
-  }
-  /** Gather data for the monthly migration modal */
-  getMonthlyReviewData() {
-    const prevMonth = getPreviousMonth(/* @__PURE__ */ new Date());
-    const lastMonthId = getMonthId(prevMonth);
-    const settings = this.getSettings();
-    const lastMonthNotePath = `${settings.monthlyNotePath}/${lastMonthId}.md`;
-    const incompleteGoals = this.store.getGoalsForPath(lastMonthNotePath).filter((g) => g.status === " " /* Open */);
-    return { incompleteGoals, lastMonthId };
-  }
-  /** Execute monthly migration decisions */
-  async executeMigrations(decisions) {
-    const result = {
-      forwardedAll: 0,
-      forwardedGoalOnly: 0,
-      completed: 0,
-      cancelled: 0
-    };
-    const today = /* @__PURE__ */ new Date();
-    for (const decision of decisions) {
-      const { goal } = decision;
-      const openChildren = goal.childrenIds.map((id) => this.store.getTaskById(id)).filter((c) => c !== void 0 && c.status === " " /* Open */);
-      switch (decision.action) {
-        case "forward-all": {
-          await this.writer.setStatus(goal, ">" /* Migrated */);
-          if (openChildren.length > 0) {
-            await this.writer.setStatusBatch(openChildren, ">" /* Migrated */);
-          }
-          await this.monthlyNotes.addMigratedGoal(goal, openChildren, today);
-          result.forwardedAll++;
-          break;
-        }
-        case "forward-goal-only": {
-          await this.writer.setStatus(goal, ">" /* Migrated */);
-          await this.monthlyNotes.addMigratedGoalOnly(goal, today);
-          result.forwardedGoalOnly++;
-          break;
-        }
-        case "done": {
-          const toComplete = openChildren.length > 0 ? [goal, ...openChildren] : [goal];
-          await this.writer.setStatusBatch(toComplete, "x" /* Done */);
-          result.completed++;
-          break;
-        }
-        case "cancel": {
-          const toCancel = openChildren.length > 0 ? [goal, ...openChildren] : [goal];
-          await this.writer.setStatusBatch(toCancel, "-" /* Cancelled */);
-          result.cancelled++;
-          break;
-        }
+    await this.vault.process(file, (content) => {
+      const headingStr = "## Reflections";
+      const headingIndex = content.indexOf(headingStr);
+      if (headingIndex === -1) {
+        return content.trimEnd() + "\n\n## Reflections\n\n" + text + "\n";
       }
-    }
-    await this.markMonthlyMigrationDone();
-    return result;
-  }
-  async markMonthlyMigrationDone() {
-    this.getData().lastMonthlyMigrationMonth = getMonthId(/* @__PURE__ */ new Date());
-    await this.saveData();
+      let start = content.indexOf("\n", headingIndex);
+      if (start === -1)
+        start = content.length;
+      else
+        start += 1;
+      const nextHeading = content.indexOf("\n## ", start);
+      const end = nextHeading !== -1 ? nextHeading : content.length;
+      return content.slice(0, start) + "\n" + text + "\n" + content.slice(end);
+    });
   }
 };
 
@@ -2829,8 +3234,6 @@ var MonthlyAnalyticsService = class {
       totalCompleted: stats.totalCompleted,
       totalMigrated: stats.totalMigrated,
       totalCancelled: stats.totalCancelled,
-      goalsTotal: stats.goalsTotal,
-      goalsCompleted: stats.goalsCompleted,
       completionRate: stats.completionRate,
       reflections,
       savedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -2886,22 +3289,14 @@ var MonthlyAnalyticsService = class {
           totalCancelled++;
       }
     }
-    const monthlyNotePath = `${settings.monthlyNotePath}/${monthId}.md`;
-    const goals = this.store.getGoalsForPath(monthlyNotePath);
-    const goalsTotal = goals.length;
-    const goalsCompleted = goals.filter((g) => g.status === "x" /* Done */).length;
     const completionRate = totalPlanned > 0 ? totalCompleted / totalPlanned * 100 : 0;
-    const goalCompletionRate = goalsTotal > 0 ? goalsCompleted / goalsTotal * 100 : 0;
     return {
       monthId,
       totalPlanned,
       totalCompleted,
       totalMigrated,
       totalCancelled,
-      completionRate,
-      goalsTotal,
-      goalsCompleted,
-      goalCompletionRate
+      completionRate
     };
   }
   parseDateFromPath(path) {
@@ -2918,7 +3313,7 @@ var MonthlyAnalyticsService = class {
 };
 
 // src/services/archiveService.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 var ArchiveService = class {
   constructor(vault, store, getSettings) {
     this.vault = vault;
@@ -2928,20 +3323,22 @@ var ArchiveService = class {
   /**
    * Archive all completed (Done + Cancelled) tasks from the vault.
    * Moves task lines to archive files and removes them from source files.
+   * Tasks whose rawLine can no longer be located in the source (file edited
+   * since last scan) are counted under `skipped` and left in place.
    */
   async archiveCompleted() {
     const settings = this.getSettings();
     const allTasks = [
       ...this.store.getTasks(),
       ...this.store.getOpenPoints(),
-      ...this.store.getGoals(),
+      ...this.store.getInbox(),
       ...this.store.getUncategorized()
     ];
     const completedTasks = allTasks.filter(
       (t) => t.status === "x" /* Done */ || t.status === "-" /* Cancelled */
     );
     if (completedTasks.length === 0) {
-      return { archived: 0, files: [] };
+      return { archived: 0, files: [], skipped: 0 };
     }
     const archiveGroups = /* @__PURE__ */ new Map();
     for (const task of completedTasks) {
@@ -2959,31 +3356,58 @@ var ArchiveService = class {
       sourceGroups.get(task.sourcePath).push(task);
     }
     const touchedFiles = /* @__PURE__ */ new Set();
+    let skipped = 0;
     for (const [archivePath, tasks] of archiveGroups) {
-      await this.appendToArchive(archivePath, tasks, settings);
+      await this.appendToArchive(archivePath, tasks);
       touchedFiles.add(archivePath);
     }
     for (const [sourcePath, tasks] of sourceGroups) {
-      await this.removeFromSource(sourcePath, tasks);
+      skipped += await this.removeFromSource(sourcePath, tasks);
     }
     return {
-      archived: completedTasks.length,
-      files: Array.from(touchedFiles)
+      archived: completedTasks.length - skipped,
+      files: Array.from(touchedFiles),
+      skipped
     };
   }
+  /** Resolve the archive file path for a task.
+   *  Month-grouped archives prefer in descending order:
+   *    1. the task's own due date,
+   *    2. the YYYY-MM-DD date embedded in a daily-note filename,
+   *    3. the source file's last-modified time,
+   *    4. current date (last resort — should be rare in practice). */
   getArchivePath(task, settings) {
+    var _a, _b, _c;
     const folder = settings.archiveFolderPath || "BuJo/Archive";
     if (settings.archiveGroupBy === "source") {
       const basename = task.sourcePath.replace(/\.md$/, "").split("/").pop() || "misc";
       return `${folder}/${basename}.md`;
     }
-    const date = task.dueDate || /* @__PURE__ */ new Date();
+    const date = (_c = (_b = (_a = task.dueDate) != null ? _a : this.inferDateFromSourcePath(task.sourcePath)) != null ? _b : this.inferDateFromMtime(task.sourcePath)) != null ? _c : /* @__PURE__ */ new Date();
     const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     return `${folder}/${month}.md`;
   }
+  inferDateFromSourcePath(sourcePath) {
+    const match = sourcePath.match(/(\d{4})-(\d{2})-(\d{2})\.md$/);
+    if (!match)
+      return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const d = new Date(year, month - 1, day);
+    if (Number.isNaN(d.getTime()))
+      return null;
+    return d;
+  }
+  inferDateFromMtime(sourcePath) {
+    const file = this.vault.getAbstractFileByPath(sourcePath);
+    if (!(file instanceof import_obsidian8.TFile))
+      return null;
+    return new Date(file.stat.mtime);
+  }
   async ensureFolder(folderPath) {
     const existing = this.vault.getAbstractFileByPath(folderPath);
-    if (existing instanceof import_obsidian7.TFolder)
+    if (existing instanceof import_obsidian8.TFolder)
       return;
     const parts = folderPath.split("/");
     let current = "";
@@ -2995,21 +3419,27 @@ var ArchiveService = class {
       }
     }
   }
-  async appendToArchive(archivePath, tasks, settings) {
+  async appendToArchive(archivePath, tasks) {
     var _a;
     const folder = archivePath.substring(0, archivePath.lastIndexOf("/"));
     await this.ensureFolder(folder);
-    let existingContent = "";
-    const file = this.vault.getAbstractFileByPath(archivePath);
-    if (file instanceof import_obsidian7.TFile) {
-      existingContent = await this.vault.read(file);
-    }
-    const lines = [];
-    if (!existingContent) {
+    const existing = this.vault.getAbstractFileByPath(archivePath);
+    const appended = this.buildArchiveSection(tasks);
+    if (existing instanceof import_obsidian8.TFile) {
+      await this.vault.process(
+        existing,
+        (current) => current.trimEnd() + "\n\n" + appended
+      );
+    } else {
       const title = ((_a = archivePath.split("/").pop()) == null ? void 0 : _a.replace(/\.md$/, "")) || "Archive";
-      lines.push(`# Archived Tasks \u2014 ${title}`);
-      lines.push("");
+      const header = `# Archived Tasks \u2014 ${title}
+
+`;
+      await this.vault.create(archivePath, header + appended);
     }
+  }
+  /** Build the "## From [[…]]" sections for a batch of tasks. */
+  buildArchiveSection(tasks) {
     const bySource = /* @__PURE__ */ new Map();
     for (const task of tasks) {
       if (!bySource.has(task.sourcePath)) {
@@ -3017,6 +3447,7 @@ var ArchiveService = class {
       }
       bySource.get(task.sourcePath).push(task);
     }
+    const lines = [];
     for (const [source, sourceTasks] of bySource) {
       const sourceName = source.replace(/\.md$/, "").split("/").pop() || source;
       lines.push(`## From [[${sourceName}]]`);
@@ -3026,48 +3457,85 @@ var ArchiveService = class {
       }
       lines.push("");
     }
-    const newContent = existingContent ? existingContent.trimEnd() + "\n\n" + lines.join("\n") : lines.join("\n");
-    if (file instanceof import_obsidian7.TFile) {
-      await this.vault.modify(file, newContent);
-    } else {
-      await this.vault.create(archivePath, newContent);
+    return lines.join("\n");
+  }
+  /** Remove archived task lines (and their description continuations) from a source file.
+   *  Returns the number of tasks that could NOT be re-located and were skipped. */
+  async removeFromSource(sourcePath, tasks) {
+    const file = this.vault.getAbstractFileByPath(sourcePath);
+    if (!(file instanceof import_obsidian8.TFile))
+      return tasks.length;
+    let skipped = 0;
+    await this.vault.process(file, (content) => {
+      const lines = content.split("\n");
+      const taskLocations = [];
+      for (const task of tasks) {
+        const idx = this.locateTaskLine(task, lines);
+        if (idx === -1) {
+          skipped++;
+          continue;
+        }
+        taskLocations.push(idx);
+      }
+      if (taskLocations.length === 0)
+        return content;
+      const allLinesToRemove = /* @__PURE__ */ new Set();
+      const sorted = [...taskLocations].sort((a, b) => a - b);
+      for (const lineNum of sorted) {
+        allLinesToRemove.add(lineNum);
+        this.collectDescriptionLines(lines, lineNum, allLinesToRemove);
+      }
+      return lines.filter((_, idx) => !allLinesToRemove.has(idx)).join("\n");
+    });
+    return skipped;
+  }
+  /** Walk lines after a task and mark its description continuations for removal.
+   *  Stops at: blank line, heading, another checkbox, or any line at the task's
+   *  indent or shallower. Fenced code blocks opened inside the description are
+   *  consumed whole so a ``` or markdown heading *inside* the fence doesn't
+   *  prematurely terminate the description. */
+  collectDescriptionLines(lines, taskLineNum, out) {
+    var _a, _b;
+    const taskLine = lines[taskLineNum];
+    const taskIndent = (((_a = taskLine.match(/^(\s*)/)) == null ? void 0 : _a[1]) || "").length;
+    let inFence = false;
+    for (let j = taskLineNum + 1; j < lines.length; j++) {
+      const nextLine = lines[j];
+      const nextIndent = (((_b = nextLine.match(/^(\s*)/)) == null ? void 0 : _b[1]) || "").length;
+      if (inFence) {
+        if (nextLine.trim().length > 0 && nextIndent <= taskIndent)
+          break;
+        out.add(j);
+        if (/^\s*```/.test(nextLine))
+          inFence = false;
+        continue;
+      }
+      if (nextLine.trim().length === 0)
+        break;
+      if (nextIndent <= taskIndent)
+        break;
+      if (/^\s*#{1,6}\s/.test(nextLine))
+        break;
+      if (/^\s*-\s*\[/.test(nextLine))
+        break;
+      out.add(j);
+      if (/^\s*```/.test(nextLine))
+        inFence = true;
     }
   }
-  async removeFromSource(sourcePath, tasks) {
-    var _a, _b;
-    const file = this.vault.getAbstractFileByPath(sourcePath);
-    if (!(file instanceof import_obsidian7.TFile))
-      return;
-    const content = await this.vault.read(file);
-    const lines = content.split("\n");
-    const lineNumbers = new Set(tasks.map((t) => t.lineNumber));
-    const sortedLineNums = Array.from(lineNumbers).sort((a, b) => a - b);
-    const allLinesToRemove = /* @__PURE__ */ new Set();
-    for (const lineNum of sortedLineNums) {
-      allLinesToRemove.add(lineNum);
-      const taskLine = lines[lineNum];
-      const taskIndent = (((_a = taskLine.match(/^(\s*)/)) == null ? void 0 : _a[1]) || "").length;
-      for (let j = lineNum + 1; j < lines.length; j++) {
-        const nextLine = lines[j];
-        if (nextLine.trim().length === 0)
-          break;
-        if (nextLine.match(/^#{1,6}\s/))
-          break;
-        if (nextLine.match(/^\s*-\s*\[/))
-          break;
-        const nextIndent = (((_b = nextLine.match(/^(\s*)/)) == null ? void 0 : _b[1]) || "").length;
-        if (nextIndent <= taskIndent)
-          break;
-        allLinesToRemove.add(j);
-      }
+  /** Locate a task's line in freshly-read content: prefer stored lineNumber
+   *  (O(1) check); fall back to exact rawLine search. Returns -1 if the task
+   *  can't be found (e.g., file edited since scan). */
+  locateTaskLine(task, lines) {
+    if (task.lineNumber >= 0 && task.lineNumber < lines.length && lines[task.lineNumber] === task.rawLine) {
+      return task.lineNumber;
     }
-    const newLines = lines.filter((_, idx) => !allLinesToRemove.has(idx));
-    await this.vault.modify(file, newLines.join("\n"));
+    return lines.indexOf(task.rawLine);
   }
 };
 
 // src/services/jiraService.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 var ISSUE_KEY_REGEX = /[A-Z][A-Z0-9]+-\d+/;
 var JiraService = class {
   constructor(getSettings) {
@@ -3208,7 +3676,7 @@ var JiraService = class {
     const req = this.buildRequest(s, "/rest/api/3/myself");
     console.log("[JIRA] testConnection \u2192", req.url);
     try {
-      const resp = await (0, import_obsidian8.requestUrl)(req);
+      const resp = await (0, import_obsidian9.requestUrl)(req);
       console.log("[JIRA] testConnection response:", { status: resp.status, headers: resp.headers, body: (_a = resp.text) == null ? void 0 : _a.slice(0, 500) });
       if (resp.status >= 200 && resp.status < 300) {
         const name = (_c = (_b = resp.json) == null ? void 0 : _b.displayName) != null ? _c : "unknown user";
@@ -3230,7 +3698,7 @@ var JiraService = class {
       return null;
     }
     try {
-      const resp = await (0, import_obsidian8.requestUrl)(this.buildRequest(
+      const resp = await (0, import_obsidian9.requestUrl)(this.buildRequest(
         s,
         `/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee`
       ));
@@ -3325,7 +3793,7 @@ var JiraService = class {
 };
 
 // src/services/jiraDashboardService.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 var JiraDashboardService = class {
   constructor(getSettings) {
     this.getSettings = getSettings;
@@ -3441,7 +3909,7 @@ var JiraDashboardService = class {
         },
         throw: false
       };
-      const resp = await (0, import_obsidian9.requestUrl)(req);
+      const resp = await (0, import_obsidian10.requestUrl)(req);
       const parsedJson = this.safeParseJson(resp.text);
       if (resp.status < 200 || resp.status >= 300) {
         const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
@@ -3481,7 +3949,7 @@ var JiraDashboardService = class {
   }
   /** Parse a single issue JSON into the dashboard shape. Tolerant of missing fields. */
   parseIssue(raw, baseUrl, sprintField) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
     const fields = (_a = raw == null ? void 0 : raw.fields) != null ? _a : {};
     const statusObj = (_b = fields.status) != null ? _b : {};
     const statusName = (_c = statusObj.name) != null ? _c : "Unknown";
@@ -3537,10 +4005,12 @@ var JiraDashboardService = class {
       priority: (_r = priorityObj == null ? void 0 : priorityObj.name) != null ? _r : null,
       priorityIconUrl: (_s = priorityObj == null ? void 0 : priorityObj.iconUrl) != null ? _s : null,
       assignee: (_u = (_t = fields.assignee) == null ? void 0 : _t.displayName) != null ? _u : null,
-      reporter: (_w = (_v = fields.reporter) == null ? void 0 : _v.displayName) != null ? _w : null,
-      dueDate: (_x = fields.duedate) != null ? _x : null,
-      resolutionDate: (_y = fields.resolutiondate) != null ? _y : null,
-      updatedAt: (_z = fields.updated) != null ? _z : (/* @__PURE__ */ new Date()).toISOString(),
+      assigneeEmail: (_w = (_v = fields.assignee) == null ? void 0 : _v.emailAddress) != null ? _w : null,
+      assigneeAccountId: (_y = (_x = fields.assignee) == null ? void 0 : _x.accountId) != null ? _y : null,
+      reporter: (_A = (_z = fields.reporter) == null ? void 0 : _z.displayName) != null ? _A : null,
+      dueDate: (_B = fields.duedate) != null ? _B : null,
+      resolutionDate: (_C = fields.resolutiondate) != null ? _C : null,
+      updatedAt: (_D = fields.updated) != null ? _D : (/* @__PURE__ */ new Date()).toISOString(),
       labels,
       parentKey,
       parentSummary,
@@ -3591,8 +4061,447 @@ var JiraDashboardService = class {
   }
 };
 
+// src/services/jiraTeamService.ts
+var import_obsidian11 = require("obsidian");
+var JiraTeamService = class {
+  constructor(getSettings) {
+    this.getSettings = getSettings;
+    this.state = { kind: "empty" };
+    this.inFlight = null;
+    this.listeners = /* @__PURE__ */ new Set();
+    this._version = 0;
+  }
+  /** True if the master JIRA toggle AND the team toggle are on AND there's at least
+   *  one active team member with a valid-looking email. Everything else is a no-op. */
+  isEnabled() {
+    const s = this.getSettings();
+    if (!s.jiraEnabled || !s.jiraTeamEnabled)
+      return false;
+    if (!s.jiraBaseUrl || !s.jiraEmail || !s.jiraApiToken)
+      return false;
+    return this.activeEmails(s).length > 0;
+  }
+  get version() {
+    return this._version;
+  }
+  getIssues() {
+    return this.state.kind === "fresh" ? this.state.issues : null;
+  }
+  getFetchedAt() {
+    return this.state.kind === "fresh" || this.state.kind === "error" ? this.state.fetchedAt : null;
+  }
+  getError() {
+    return this.state.kind === "error" ? this.state.message : null;
+  }
+  isLoading() {
+    return this.state.kind === "loading";
+  }
+  isStale() {
+    if (this.state.kind !== "fresh")
+      return true;
+    const ttlMs = Math.max(0, this.getSettings().jiraDashboardTtlMinutes) * 6e4;
+    return Date.now() - this.state.fetchedAt > ttlMs;
+  }
+  async refresh() {
+    if (!this.isEnabled())
+      return null;
+    if (this.inFlight)
+      return this.inFlight;
+    this.state = { kind: "loading" };
+    this.bump();
+    const p = this.doFetch();
+    this.inFlight = p;
+    try {
+      return await p;
+    } finally {
+      this.inFlight = null;
+    }
+  }
+  clearCache() {
+    this.state = { kind: "empty" };
+    this.inFlight = null;
+    this.bump();
+  }
+  // ── Events ────────────────────────────────────────────────────
+  on(listener) {
+    this.listeners.add(listener);
+  }
+  off(listener) {
+    this.listeners.delete(listener);
+  }
+  bump() {
+    this._version++;
+    for (const l of this.listeners) {
+      try {
+        l();
+      } catch (e) {
+      }
+    }
+  }
+  // ── Internals ─────────────────────────────────────────────────
+  activeEmails(s) {
+    return (s.teamMembers || []).filter((m) => m.active && m.email && m.email.includes("@")).map((m) => m.email.trim());
+  }
+  buildJql(s) {
+    const emails = this.activeEmails(s);
+    const userClause = `assignee in (${emails.map((e) => `"${e.replace(/"/g, "")}"`).join(", ")})`;
+    const projectClause = s.jiraDashboardProjects.length > 0 ? `AND project in (${s.jiraDashboardProjects.map((k) => `"${k.replace(/"/g, "")}"`).join(", ")})` : "";
+    const staleClause = "AND (resolution = Unresolved OR resolutiondate >= -7d)";
+    return `${userClause} ${projectClause} ${staleClause} ORDER BY updated DESC`.replace(/\s+/g, " ").trim();
+  }
+  async doFetch() {
+    var _a, _b;
+    const s = this.getSettings();
+    const jql = this.buildJql(s);
+    const sprintField = (s.jiraSprintFieldId || "customfield_10020").trim();
+    const fields = [
+      "summary",
+      "status",
+      "priority",
+      "assignee",
+      "reporter",
+      "duedate",
+      "resolutiondate",
+      "updated",
+      "labels",
+      "parent",
+      "issuetype",
+      "timespent",
+      "timeestimate",
+      sprintField,
+      "customfield_10021"
+    ];
+    const params = new URLSearchParams();
+    params.set("jql", jql);
+    params.set("fields", fields.join(","));
+    params.set("maxResults", "100");
+    console.log("[JIRA Team] JQL:", jql);
+    try {
+      const req = {
+        url: s.jiraBaseUrl.replace(/\/+$/, "") + "/rest/api/3/search/jql?" + params.toString(),
+        method: "GET",
+        headers: {
+          "Authorization": `Basic ${btoa(`${s.jiraEmail}:${s.jiraApiToken}`)}`,
+          "Accept": "application/json",
+          "X-Atlassian-Token": "no-check"
+        },
+        throw: false
+      };
+      const resp = await (0, import_obsidian11.requestUrl)(req);
+      const parsedJson = this.safeParseJson(resp.text);
+      if (resp.status < 200 || resp.status >= 300) {
+        const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
+        console.error("[JIRA Team] HTTP error:", resp.status, (_a = resp.text) == null ? void 0 : _a.slice(0, 500));
+        this.state = { kind: "error", message: msg, fetchedAt: Date.now() };
+        this.bump();
+        return null;
+      }
+      const raw = (_b = parsedJson == null ? void 0 : parsedJson.issues) != null ? _b : [];
+      const issues = raw.map((r) => this.parseIssue(r, s.jiraBaseUrl, sprintField));
+      this.state = { kind: "fresh", issues, fetchedAt: Date.now() };
+      this.bump();
+      return issues;
+    } catch (err) {
+      console.error("[JIRA Team] fetch threw:", err);
+      this.state = { kind: "error", message: this.formatError(err), fetchedAt: Date.now() };
+      this.bump();
+      return null;
+    }
+  }
+  safeParseJson(text) {
+    if (!text)
+      return null;
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return null;
+    }
+  }
+  /** Parse a single issue JSON. Mirrors JiraDashboardService.parseIssue, with the
+   *  same tolerance for missing fields. Kept local rather than exported to avoid
+   *  cross-service coupling — if the shape diverges later, each service can evolve. */
+  parseIssue(raw, baseUrl, sprintField) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
+    const fields = (_a = raw == null ? void 0 : raw.fields) != null ? _a : {};
+    const statusObj = (_b = fields.status) != null ? _b : {};
+    const statusName = (_c = statusObj.name) != null ? _c : "Unknown";
+    const rawCategory = (_e = (_d = statusObj.statusCategory) == null ? void 0 : _d.key) != null ? _e : "unknown";
+    const statusCategory = rawCategory === "new" || rawCategory === "indeterminate" || rawCategory === "done" ? rawCategory : "unknown";
+    const priorityObj = (_f = fields.priority) != null ? _f : null;
+    const parent = (_g = fields.parent) != null ? _g : null;
+    const parentKey = (_h = parent == null ? void 0 : parent.key) != null ? _h : null;
+    const parentSummary = (_j = (_i = parent == null ? void 0 : parent.fields) == null ? void 0 : _i.summary) != null ? _j : null;
+    const issueTypeObj = (_k = fields.issuetype) != null ? _k : {};
+    const sprintRaw = fields[sprintField];
+    let sprintName = null;
+    let sprintActive = false;
+    if (Array.isArray(sprintRaw)) {
+      for (const sp of sprintRaw) {
+        if (sp && typeof sp === "object") {
+          const name = sp.name;
+          const state = sp.state;
+          if (state === "active") {
+            sprintName = name != null ? name : sprintName;
+            sprintActive = true;
+            break;
+          }
+          if (!sprintName)
+            sprintName = name != null ? name : null;
+        } else if (typeof sp === "string") {
+          const m = sp.match(/name=([^,\]]+)/);
+          const state = (_l = sp.match(/state=([A-Z]+)/)) == null ? void 0 : _l[1];
+          if (state === "ACTIVE") {
+            sprintName = (_m = m == null ? void 0 : m[1]) != null ? _m : sprintName;
+            sprintActive = true;
+            break;
+          }
+          if (!sprintName && m)
+            sprintName = m[1];
+        }
+      }
+    }
+    let flagged = false;
+    const flaggedField = (_n = fields.customfield_10021) != null ? _n : fields.flagged;
+    if (Array.isArray(flaggedField) && flaggedField.length > 0)
+      flagged = true;
+    else if (flaggedField && typeof flaggedField === "object")
+      flagged = true;
+    const labels = Array.isArray(fields.labels) ? fields.labels.map(String) : [];
+    return {
+      key: raw.key,
+      summary: (_o = fields.summary) != null ? _o : "",
+      status: statusName,
+      statusCategory,
+      issueType: (_p = issueTypeObj.name) != null ? _p : "Task",
+      issueTypeIconUrl: (_q = issueTypeObj.iconUrl) != null ? _q : null,
+      priority: (_r = priorityObj == null ? void 0 : priorityObj.name) != null ? _r : null,
+      priorityIconUrl: (_s = priorityObj == null ? void 0 : priorityObj.iconUrl) != null ? _s : null,
+      assignee: (_u = (_t = fields.assignee) == null ? void 0 : _t.displayName) != null ? _u : null,
+      assigneeEmail: (_w = (_v = fields.assignee) == null ? void 0 : _v.emailAddress) != null ? _w : null,
+      assigneeAccountId: (_y = (_x = fields.assignee) == null ? void 0 : _x.accountId) != null ? _y : null,
+      reporter: (_A = (_z = fields.reporter) == null ? void 0 : _z.displayName) != null ? _A : null,
+      dueDate: (_B = fields.duedate) != null ? _B : null,
+      resolutionDate: (_C = fields.resolutiondate) != null ? _C : null,
+      updatedAt: (_D = fields.updated) != null ? _D : (/* @__PURE__ */ new Date()).toISOString(),
+      labels,
+      parentKey,
+      parentSummary,
+      sprintName,
+      sprintActive,
+      timeSpentSeconds: typeof fields.timespent === "number" ? fields.timespent : null,
+      timeRemainingSeconds: typeof fields.timeestimate === "number" ? fields.timeestimate : null,
+      flagged,
+      issueUrl: `${baseUrl.replace(/\/+$/, "")}/browse/${raw.key}`
+    };
+  }
+  /** Extract the assignee's email from the raw issue JSON, for bucketing into per-person
+   *  sections. Note: the public API at top-level (`JiraDashboardIssue.assignee`) only
+   *  carries displayName — we'd need emailAddress to match back to `teamMembers[i].email`.
+   *  We avoid that by grouping client-side using displayName matches below; a future
+   *  upgrade can widen the parser to surface email + accountId. */
+  formatError(err) {
+    if (err instanceof Error)
+      return err.message;
+    if (typeof err === "string")
+      return err;
+    if (err && typeof err === "object") {
+      const anyErr = err;
+      const parts = [];
+      if (anyErr.status)
+        parts.push(`status=${anyErr.status}`);
+      if (anyErr.message)
+        parts.push(String(anyErr.message));
+      if (parts.length > 0)
+        return parts.join(" ");
+      try {
+        return JSON.stringify(err);
+      } catch (e) {
+      }
+    }
+    return "Unknown error";
+  }
+  formatHttpError(status, text, json) {
+    if (json && typeof json === "object") {
+      const messages = [];
+      if (Array.isArray(json.errorMessages))
+        messages.push(...json.errorMessages.map(String));
+      if (json.errors && typeof json.errors === "object") {
+        for (const [k, v] of Object.entries(json.errors)) {
+          messages.push(`${k}: ${String(v)}`);
+        }
+      }
+      if (messages.length > 0)
+        return `HTTP ${status} \u2014 ${messages.join("; ")}`;
+    }
+    const snippet = (text != null ? text : "").trim().slice(0, 200);
+    return snippet ? `HTTP ${status} \u2014 ${snippet}` : `HTTP ${status}`;
+  }
+};
+
+// src/services/teamMemberService.ts
+var import_obsidian12 = require("obsidian");
+var CADENCE_DAYS = {
+  weekly: 7,
+  biweekly: 14,
+  monthly: 30,
+  skip: Number.POSITIVE_INFINITY
+};
+var DUE_SOON_BUFFER_DAYS = 2;
+var TeamMemberService = class {
+  constructor(vault, scanner, getSettings) {
+    this.vault = vault;
+    this.scanner = scanner;
+    this.getSettings = getSettings;
+  }
+  /** Every person page in the vault, regardless of status. */
+  getAllMembers() {
+    return this.scanner.getAllTeamPages();
+  }
+  /** Members shown on the overview: everyone except `departed`. */
+  getVisibleMembers() {
+    return this.getAllMembers().filter((m) => m.status !== "departed");
+  }
+  /** Members eligible for 1:1 cadence enforcement. */
+  getActiveMembers() {
+    return this.getAllMembers().filter((m) => m.status === "active");
+  }
+  getMember(folderPath) {
+    var _a;
+    return (_a = this.getAllMembers().find((m) => m.folderPath === folderPath)) != null ? _a : null;
+  }
+  /** Compute where a member sits on the cadence axis. Pure function of the
+   *  member + today's date — cheap to call per render. */
+  computeCadenceSignal(member, today = todayAtMidnight()) {
+    if (member.status !== "active" || member.cadence === "skip") {
+      return { state: "suspended", daysSince: null };
+    }
+    const windowDays = CADENCE_DAYS[member.cadence];
+    if (!member.lastOneOnOne) {
+      if (member.startDate) {
+        const daysSinceStart = daysBetween(member.startDate, today);
+        if (daysSinceStart > windowDays) {
+          return { state: "overdue", daysSince: daysSinceStart };
+        }
+      }
+      return { state: "never", daysSince: null };
+    }
+    const daysSince = daysBetween(member.lastOneOnOne, today);
+    if (daysSince > windowDays)
+      return { state: "overdue", daysSince };
+    if (daysSince > windowDays - DUE_SOON_BUFFER_DAYS)
+      return { state: "due-soon", daysSince };
+    return { state: "on-track", daysSince };
+  }
+  /** Active members whose 1:1 cadence has elapsed, sorted most-overdue first.
+   *  Used by the morning-review "Overdue 1:1s" section. */
+  getOverdueOneOnOnes(today = todayAtMidnight()) {
+    var _a;
+    const out = [];
+    for (const member of this.getActiveMembers()) {
+      const signal = this.computeCadenceSignal(member, today);
+      if (signal.state === "overdue") {
+        out.push({ member, daysOverdue: (_a = signal.daysSince) != null ? _a : 0 });
+      }
+    }
+    out.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    return out;
+  }
+  /** Create a new 1:1 session file at `{member}/1on1/YYYY-MM-DD.md` with the
+   *  standard template. If the file already exists (e.g. re-opening today's 1:1)
+   *  just returns the existing TFile — safe to call more than once. */
+  async startOneOnOne(member, date = /* @__PURE__ */ new Date()) {
+    const iso = formatDateISO(date);
+    const sessionFolder = `${member.folderPath}/1on1`;
+    const sessionPath = `${sessionFolder}/${iso}.md`;
+    const existing = this.vault.getAbstractFileByPath(sessionPath);
+    if (existing instanceof import_obsidian12.TFile)
+      return existing;
+    await ensureFolderExists(this.vault, sessionFolder);
+    const template = buildOneOnOneTemplate(member.name, iso);
+    return await this.vault.create(sessionPath, template);
+  }
+  /** Create a canonical person page from a legacy `TeamMember` settings entry.
+   *  No-op if the file already exists — safe to run repeatedly on startup. */
+  async ensurePageFromSettings(member) {
+    const settings = this.getSettings();
+    const segment = sanitizePathSegment(member.fullName);
+    if (!segment)
+      return false;
+    const folderPath = `${settings.teamFolderPath}/${segment}`;
+    const pagePath = `${folderPath}/${segment}.md`;
+    if (this.vault.getAbstractFileByPath(pagePath) instanceof import_obsidian12.TFile)
+      return false;
+    await ensureFolderExists(this.vault, `${folderPath}/1on1`);
+    const status = member.active ? "active" : "departed";
+    const content = buildPersonPageTemplate(
+      member.fullName,
+      status,
+      member.email || null
+    );
+    await this.vault.create(pagePath, content);
+    return true;
+  }
+};
+function daysBetween(from, to) {
+  const dayMs = 1e3 * 60 * 60 * 24;
+  const fromMidnight = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
+  const toMidnight = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
+  return Math.max(0, Math.floor((toMidnight - fromMidnight) / dayMs));
+}
+function todayAtMidnight() {
+  const d = /* @__PURE__ */ new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function buildOneOnOneTemplate(memberName, iso) {
+  return `---
+session_date: ${iso}
+---
+
+# 1:1 with [[${memberName}]] \u2014 ${iso}
+
+## Topics
+- 
+
+## Notes
+- 
+
+## Decisions
+- 
+
+## Action Items
+- [ ]  (from [[${memberName}]])
+
+## Next Time
+- 
+`;
+}
+function buildPersonPageTemplate(fullName, status, email) {
+  const fmLines = ["---", `status: ${status}`, "cadence: weekly"];
+  if (email) {
+    fmLines.push(`email: ${email}`);
+    fmLines.push(`jira_identity: ${email}`);
+  }
+  fmLines.push("---");
+  const body = [
+    "",
+    `# ${fullName}`,
+    "",
+    "## Context",
+    "",
+    "## Current Focus",
+    "",
+    "## Development",
+    "",
+    "## Wins & Feedback",
+    "",
+    "## Risks",
+    ""
+  ].join("\n");
+  return fmLines.join("\n") + body;
+}
+
 // src/ui/TaskBuJoView.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/ui/components/ViewSwitcher.ts
 var ViewSwitcher = class {
@@ -3611,6 +4520,7 @@ var ViewSwitcher = class {
       { mode: "calendar" /* Calendar */, label: "Calendar" },
       { mode: "sprint" /* Sprint */, label: "Sprint" },
       { mode: "topics" /* Topics */, label: "Topics" },
+      { mode: "inbox" /* Inbox */, label: "\u{1F4E5} Inbox" },
       { mode: "overdue" /* Overdue */, label: "Overdue" },
       { mode: "overview" /* Overview */, label: "Overview" },
       { mode: "analytics" /* Analytics */, label: "Analytics" }
@@ -3764,7 +4674,7 @@ var GroupHeader = class {
 };
 
 // src/ui/icons.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 var PRIORITY_CLASSES = {
   high: "task-bujo-priority-high",
   medium: "task-bujo-priority-medium",
@@ -3810,6 +4720,13 @@ function createStatusMarker(statusChar) {
     marker.addClass(`task-bujo-status-${statusChar === ">" ? "migrated" : statusChar === "<" ? "scheduled" : "cancelled"}`);
   }
   return marker;
+}
+function createCadenceChip(state, label) {
+  const chip = document.createElement("span");
+  chip.addClass("task-bujo-cadence-chip");
+  chip.addClass(`task-bujo-cadence-${state}`);
+  chip.textContent = label;
+  return chip;
 }
 
 // src/utils/taskHierarchy.ts
@@ -4229,7 +5146,6 @@ var MonthlyView = class {
     this.getData = getData;
     this.onSaveSnapshot = onSaveSnapshot;
     this.collapsedGroups = collapsedGroups;
-    this.collapsedGoals = /* @__PURE__ */ new Set();
     this.el = container.createDiv({ cls: "task-bujo-monthly" });
     this.selectedMonth = /* @__PURE__ */ new Date();
   }
@@ -4239,11 +5155,10 @@ var MonthlyView = class {
     const stats = this.monthlyAnalytics.getStatsForMonth(this.selectedMonth);
     this.renderHeader(monthId);
     this.renderStats(stats);
-    this.renderGoals(monthId);
     this.renderTasks(monthId);
     this.renderHistory();
   }
-  renderHeader(monthId) {
+  renderHeader(_monthId) {
     const header = this.el.createDiv({ cls: "task-bujo-monthly-header" });
     const nav = header.createDiv({ cls: "task-bujo-monthly-nav" });
     const prevBtn = nav.createEl("button", { cls: "task-bujo-btn task-bujo-monthly-nav-btn", text: "\u2039" });
@@ -4280,101 +5195,12 @@ var MonthlyView = class {
       { label: "Planned", value: String(stats.totalPlanned) },
       { label: "Completed", value: String(stats.totalCompleted), cls: "done" },
       { label: "Rate", value: `${stats.completionRate.toFixed(0)}%` },
-      { label: "Goals", value: `${stats.goalsCompleted}/${stats.goalsTotal}`, cls: "goals" },
       { label: "Migrated", value: String(stats.totalMigrated), cls: "migrated" }
     ];
     for (const card of cards) {
       const cardEl = section.createDiv({ cls: `task-bujo-analytics-card ${card.cls || ""}` });
       cardEl.createDiv({ cls: "task-bujo-analytics-card-value", text: card.value });
       cardEl.createDiv({ cls: "task-bujo-analytics-card-label", text: card.label });
-    }
-  }
-  renderGoals(monthId) {
-    const section = this.el.createDiv({ cls: "task-bujo-monthly-goals" });
-    section.createEl("h4", { text: "Goals" });
-    const monthlyNotePath = `${this.settings.monthlyNotePath}/${monthId}.md`;
-    const goals = this.store.getGoalsForPath(monthlyNotePath);
-    const filtered = this.searchQuery ? goals.filter((g) => g.text.toLowerCase().includes(this.searchQuery.toLowerCase())) : goals;
-    if (filtered.length === 0) {
-      section.createDiv({ cls: "task-bujo-empty", text: "No goals for this month" });
-      return;
-    }
-    const doneCount = filtered.filter((g) => g.status === "x" /* Done */).length;
-    const overallProgress = section.createDiv({ cls: "task-bujo-monthly-goals-progress" });
-    overallProgress.createSpan({ text: `${doneCount}/${filtered.length} goals complete` });
-    const overallBar = overallProgress.createDiv({ cls: "task-bujo-progress-bar" });
-    const overallFill = overallBar.createDiv({ cls: "task-bujo-progress-fill" });
-    overallFill.style.width = filtered.length > 0 ? `${doneCount / filtered.length * 100}%` : "0%";
-    for (const goal of filtered) {
-      this.renderGoalRow(section, goal);
-    }
-  }
-  renderGoalRow(container, goal) {
-    var _a;
-    const row = container.createDiv({ cls: "task-bujo-monthly-goal-row" });
-    const isCollapsed = this.collapsedGoals.has(goal.id);
-    const hasChildren = goal.childrenIds.length > 0;
-    if (hasChildren) {
-      const toggle = row.createSpan({ cls: "task-bujo-subtask-toggle" });
-      toggle.textContent = isCollapsed ? "\u25B6" : "\u25BC";
-      toggle.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (this.collapsedGoals.has(goal.id)) {
-          this.collapsedGoals.delete(goal.id);
-        } else {
-          this.collapsedGoals.add(goal.id);
-        }
-        this.render();
-      });
-    }
-    const checkbox = row.createEl("input", { type: "checkbox" });
-    checkbox.checked = goal.status === "x" /* Done */;
-    checkbox.disabled = goal.status === ">" /* Migrated */ || goal.status === "-" /* Cancelled */;
-    checkbox.addClass("task-bujo-checkbox");
-    checkbox.addEventListener("change", () => {
-      this.callbacks.onToggle(goal);
-    });
-    if (goal.priority !== "none" /* None */) {
-      row.appendChild(createPriorityDot(goal.priority));
-    }
-    const textSpan = row.createSpan({ cls: "task-bujo-task-text" });
-    textSpan.textContent = goal.text;
-    if (goal.status === "x" /* Done */ || goal.status === "-" /* Cancelled */) {
-      textSpan.addClass("task-bujo-task-done");
-    }
-    if (goal.dueDate) {
-      const overdue = goal.status === " " /* Open */ && isOverdue(goal.dueDate);
-      row.appendChild(createDueBadge(formatDateDisplay(goal.dueDate), overdue));
-    }
-    if (hasChildren) {
-      const progress = getChildProgress(goal, (id) => this.store.getTaskById(id));
-      const progressWrap = row.createDiv({ cls: "task-bujo-monthly-goal-progress" });
-      const bar = progressWrap.createDiv({ cls: "task-bujo-progress-bar task-bujo-progress-bar-sm" });
-      const fill = bar.createDiv({ cls: "task-bujo-progress-fill" });
-      const pct = progress.total > 0 ? progress.completed / progress.total * 100 : 0;
-      fill.style.width = `${pct}%`;
-      progressWrap.createSpan({
-        cls: "task-bujo-monthly-goal-progress-label",
-        text: `${progress.completed}/${progress.total}`
-      });
-    }
-    const fileName = ((_a = goal.sourcePath.split("/").pop()) == null ? void 0 : _a.replace(/\.md$/, "")) || goal.sourcePath;
-    const sourceEl = row.createSpan({ cls: "task-bujo-source-link", text: fileName });
-    sourceEl.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.callbacks.onClickSource(goal);
-    });
-    if (hasChildren && !isCollapsed) {
-      const childrenEl = container.createDiv({ cls: "task-bujo-monthly-goal-children" });
-      for (const childId of goal.childrenIds) {
-        const child = this.store.getTaskById(childId);
-        if (child) {
-          new TaskItemRow(childrenEl, child, {
-            ...this.callbacks,
-            getTaskById: (id) => this.store.getTaskById(id)
-          });
-        }
-      }
     }
   }
   renderTasks(monthId) {
@@ -4405,7 +5231,7 @@ var MonthlyView = class {
     const table = section.createEl("table", { cls: "task-bujo-analytics-trend-table" });
     const thead = table.createEl("thead");
     const headerRow = thead.createEl("tr");
-    for (const h of ["Month", "Planned", "Done", "Goals", "Rate"]) {
+    for (const h of ["Month", "Planned", "Done", "Rate"]) {
       headerRow.createEl("th", { text: h });
     }
     const tbody = table.createEl("tbody");
@@ -4415,7 +5241,6 @@ var MonthlyView = class {
       row.createEl("td", { text: formatMonthDisplay(monthDate) });
       row.createEl("td", { text: String(snapshot.totalPlanned) });
       row.createEl("td", { text: String(snapshot.totalCompleted) });
-      row.createEl("td", { text: `${snapshot.goalsCompleted}/${snapshot.goalsTotal}` });
       const rate = snapshot.totalPlanned > 0 ? (snapshot.totalCompleted / snapshot.totalPlanned * 100).toFixed(0) + "%" : "\u2014";
       row.createEl("td", { text: rate });
     }
@@ -4433,8 +5258,18 @@ var STATUS_LABELS = {
   "in-progress": "In Progress",
   "done": "Done"
 };
+function computeDaysSince(isoDate) {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate))
+    return null;
+  const then = (/* @__PURE__ */ new Date(isoDate + "T00:00:00")).getTime();
+  if (isNaN(then))
+    return null;
+  const now = /* @__PURE__ */ new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return Math.floor((today - then) / (24 * 60 * 60 * 1e3));
+}
 function renderTopicCard(container, topic, opts) {
-  var _a, _b, _c, _d, _e;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
   const card = container.createDiv({ cls: "task-bujo-kanban-card" });
   if (opts.draggable) {
     card.draggable = true;
@@ -4524,9 +5359,45 @@ function renderTopicCard(container, topic, opts) {
       card.createDiv({ cls: "task-bujo-kanban-card-meta", text: chips.join(" \u2022 ") });
     }
   }
+  if (topic.assignee) {
+    const lookup = (_g = (_f = opts.assigneeLookup) == null ? void 0 : _f.call(opts, topic.assignee)) != null ? _g : null;
+    const label = (_h = lookup == null ? void 0 : lookup.label) != null ? _h : topic.assignee;
+    const chip = card.createDiv({ cls: "task-bujo-kanban-card-assignee" });
+    chip.setText(label);
+    if (!lookup || lookup.isInactive) {
+      chip.addClass("task-bujo-kanban-card-assignee-stale");
+    }
+    chip.setAttribute("title", lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
+  }
+  if (topic.waitingOn) {
+    const looksLikeEmail = topic.waitingOn.includes("@");
+    const lookup = looksLikeEmail ? (_j = (_i = opts.assigneeLookup) == null ? void 0 : _i.call(opts, topic.waitingOn)) != null ? _j : null : null;
+    const label = (_k = lookup == null ? void 0 : lookup.label) != null ? _k : topic.waitingOn;
+    const daysSinceNudge = computeDaysSince(topic.lastNudged);
+    const threshold = (_l = opts.nudgeThresholdDays) != null ? _l : 7;
+    const suffix = topic.lastNudged === null ? " \xB7 never nudged" : daysSinceNudge !== null ? ` \xB7 ${daysSinceNudge}d` : "";
+    const chip = card.createDiv({ cls: "task-bujo-kanban-card-waiting" });
+    chip.setText(`\u23F3 ${label}${suffix}`);
+    const isStale = topic.lastNudged === null || daysSinceNudge !== null && daysSinceNudge > threshold;
+    if (isStale)
+      chip.addClass("task-bujo-kanban-card-waiting-stale");
+    chip.setAttribute("title", `Waiting on: ${label}${suffix}`);
+  }
   if (topic.linkedPages.length > 0) {
     const linksText = topic.linkedPages.map((p) => `[[${p}]]`).join(", ");
     card.createDiv({ cls: "task-bujo-kanban-card-links", text: linksText });
+  }
+  if (topic.refs.length > 0) {
+    const refsRow = card.createDiv({ cls: "task-bujo-kanban-card-refs" });
+    for (const ref of topic.refs) {
+      const chip = refsRow.createSpan({ cls: "task-bujo-kanban-card-ref-chip" });
+      chip.setText(`${ref.label} \u2197`);
+      chip.setAttribute("title", ref.url);
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.open(ref.url, "_blank");
+      });
+    }
   }
   if (topic.taskTotal > 0) {
     const progressDiv = card.createDiv({ cls: "task-bujo-kanban-card-progress" });
@@ -4727,6 +5598,7 @@ var SprintView = class {
       this.isDragging.value = false;
     });
     const jiraLookup = this.makeJiraLookup();
+    const assigneeLookup = this.makeAssigneeLookup();
     for (const topic of topics) {
       renderTopicCard(body, topic, {
         draggable: true,
@@ -4738,7 +5610,9 @@ var SprintView = class {
         onBlockedToggle: async (t) => {
           await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
         },
-        jiraLookup
+        jiraLookup,
+        assigneeLookup,
+        nudgeThresholdDays: this.settings.nudgeThresholdDays
       });
     }
     if (topics.length === 0) {
@@ -4769,13 +5643,27 @@ var SprintView = class {
       error: svc.getError(key)
     });
   }
+  /** Build a per-email assignee lookup resolving the "logged team" for display. */
+  makeAssigneeLookup() {
+    var _a;
+    const members = (_a = this.settings.teamMembers) != null ? _a : [];
+    if (members.length === 0)
+      return void 0;
+    const byEmail = new Map(members.map((m) => [m.email, m]));
+    return (email) => {
+      const m = byEmail.get(email);
+      if (!m)
+        return null;
+      return { label: m.nickname || m.fullName || m.email, isInactive: !m.active };
+    };
+  }
   destroy() {
     this.el.empty();
   }
 };
 
 // src/ui/components/TopicsOverviewView.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 var PRIORITY_ORDER2 = {
   ["high" /* High */]: 0,
   ["medium" /* Medium */]: 1,
@@ -4805,6 +5693,8 @@ var TopicsOverviewView = class {
     this.jiraService = jiraService;
     this.subMode = "list";
     this.scope = "all";
+    /** 'all' | 'unassigned' | team member email. Persists across re-renders of this view instance. */
+    this.assigneeFilter = "all";
     this.el = container.createDiv({ cls: "task-bujo-topics-overview" });
   }
   render() {
@@ -4819,6 +5709,7 @@ var TopicsOverviewView = class {
     this.renderScopeButton(scopeGroup, "active", "Active sprint");
     this.renderScopeButton(scopeGroup, "backlog", "Backlog");
     this.renderScopeButton(scopeGroup, "archived", "Archived");
+    this.renderAssigneeFilter(header);
     const newBtn = header.createEl("button", { cls: "task-bujo-btn", text: "+ Topic" });
     newBtn.addEventListener("click", () => this.onNewTopic());
     const filtered = this.applyFilters(this.topics);
@@ -4864,8 +5755,49 @@ var TopicsOverviewView = class {
       this.render();
     });
   }
+  /** Assignee filter dropdown. Hidden when no team members are configured so it doesn't
+   *  add noise for users who don't use the team feature.
+   *  Adds "Mine" and "Assigned out" options when `settings.jiraEmail` is configured,
+   *  turning the filter into a lightweight coordination lens. */
+  renderAssigneeFilter(parent) {
+    var _a, _b;
+    const active = ((_a = this.settings.teamMembers) != null ? _a : []).filter((m) => m.active);
+    if (active.length === 0)
+      return;
+    const wrapper = parent.createDiv({ cls: "task-bujo-topics-assigneefilter" });
+    const select = wrapper.createEl("select", { cls: "task-bujo-topics-assignee-select" });
+    const addOpt = (value, label, disabled = false) => {
+      const opt = select.createEl("option", { text: label });
+      opt.value = value;
+      if (disabled)
+        opt.disabled = true;
+      if (value === this.assigneeFilter)
+        opt.selected = true;
+    };
+    addOpt("all", "All assignees");
+    const me = (_b = this.settings.jiraEmail) == null ? void 0 : _b.trim();
+    if (me) {
+      addOpt("mine", "\u{1F464} Mine");
+      addOpt("assigned-out", "\u{1F4E8} Assigned out");
+    }
+    addOpt("unassigned", "\u2205 Unassigned");
+    addOpt("__sep__", "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", true);
+    for (const m of active) {
+      addOpt(m.email, m.nickname || m.fullName || m.email);
+    }
+    const reserved = /* @__PURE__ */ new Set(["all", "mine", "assigned-out", "unassigned", "__sep__"]);
+    if (!reserved.has(this.assigneeFilter) && !active.some((m) => m.email === this.assigneeFilter)) {
+      addOpt(this.assigneeFilter, `${this.assigneeFilter} \xB7 inactive`);
+    }
+    select.addEventListener("change", () => {
+      if (select.value === "__sep__")
+        return;
+      this.assigneeFilter = select.value;
+      this.render();
+    });
+  }
   applyFilters(topics) {
-    var _a;
+    var _a, _b, _c;
     const activeSprint = this.sprintService.getActiveSprint();
     const activeId = (_a = activeSprint == null ? void 0 : activeSprint.id) != null ? _a : null;
     let filtered = topics.filter((t) => {
@@ -4886,6 +5818,19 @@ var TopicsOverviewView = class {
       filtered = filtered.filter(
         (t) => t.title.toLowerCase().includes(q) || t.jira.some((k) => k.toLowerCase().includes(q)) || t.linkedPages.some((p) => p.toLowerCase().includes(q))
       );
+    }
+    if (this.assigneeFilter === "unassigned") {
+      filtered = filtered.filter((t) => !t.assignee);
+    } else if (this.assigneeFilter === "mine") {
+      const me = (_b = this.settings.jiraEmail) == null ? void 0 : _b.trim();
+      if (me)
+        filtered = filtered.filter((t) => t.assignee === me);
+    } else if (this.assigneeFilter === "assigned-out") {
+      const me = (_c = this.settings.jiraEmail) == null ? void 0 : _c.trim();
+      if (me)
+        filtered = filtered.filter((t) => !!t.assignee && t.assignee !== me);
+    } else if (this.assigneeFilter !== "all") {
+      filtered = filtered.filter((t) => t.assignee === this.assigneeFilter);
     }
     return filtered;
   }
@@ -4952,7 +5897,7 @@ var TopicsOverviewView = class {
           if (!topic.sprintId) {
             const active = this.sprintService.getActiveSprint();
             if (!active) {
-              new import_obsidian11.Notice("No active sprint \u2014 cannot move topic out of backlog. Create a sprint first.");
+              new import_obsidian14.Notice("No active sprint \u2014 cannot move topic out of backlog. Create a sprint first.");
               return;
             }
             await this.topicService.assignTopicToSprint(filePath, active.id);
@@ -5096,6 +6041,7 @@ var TopicsOverviewView = class {
   renderOverviewCard(parent, topic, opts = {}) {
     var _a;
     const jiraLookup = this.makeJiraLookup();
+    const assigneeLookup = this.makeAssigneeLookup();
     renderTopicCard(parent, topic, {
       draggable: (_a = opts.draggable) != null ? _a : false,
       isDragging: this.isDragging,
@@ -5104,7 +6050,9 @@ var TopicsOverviewView = class {
       onBlockedToggle: async (t) => {
         await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
       },
-      jiraLookup
+      jiraLookup,
+      assigneeLookup,
+      nudgeThresholdDays: this.settings.nudgeThresholdDays
     });
     const lastCard = parent.lastElementChild;
     if (lastCard) {
@@ -5152,6 +6100,20 @@ var TopicsOverviewView = class {
       loading: svc.isLoading(key),
       error: svc.getError(key)
     });
+  }
+  /** Build a per-email assignee lookup resolving the "logged team" for display. */
+  makeAssigneeLookup() {
+    var _a;
+    const members = (_a = this.settings.teamMembers) != null ? _a : [];
+    if (members.length === 0)
+      return void 0;
+    const byEmail = new Map(members.map((m) => [m.email, m]));
+    return (email) => {
+      const m = byEmail.get(email);
+      if (!m)
+        return null;
+      return { label: m.nickname || m.fullName || m.email, isInactive: !m.active };
+    };
   }
   destroy() {
     this.el.empty();
@@ -5245,6 +6207,49 @@ var OverviewView = class {
       const groupedUncat = this.store.groupTasks(uncategorized, this.groupMode, this.settings.weekStartDay);
       new TaskList(this.el, groupedUncat, this.callbacks, true, this.collapsedGroups, allStoreTasks);
     }
+  }
+  destroy() {
+    this.el.empty();
+  }
+};
+
+// src/ui/components/InboxView.ts
+var InboxView = class {
+  constructor(container, store, settings, callbacks, groupMode, searchQuery = "", collapsedGroups) {
+    this.store = store;
+    this.settings = settings;
+    this.callbacks = callbacks;
+    this.groupMode = groupMode;
+    this.searchQuery = searchQuery;
+    this.collapsedGroups = collapsedGroups;
+    this.el = container.createDiv({ cls: "task-bujo-inbox-view" });
+  }
+  render() {
+    this.el.empty();
+    let items = this.store.filterCompleted(
+      this.store.getInbox(),
+      this.settings.showCompletedTasks
+    );
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase();
+      items = items.filter((t) => t.text.toLowerCase().includes(q));
+    }
+    const openCount = items.filter((t) => t.status === " " /* Open */).length;
+    const header = this.el.createDiv({ cls: "task-bujo-view-header" });
+    header.createSpan({ text: "\u{1F4E5} Inbox" });
+    header.createSpan({
+      cls: "task-bujo-pending-count",
+      text: ` (${openCount} to triage, ${items.length} total)`
+    });
+    if (items.length === 0) {
+      this.el.createDiv({
+        cls: "task-bujo-empty",
+        text: "Nothing to triage \u2014 capture new items under `## Inbox` in your daily note."
+      });
+      return;
+    }
+    const grouped = this.store.groupTasks(items, this.groupMode, this.settings.weekStartDay);
+    new TaskList(this.el, grouped, this.callbacks, true, this.collapsedGroups, this.store.getInbox());
   }
   destroy() {
     this.el.empty();
@@ -5586,15 +6591,15 @@ var CalendarView = class {
 };
 
 // src/ui/components/SyntaxReference.ts
-var import_obsidian12 = require("obsidian");
-var SyntaxReferenceModal = class extends import_obsidian12.Modal {
+var import_obsidian15 = require("obsidian");
+var SyntaxReferenceModal = class extends import_obsidian15.Modal {
   constructor(app) {
     super(app);
   }
   /** Try to get the active markdown editor (if any) */
   getActiveEditor() {
     var _a;
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian12.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian15.MarkdownView);
     return (_a = view == null ? void 0 : view.editor) != null ? _a : null;
   }
   /** Insert text at cursor position in the active editor */
@@ -5657,7 +6662,7 @@ var SyntaxReferenceModal = class extends import_obsidian12.Modal {
       ["", ""],
       ["#type/task", "Force classify as Task"],
       ["#type/openpoint", "Force classify as Open Point"],
-      ["#type/goal", "Force classify as Goal"],
+      ["#type/inbox", "Force classify as Inbox"],
       ["", ""],
       ["#work/name or #w/CODE", "Work type tag"],
       ["#purpose/name or #p/CODE", "Purpose tag"],
@@ -5666,7 +6671,7 @@ var SyntaxReferenceModal = class extends import_obsidian12.Modal {
       ["", ""],
       ["## Tasks", "Heading \u2192 items are Tasks"],
       ["## Open Points", "Heading \u2192 items are Open Points"],
-      ["## Goals", "Heading \u2192 items are Goals"]
+      ["## Inbox", "Heading \u2192 items are quick-capture Inbox"]
     ];
     const table = contentEl.createEl("table", { cls: "task-bujo-syntax-table" });
     for (const [syntax, desc] of entries) {
@@ -5726,11 +6731,11 @@ var SyntaxReferenceModal = class extends import_obsidian12.Modal {
 };
 
 // src/ui/components/AddTaskBar.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 
 // src/ui/InsertTaskModal.ts
-var import_obsidian13 = require("obsidian");
-var InsertTaskModal = class extends import_obsidian13.Modal {
+var import_obsidian16 = require("obsidian");
+var InsertTaskModal = class extends import_obsidian16.Modal {
   constructor(app, onSubmit, workTypes = [], purposes = []) {
     super(app);
     this.onSubmit = onSubmit;
@@ -5748,7 +6753,7 @@ var InsertTaskModal = class extends import_obsidian13.Modal {
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-insert-modal");
     contentEl.createEl("h2", { text: "Quick Create Task" });
-    new import_obsidian13.Setting(contentEl).setName("Task text").addText((text) => {
+    new import_obsidian16.Setting(contentEl).setName("Task text").addText((text) => {
       text.setPlaceholder("What needs to be done?").onChange((v) => {
         this.text = v;
       });
@@ -5758,7 +6763,7 @@ var InsertTaskModal = class extends import_obsidian13.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian13.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian16.Setting(contentEl).setName("Priority").addDropdown(
       (dd) => dd.addOptions({
         none: "None",
         high: "High",
@@ -5768,13 +6773,13 @@ var InsertTaskModal = class extends import_obsidian13.Modal {
         this.priority = v;
       })
     );
-    new import_obsidian13.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian16.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.onChange((v) => {
         this.dueDate = v ? isoToPluginDate(v) : "";
       });
     });
-    new import_obsidian13.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
+    new import_obsidian16.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
       (dd) => dd.addOptions({
         "": "Auto (from heading)",
         "task": "Task",
@@ -5784,7 +6789,7 @@ var InsertTaskModal = class extends import_obsidian13.Modal {
       })
     );
     if (this.workTypes.length > 0) {
-      new import_obsidian13.Setting(contentEl).setName("Work type").addDropdown((dd) => {
+      new import_obsidian16.Setting(contentEl).setName("Work type").addDropdown((dd) => {
         const options = { "": "None" };
         for (const wt of this.workTypes) {
           options[wt.shortCode] = `${wt.name} (${wt.shortCode})`;
@@ -5795,7 +6800,7 @@ var InsertTaskModal = class extends import_obsidian13.Modal {
       });
     }
     if (this.purposes.length > 0) {
-      new import_obsidian13.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
+      new import_obsidian16.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
         const options = { "": "None" };
         for (const p of this.purposes) {
           options[p.shortCode] = `${p.name} (${p.shortCode})`;
@@ -5805,7 +6810,7 @@ var InsertTaskModal = class extends import_obsidian13.Modal {
         });
       });
     }
-    const descSetting = new import_obsidian13.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
+    const descSetting = new import_obsidian16.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
     const descArea = descSetting.controlEl.createEl("textarea", {
       cls: "task-bujo-insert-description",
       attr: { rows: "3", placeholder: "Additional context, notes, links..." }
@@ -5813,7 +6818,7 @@ var InsertTaskModal = class extends import_obsidian13.Modal {
     descArea.addEventListener("input", () => {
       this.description = descArea.value;
     });
-    new import_obsidian13.Setting(contentEl).addButton(
+    new import_obsidian16.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Create").setCta().onClick(() => this.submit())
     );
   }
@@ -5863,46 +6868,64 @@ var AddTaskBar = class {
     this.app = app;
     this.getSettings = getSettings;
     this.callbacks = callbacks;
+    var _a;
     this.el = container.createDiv({ cls: "task-bujo-add-bar" });
+    this.target = (_a = this.getSettings().defaultQuickAddTarget) != null ? _a : "tasks";
     this.render();
   }
   render() {
+    this.el.empty();
     const form = this.el.createDiv({ cls: "task-bujo-add-form" });
+    const targetToggle = form.createEl("button", {
+      cls: "task-bujo-add-target-toggle",
+      text: this.target === "inbox" ? "\u{1F4E5} Inbox" : "\u2713 Tasks"
+    });
+    targetToggle.setAttribute("title", "Toggle between Tasks and Inbox");
+    targetToggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.target = this.target === "inbox" ? "tasks" : "inbox";
+      this.render();
+    });
     const textInput = form.createEl("input", {
       type: "text",
-      placeholder: "Quick add task...",
+      placeholder: this.target === "inbox" ? "Quick capture note..." : "Quick add task...",
       cls: "task-bujo-add-input"
     });
-    const prioritySelect = form.createEl("select", { cls: "task-bujo-add-priority" });
-    const options = [
-      ["none", "\u2014"],
-      ["high", "H"],
-      ["medium", "M"],
-      ["low", "L"]
-    ];
-    for (const [val, label] of options) {
-      prioritySelect.createEl("option", { value: val, text: label });
+    let prioritySelect = null;
+    let dateInput = null;
+    if (this.target === "tasks") {
+      prioritySelect = form.createEl("select", { cls: "task-bujo-add-priority" });
+      const options = [
+        ["none", "\u2014"],
+        ["high", "H"],
+        ["medium", "M"],
+        ["low", "L"]
+      ];
+      for (const [val, label] of options) {
+        prioritySelect.createEl("option", { value: val, text: label });
+      }
+      dateInput = form.createEl("input", {
+        type: "text",
+        placeholder: "DD-MM-YYYY",
+        cls: "task-bujo-add-date"
+      });
     }
-    const dateInput = form.createEl("input", {
-      type: "text",
-      placeholder: "DD-MM-YYYY",
-      cls: "task-bujo-add-date"
-    });
     const addBtn = form.createEl("button", {
-      text: "+ Add",
+      text: this.target === "inbox" ? "Capture" : "+ Add",
       cls: "task-bujo-add-btn"
     });
     const doAdd = async () => {
+      var _a, _b;
       const text = textInput.value.trim();
       if (!text)
         return;
-      const priority = prioritySelect.value;
-      const dueDate = dateInput.value.trim();
-      const taskLine = buildTaskLine(text, priority, dueDate);
-      await this.appendToDaily(taskLine);
+      const line = this.target === "inbox" ? `- [ ] ${text}` : buildTaskLine(text, (_a = prioritySelect == null ? void 0 : prioritySelect.value) != null ? _a : "none", (_b = dateInput == null ? void 0 : dateInput.value.trim()) != null ? _b : "");
+      await this.appendToDaily(line);
       textInput.value = "";
-      dateInput.value = "";
-      prioritySelect.value = "none";
+      if (dateInput)
+        dateInput.value = "";
+      if (prioritySelect)
+        prioritySelect.value = "none";
       textInput.focus();
       this.callbacks.onTaskAdded();
     };
@@ -5912,18 +6935,22 @@ var AddTaskBar = class {
         doAdd();
     });
   }
-  /** Append a task line to today's daily note */
+  /** Append a task line to today's daily note under the selected target heading. */
   async appendToDaily(taskLine) {
     const settings = this.getSettings();
     const today = /* @__PURE__ */ new Date();
     const dateStr = formatDateISO(today);
     const filePath = `${settings.dailyNotePath}/${dateStr}.md`;
     const existing = this.app.vault.getAbstractFileByPath(filePath);
-    if (existing && existing instanceof import_obsidian14.TFile) {
-      const content = await this.app.vault.read(existing);
-      const insertAfterHeading = this.findTasksSection(content);
-      if (insertAfterHeading !== -1) {
-        const updated = content.slice(0, insertAfterHeading) + taskLine + "\n" + content.slice(insertAfterHeading);
+    if (existing && existing instanceof import_obsidian17.TFile) {
+      let content = await this.app.vault.read(existing);
+      let insertPos = this.findHeadingSection(content, this.target);
+      if (insertPos === -1) {
+        content = this.appendHeading(content, this.target);
+        insertPos = this.findHeadingSection(content, this.target);
+      }
+      if (insertPos !== -1) {
+        const updated = content.slice(0, insertPos) + taskLine + "\n" + content.slice(insertPos);
         await this.app.vault.modify(existing, updated);
       } else {
         await this.app.vault.modify(existing, content + "\n" + taskLine + "\n");
@@ -5938,19 +6965,19 @@ var AddTaskBar = class {
       }
       const template = `# Daily Log \u2014 ${dateStr}
 
-## Tasks
+## Inbox
 
-${taskLine}
+${this.target === "inbox" ? taskLine + "\n\n" : ""}## Tasks
 
-## Migrated Tasks
+${this.target === "tasks" ? taskLine + "\n\n" : ""}## Migrated Tasks
 `;
       await this.app.vault.create(filePath, template);
     }
   }
-  /** Find insertion point after a tasks heading. Returns index or -1. */
-  findTasksSection(content) {
-    const headings = ["## Tasks", "## New Tasks", "## TODO"];
-    for (const h of headings) {
+  /** Find insertion point after the requested heading. Returns index or -1. */
+  findHeadingSection(content, target) {
+    const candidates = target === "inbox" ? ["## Inbox", "## Triage"] : ["## Tasks", "## New Tasks", "## TODO"];
+    for (const h of candidates) {
       const idx = content.indexOf(h);
       if (idx !== -1) {
         const lineEnd = content.indexOf("\n", idx);
@@ -5964,14 +6991,20 @@ ${taskLine}
     }
     return -1;
   }
+  /** Append a `## Inbox` or `## Tasks` heading block at the end of the content. */
+  appendHeading(content, target) {
+    const heading = target === "inbox" ? "## Inbox" : "## Tasks";
+    const needsNewline = content.endsWith("\n") ? "" : "\n";
+    return content + needsNewline + "\n" + heading + "\n\n";
+  }
   getElement() {
     return this.el;
   }
 };
 
 // src/ui/SprintModal.ts
-var import_obsidian15 = require("obsidian");
-var SprintModal = class extends import_obsidian15.Modal {
+var import_obsidian18 = require("obsidian");
+var SprintModal = class extends import_obsidian18.Modal {
   constructor(app, sprintService, settings, onSave, editSprint) {
     super(app);
     this.sprintService = sprintService;
@@ -5993,7 +7026,7 @@ var SprintModal = class extends import_obsidian15.Modal {
     contentEl.createEl("h2", {
       text: this.editSprint ? "Edit Sprint" : "Create Sprint"
     });
-    new import_obsidian15.Setting(contentEl).setName("Sprint Name").addText((text) => {
+    new import_obsidian18.Setting(contentEl).setName("Sprint Name").addText((text) => {
       text.setValue(this.name).onChange((value) => {
         this.name = value;
       });
@@ -6003,7 +7036,7 @@ var SprintModal = class extends import_obsidian15.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian15.Setting(contentEl).setName("Start Date").addText((text) => {
+    new import_obsidian18.Setting(contentEl).setName("Start Date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.startDate;
       text.onChange((value) => {
@@ -6011,7 +7044,7 @@ var SprintModal = class extends import_obsidian15.Modal {
         this.updateDuration();
       });
     });
-    new import_obsidian15.Setting(contentEl).setName("End Date").addText((text) => {
+    new import_obsidian18.Setting(contentEl).setName("End Date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.endDate;
       text.onChange((value) => {
@@ -6022,7 +7055,7 @@ var SprintModal = class extends import_obsidian15.Modal {
     this.durationEl = contentEl.createEl("p");
     this.updateDuration();
     this.errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
-    new import_obsidian15.Setting(contentEl).addButton(
+    new import_obsidian18.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(() => this.save())
     );
   }
@@ -6079,8 +7112,8 @@ var SprintModal = class extends import_obsidian15.Modal {
 };
 
 // src/ui/SprintTopicModal.ts
-var import_obsidian16 = require("obsidian");
-var PageSuggestModal = class extends import_obsidian16.FuzzySuggestModal {
+var import_obsidian19 = require("obsidian");
+var PageSuggestModal = class extends import_obsidian19.FuzzySuggestModal {
   constructor(app, onChoose) {
     super(app);
     this.onChoose = onChoose;
@@ -6096,8 +7129,8 @@ var PageSuggestModal = class extends import_obsidian16.FuzzySuggestModal {
     this.onChoose(item);
   }
 };
-var SprintTopicModal = class extends import_obsidian16.Modal {
-  constructor(app, topicService, sprintId, onSave, editTopic, sprintService, prefill) {
+var SprintTopicModal = class extends import_obsidian19.Modal {
+  constructor(app, topicService, sprintId, onSave, editTopic, sprintService, prefill, settings) {
     super(app);
     this.topicService = topicService;
     this.sprintId = sprintId;
@@ -6105,6 +7138,7 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
     this.editTopic = editTopic;
     this.sprintService = sprintService;
     this.prefill = prefill;
+    this.settings = settings;
     this.title = "";
     this.jira = "";
     this.priority = "none" /* None */;
@@ -6114,10 +7148,20 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
     this.dueDate = "";
     /** '' = Backlog (no sprint assigned). Otherwise a sprint id. */
     this.chosenSprintId = "";
+    /** Empty string = unassigned. Otherwise a team member email. */
+    this.assignee = "";
+    /** Empty string = not waiting. 'other:<text>' means free-text fallback; any other
+     *  non-empty value is a team member email. Normalized to the stored string on save. */
+    this.waitingOnMode = "none";
+    this.waitingOnMember = "";
+    this.waitingOnFreeText = "";
+    this.lastNudged = "";
+    this.refs = [];
     this.chipsContainer = null;
+    this.refsContainer = null;
   }
   onOpen() {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-topic-modal");
     if (this.editTopic) {
@@ -6129,6 +7173,20 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
       this.effort = this.editTopic.effort;
       this.dueDate = (_a = this.editTopic.dueDate) != null ? _a : "";
       this.chosenSprintId = (_b = this.editTopic.sprintId) != null ? _b : "";
+      this.assignee = (_c = this.editTopic.assignee) != null ? _c : "";
+      this.lastNudged = (_d = this.editTopic.lastNudged) != null ? _d : "";
+      this.refs = this.editTopic.refs.map((r) => ({ ...r }));
+      if (this.editTopic.waitingOn) {
+        const members = (_f = (_e = this.settings) == null ? void 0 : _e.teamMembers) != null ? _f : [];
+        const match = members.find((m) => m.email === this.editTopic.waitingOn);
+        if (match) {
+          this.waitingOnMode = "member";
+          this.waitingOnMember = this.editTopic.waitingOn;
+        } else {
+          this.waitingOnMode = "other";
+          this.waitingOnFreeText = this.editTopic.waitingOn;
+        }
+      }
     } else {
       this.chosenSprintId = this.sprintId;
       if (this.prefill) {
@@ -6143,7 +7201,7 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
     contentEl.createEl("h2", {
       text: this.editTopic ? "Edit Topic" : "New Sprint Topic"
     });
-    new import_obsidian16.Setting(contentEl).setName("Title").addText((text) => {
+    new import_obsidian19.Setting(contentEl).setName("Title").addText((text) => {
       text.setPlaceholder("Topic title").setValue(this.title).onChange((value) => {
         this.title = value;
       });
@@ -6153,7 +7211,7 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian16.Setting(contentEl).setName("JIRA Ticket(s)").setDesc("Optional. One or more JIRA keys, comma-separated (e.g. PROJ-1, PROJ-2).").addText(
+    new import_obsidian19.Setting(contentEl).setName("JIRA Ticket(s)").setDesc("Optional. One or more JIRA keys, comma-separated (e.g. PROJ-1, PROJ-2).").addText(
       (text) => text.setPlaceholder("PROJ-123, PROJ-124").setValue(this.jira).onChange((value) => {
         this.jira = value;
       })
@@ -6165,13 +7223,13 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
         const suffix = s.status === "active" ? " \xB7 active" : s.status === "completed" ? " \xB7 completed" : "";
         options[s.id] = `${s.name}${suffix}`;
       }
-      new import_obsidian16.Setting(contentEl).setName("Sprint").setDesc("Assign to a sprint, or leave in Backlog").addDropdown(
+      new import_obsidian19.Setting(contentEl).setName("Sprint").setDesc("Assign to a sprint, or leave in Backlog").addDropdown(
         (dropdown) => dropdown.addOptions(options).setValue(this.chosenSprintId).onChange((value) => {
           this.chosenSprintId = value;
         })
       );
       if (this.editTopic && this.editTopic.sprintHistory.length > 0) {
-        const historySetting = new import_obsidian16.Setting(contentEl).setName("Sprint history").setDesc("All sprints this topic has been assigned to (in order)");
+        const historySetting = new import_obsidian19.Setting(contentEl).setName("Sprint history").setDesc("All sprints this topic has been assigned to (in order)");
         const listEl = historySetting.settingEl.createDiv({ cls: "task-bujo-topic-sprint-history" });
         for (const sprintId of this.editTopic.sprintHistory) {
           const sprint = sprints.find((s) => s.id === sprintId);
@@ -6184,7 +7242,7 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
         }
       }
     }
-    new import_obsidian16.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian19.Setting(contentEl).setName("Priority").addDropdown(
       (dropdown) => dropdown.addOptions({
         ["none" /* None */]: "None",
         ["low" /* Low */]: "Low",
@@ -6194,7 +7252,25 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
         this.priority = value;
       })
     );
-    new import_obsidian16.Setting(contentEl).setName("Impact").setDesc("Strategic impact \u2014 drives Impact/Effort and Eisenhower matrices").addDropdown(
+    const teamMembers = (_h = (_g = this.settings) == null ? void 0 : _g.teamMembers) != null ? _h : [];
+    const activeMembers = teamMembers.filter((m) => m.active);
+    if (activeMembers.length > 0 || this.assignee) {
+      const options = { "": "\u2014 Unassigned \u2014" };
+      for (const m of activeMembers) {
+        options[m.email] = m.nickname || m.fullName || m.email;
+      }
+      if (this.assignee && !(this.assignee in options)) {
+        const stale = teamMembers.find((m) => m.email === this.assignee);
+        const label = stale ? `${stale.nickname || stale.fullName || stale.email} \xB7 inactive` : `${this.assignee} \xB7 removed`;
+        options[this.assignee] = label;
+      }
+      new import_obsidian19.Setting(contentEl).setName("Assignee").setDesc("Team member who owns this topic (from configured team)").addDropdown(
+        (dropdown) => dropdown.addOptions(options).setValue(this.assignee).onChange((value) => {
+          this.assignee = value;
+        })
+      );
+    }
+    new import_obsidian19.Setting(contentEl).setName("Impact").setDesc("Strategic impact \u2014 drives Impact/Effort and Eisenhower matrices").addDropdown(
       (dropdown) => {
         var _a2;
         return dropdown.addOptions({
@@ -6208,7 +7284,7 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
         });
       }
     );
-    new import_obsidian16.Setting(contentEl).setName("Effort").setDesc("Size estimate \u2014 drives Impact/Effort matrix quadrant").addDropdown(
+    new import_obsidian19.Setting(contentEl).setName("Effort").setDesc("Size estimate \u2014 drives Impact/Effort matrix quadrant").addDropdown(
       (dropdown) => {
         var _a2;
         return dropdown.addOptions({
@@ -6223,14 +7299,15 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
         });
       }
     );
-    new import_obsidian16.Setting(contentEl).setName("Due date").setDesc("Optional \u2014 drives Eisenhower urgency").addText((text) => {
+    new import_obsidian19.Setting(contentEl).setName("Due date").setDesc("Optional \u2014 drives Eisenhower urgency").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.dueDate);
       text.onChange((value) => {
         this.dueDate = value;
       });
     });
-    const linkedSetting = new import_obsidian16.Setting(contentEl).setName("Linked Pages").addButton(
+    this.renderWaitingOnSetting(contentEl, activeMembers, teamMembers);
+    const linkedSetting = new import_obsidian19.Setting(contentEl).setName("Linked Pages").addButton(
       (btn) => btn.setButtonText("+ Add Page").onClick(() => {
         new PageSuggestModal(this.app, (file) => {
           const pageName = file.path.replace(/\.md$/, "");
@@ -6243,8 +7320,9 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
     );
     this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: "task-bujo-page-chips" });
     this.renderChips();
+    this.renderRefsSection(contentEl);
     const errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
-    new import_obsidian16.Setting(contentEl).addButton(
+    new import_obsidian19.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
         errorEl.empty();
         if (!this.title.trim()) {
@@ -6255,19 +7333,79 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
       })
     );
   }
+  /** Render the Waiting-on + Last nudged settings as a dynamic block that re-renders
+   *  its inner controls when the mode changes. */
+  renderWaitingOnSetting(contentEl, activeMembers, teamMembers) {
+    const wrapper = contentEl.createDiv({ cls: "task-bujo-topic-waiting-wrapper" });
+    const renderInner = () => {
+      wrapper.empty();
+      const options = { none: "\u2014 Not waiting \u2014" };
+      for (const m of activeMembers) {
+        options[`member:${m.email}`] = m.nickname || m.fullName || m.email;
+      }
+      if (this.waitingOnMode === "member" && this.waitingOnMember && !activeMembers.some((m) => m.email === this.waitingOnMember)) {
+        const stale = teamMembers.find((m) => m.email === this.waitingOnMember);
+        const label = stale ? `${stale.nickname || stale.fullName || stale.email} \xB7 inactive` : `${this.waitingOnMember} \xB7 removed`;
+        options[`member:${this.waitingOnMember}`] = label;
+      }
+      options["other"] = "\u2014 Other (type below) \u2014";
+      const currentValue = this.waitingOnMode === "none" ? "none" : this.waitingOnMode === "member" ? `member:${this.waitingOnMember}` : "other";
+      new import_obsidian19.Setting(wrapper).setName("Waiting on").setDesc("Who is blocking this topic \u2014 team member or external party").addDropdown(
+        (dropdown) => dropdown.addOptions(options).setValue(currentValue).onChange((value) => {
+          if (value === "none") {
+            this.waitingOnMode = "none";
+            this.waitingOnMember = "";
+            this.waitingOnFreeText = "";
+          } else if (value === "other") {
+            this.waitingOnMode = "other";
+            this.waitingOnMember = "";
+          } else if (value.startsWith("member:")) {
+            this.waitingOnMode = "member";
+            this.waitingOnMember = value.slice("member:".length);
+            this.waitingOnFreeText = "";
+          }
+          renderInner();
+        })
+      );
+      if (this.waitingOnMode === "other") {
+        new import_obsidian19.Setting(wrapper).setName("Waiting on (text)").setDesc('External party \u2014 e.g. "Legal", "Vendor X", "Customer"').addText(
+          (text) => text.setPlaceholder("e.g. Legal").setValue(this.waitingOnFreeText).onChange((value) => {
+            this.waitingOnFreeText = value;
+          })
+        );
+      }
+      if (this.waitingOnMode !== "none") {
+        new import_obsidian19.Setting(wrapper).setName("Last nudged").setDesc("When you last followed up. Leave blank if never nudged.").addText((text) => {
+          text.inputEl.type = "date";
+          text.setValue(this.lastNudged);
+          text.onChange((value) => {
+            this.lastNudged = value;
+          });
+        });
+      }
+    };
+    renderInner();
+  }
   async save() {
     var _a, _b;
     if (!this.title.trim())
       return;
     const dueDateTrimmed = this.dueDate.trim();
     const dueDateValue = dueDateTrimmed && /^\d{4}-\d{2}-\d{2}$/.test(dueDateTrimmed) ? dueDateTrimmed : null;
+    const waitingOnValue = this.waitingOnMode === "member" ? this.waitingOnMember || null : this.waitingOnMode === "other" ? this.waitingOnFreeText.trim() || null : null;
+    const lastNudgedTrimmed = this.lastNudged.trim();
+    const lastNudgedValue = waitingOnValue && lastNudgedTrimmed && /^\d{4}-\d{2}-\d{2}$/.test(lastNudgedTrimmed) ? lastNudgedTrimmed : null;
     if (this.editTopic) {
       const fmUpdates = {
         jira: this.jira || "",
         priority: this.priority === "none" /* None */ ? "none" : this.priority,
         impact: this.impact,
         effort: this.effort,
-        dueDate: dueDateValue
+        dueDate: dueDateValue,
+        assignee: this.assignee || null,
+        waitingOn: waitingOnValue,
+        lastNudged: lastNudgedValue,
+        refs: this.refs.length > 0 ? serializeRefs(this.refs) : null
       };
       await this.topicService.updateTopicFrontmatter(this.editTopic.filePath, fmUpdates);
       let newHistory = this.editTopic.sprintHistory;
@@ -6303,7 +7441,11 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
         effort: this.effort,
         dueDate: dueDateValue,
         sprintId: this.sprintService ? this.chosenSprintId || null : this.editTopic.sprintId,
-        sprintHistory: newHistory
+        sprintHistory: newHistory,
+        assignee: this.assignee || null,
+        waitingOn: waitingOnValue,
+        lastNudged: lastNudgedValue,
+        refs: this.refs.map((r) => ({ ...r }))
       };
       this.onSave(updated);
     } else {
@@ -6315,7 +7457,11 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
         this.chosenSprintId,
         this.impact,
         this.effort,
-        dueDateValue
+        dueDateValue,
+        this.assignee || null,
+        waitingOnValue,
+        lastNudgedValue,
+        this.refs
       );
       this.onSave(topic);
     }
@@ -6342,14 +7488,87 @@ var SprintTopicModal = class extends import_obsidian16.Modal {
       });
     }
   }
+  /** References section: label+URL chip list + an add form. */
+  renderRefsSection(contentEl) {
+    const setting = new import_obsidian19.Setting(contentEl).setName("References").setDesc("External links (Confluence, Figma, SAP, Miro, \u2026). label \xB7 host");
+    this.refsContainer = setting.settingEl.createDiv({ cls: "task-bujo-refs-chips" });
+    const addForm = setting.settingEl.createDiv({ cls: "task-bujo-refs-add-form" });
+    const labelInput = addForm.createEl("input", { type: "text", placeholder: "Label (e.g. Confluence)" });
+    labelInput.addClass("task-bujo-refs-label-input");
+    const urlInput = addForm.createEl("input", { type: "url", placeholder: "https://\u2026" });
+    urlInput.addClass("task-bujo-refs-url-input");
+    urlInput.addEventListener("blur", () => {
+      if (!labelInput.value.trim() && urlInput.value.trim()) {
+        try {
+          const host = new URL(urlInput.value).hostname.replace(/^www\./, "");
+          labelInput.value = host;
+        } catch (e) {
+        }
+      }
+    });
+    const addBtn = addForm.createEl("button", { text: "+ Add" });
+    addBtn.addClass("task-bujo-refs-add-btn");
+    const tryAdd = () => {
+      const label = labelInput.value.trim();
+      const url = urlInput.value.trim();
+      if (!label || !url)
+        return;
+      if (!/^https?:\/\//.test(url))
+        return;
+      this.refs.push({ label, url });
+      labelInput.value = "";
+      urlInput.value = "";
+      this.renderRefsChips();
+      labelInput.focus();
+    };
+    addBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      tryAdd();
+    });
+    urlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        tryAdd();
+      }
+    });
+    this.renderRefsChips();
+  }
+  renderRefsChips() {
+    if (!this.refsContainer)
+      return;
+    this.refsContainer.empty();
+    if (this.refs.length === 0) {
+      this.refsContainer.createSpan({
+        cls: "task-bujo-page-chips-empty",
+        text: "No references yet"
+      });
+      return;
+    }
+    for (const ref of this.refs) {
+      const chip = this.refsContainer.createDiv({ cls: "task-bujo-refs-chip" });
+      let host = "";
+      try {
+        host = new URL(ref.url).hostname.replace(/^www\./, "");
+      } catch (e) {
+      }
+      const text = host ? `${ref.label} \xB7 ${host}` : ref.label;
+      chip.createSpan({ text });
+      chip.setAttribute("title", ref.url);
+      const removeBtn = chip.createSpan({ cls: "task-bujo-page-chip-remove", text: "\xD7" });
+      removeBtn.addEventListener("click", () => {
+        this.refs = this.refs.filter((r) => r !== ref);
+        this.renderRefsChips();
+      });
+    }
+  }
   onClose() {
     this.contentEl.empty();
   }
 };
 
 // src/ui/SprintCloseModal.ts
-var import_obsidian17 = require("obsidian");
-var SprintCloseModal = class extends import_obsidian17.Modal {
+var import_obsidian20 = require("obsidian");
+var SprintCloseModal = class extends import_obsidian20.Modal {
   constructor(app, sprint, topics, sprintService, topicService, onComplete) {
     super(app);
     this.sprint = sprint;
@@ -6500,8 +7719,8 @@ var SprintCloseModal = class extends import_obsidian17.Modal {
 };
 
 // src/ui/SubtaskConfirmModal.ts
-var import_obsidian18 = require("obsidian");
-var SubtaskConfirmModal = class extends import_obsidian18.Modal {
+var import_obsidian21 = require("obsidian");
+var SubtaskConfirmModal = class extends import_obsidian21.Modal {
   constructor(app, task, openChildCount, actionLabel = "Complete") {
     super(app);
     this.task = task;
@@ -6564,7 +7783,7 @@ var SubtaskConfirmModal = class extends import_obsidian18.Modal {
 };
 
 // src/ui/TaskBuJoView.ts
-var TaskBuJoView = class extends import_obsidian19.ItemView {
+var TaskBuJoView = class extends import_obsidian22.ItemView {
   constructor(leaf, store, writer, sprintService, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
     super(leaf);
     this.store = store;
@@ -6669,7 +7888,7 @@ var TaskBuJoView = class extends import_obsidian19.ItemView {
         let leaf = null;
         this.app.workspace.iterateAllLeaves((l) => {
           var _a;
-          if (!leaf && l.view instanceof import_obsidian19.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
+          if (!leaf && l.view instanceof import_obsidian22.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
             leaf = l;
           }
         });
@@ -6788,6 +8007,11 @@ var TaskBuJoView = class extends import_obsidian19.ItemView {
         view.render();
         break;
       }
+      case "inbox" /* Inbox */: {
+        const view = new InboxView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
+        view.render();
+        break;
+      }
       case "analytics" /* Analytics */: {
         const view = new AnalyticsView(
           this.contentContainer,
@@ -6832,7 +8056,9 @@ var TaskBuJoView = class extends import_obsidian19.ItemView {
       (_a = activeSprint == null ? void 0 : activeSprint.id) != null ? _a : "",
       (_topic) => this.refresh(),
       void 0,
-      this.sprintService
+      this.sprintService,
+      void 0,
+      this.settings
     ).open();
   }
   /** Create a topic without auto-assigning it to a sprint (backlog mode). */
@@ -6844,7 +8070,9 @@ var TaskBuJoView = class extends import_obsidian19.ItemView {
       // empty sprintId → backlog topic
       (_topic) => this.refresh(),
       void 0,
-      this.sprintService
+      this.sprintService,
+      void 0,
+      this.settings
     ).open();
   }
   /** Open the edit modal for an existing topic (used by TopicsOverviewView). */
@@ -6856,7 +8084,9 @@ var TaskBuJoView = class extends import_obsidian19.ItemView {
       (_a = topic.sprintId) != null ? _a : "",
       (_topic) => this.refresh(),
       topic,
-      this.sprintService
+      this.sprintService,
+      void 0,
+      this.settings
     ).open();
   }
   async onTopicClick(topic) {
@@ -6888,7 +8118,7 @@ var TaskBuJoView = class extends import_obsidian19.ItemView {
 };
 
 // src/ui/JiraDashboardView.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 function mapJiraPriority(jiraPriority) {
   if (!jiraPriority)
     return "none" /* None */;
@@ -6901,7 +8131,7 @@ function mapJiraPriority(jiraPriority) {
     return "low" /* Low */;
   return "none" /* None */;
 }
-var TopicSuggestModal = class extends import_obsidian20.FuzzySuggestModal {
+var TopicSuggestModal = class extends import_obsidian23.FuzzySuggestModal {
   constructor(app, topics, onChoose) {
     super(app);
     this.topics = topics;
@@ -6919,8 +8149,8 @@ var TopicSuggestModal = class extends import_obsidian20.FuzzySuggestModal {
     this.onChoose(t);
   }
 };
-var JiraDashboardView = class extends import_obsidian20.ItemView {
-  constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics, topicService, sprintService, onTopicsChanged) {
+var JiraDashboardView = class extends import_obsidian23.ItemView {
+  constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics, topicService, sprintService, onTopicsChanged, teamService) {
     super(leaf);
     this.dashboardService = dashboardService;
     this.getSettings = getSettings;
@@ -6929,11 +8159,15 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
     this.topicService = topicService;
     this.sprintService = sprintService;
     this.onTopicsChanged = onTopicsChanged;
+    this.teamService = teamService;
     this.searchQuery = "";
     this.listenerHandle = null;
+    this.teamListenerHandle = null;
     this.contentContainer = null;
     this.headerMetaEl = null;
     this.refreshBtnEl = null;
+    /** Tab bar root — rebuilt on every render so the active-tab class stays in sync. */
+    this.tabBarEl = null;
     /** Active sections — evaluated in order; each issue appears in at most one
      *  (the first matching), keeping rows from duplicating across sections. */
     this.sections = [
@@ -6975,7 +8209,7 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
         defaultCollapsed: true
       }
     ];
-    this.debouncedSearch = (0, import_obsidian20.debounce)((value) => {
+    this.debouncedSearch = (0, import_obsidian23.debounce)((value) => {
       this.searchQuery = value;
       this.renderContent();
     }, SEARCH_DEBOUNCE_MS, false);
@@ -6998,12 +8232,17 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
     this.contentContainer = containerEl.createDiv({ cls: "task-bujo-content task-bujo-jira-dashboard-content" });
     this.listenerHandle = () => this.renderContent();
     this.dashboardService.on(this.listenerHandle);
+    this.teamListenerHandle = () => this.renderContent();
+    this.teamService.on(this.teamListenerHandle);
     this.onTopicsChanged(() => {
       if (this.contentContainer)
         this.renderContent();
     });
     if (this.dashboardService.isEnabled() && this.dashboardService.isStale()) {
       this.dashboardService.refresh();
+    }
+    if (this.teamService.isEnabled() && this.teamService.isStale()) {
+      this.teamService.refresh();
     }
     this.renderContent();
   }
@@ -7012,12 +8251,19 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
       this.dashboardService.off(this.listenerHandle);
       this.listenerHandle = null;
     }
+    if (this.teamListenerHandle) {
+      this.teamService.off(this.teamListenerHandle);
+      this.teamListenerHandle = null;
+    }
   }
   /** Called by Obsidian when the view becomes visible again (pane focus / tab switch).
    *  We use it as a hook to auto-refresh if the cache has gone stale. */
   onResize() {
     if (this.dashboardService.isEnabled() && this.dashboardService.isStale() && !this.dashboardService.isLoading()) {
       this.dashboardService.refresh();
+    }
+    if (this.teamService.isEnabled() && this.teamService.isStale() && !this.teamService.isLoading()) {
+      this.teamService.refresh();
     }
   }
   // ── Rendering ─────────────────────────────────────────────────
@@ -7036,6 +8282,8 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
         return;
       this.dashboardService.refresh();
     });
+    this.tabBarEl = header.createDiv({ cls: "task-bujo-jira-dashboard-tabs" });
+    this.renderTabs();
     const searchRow = header.createDiv({ cls: "task-bujo-jira-dashboard-search-row" });
     const searchInput = searchRow.createEl("input", {
       cls: "task-bujo-jira-dashboard-search",
@@ -7044,11 +8292,59 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
     });
     searchInput.addEventListener("input", () => this.debouncedSearch(searchInput.value));
   }
-  renderContent() {
+  /** Render the two tabs ("My Work" / "Team") and wire click handlers. Called from
+   *  renderHeader initially and from renderContent whenever the active tab or the
+   *  team-enabled flag may have changed. */
+  renderTabs() {
+    if (!this.tabBarEl)
+      return;
+    this.tabBarEl.empty();
+    const active = this.resolveActiveTab();
+    const teamEnabled = this.teamService.isEnabled();
+    if (!teamEnabled) {
+      this.tabBarEl.addClass("is-hidden");
+      return;
+    }
+    this.tabBarEl.removeClass("is-hidden");
+    const mkTab = (id, label) => {
+      const tab = this.tabBarEl.createDiv({ cls: "task-bujo-jira-dashboard-tab" });
+      tab.setText(label);
+      if (id === active)
+        tab.addClass("is-active");
+      tab.addEventListener("click", () => this.switchTab(id));
+    };
+    mkTab("mine", "My Work");
+    mkTab("team", "Team");
+  }
+  /** Read the persisted tab, coercing 'team' → 'mine' when team tracking is off
+   *  (e.g. toggle flipped off after a previous session left 'team' sticky). */
+  resolveActiveTab() {
     var _a;
+    const s = this.getSettings();
+    const stored = (_a = s.jiraDashboardActiveTab) != null ? _a : "mine";
+    if (stored === "team" && !this.teamService.isEnabled())
+      return "mine";
+    return stored;
+  }
+  async switchTab(tab) {
+    const s = this.getSettings();
+    if (s.jiraDashboardActiveTab === tab)
+      return;
+    s.jiraDashboardActiveTab = tab;
+    await this.saveSettings();
+    if (tab === "mine" && this.dashboardService.isEnabled() && this.dashboardService.isStale()) {
+      this.dashboardService.refresh();
+    }
+    if (tab === "team" && this.teamService.isEnabled() && this.teamService.isStale()) {
+      this.teamService.refresh();
+    }
+    this.renderContent();
+  }
+  renderContent() {
     if (!this.contentContainer)
       return;
     this.updateHeaderMeta();
+    this.renderTabs();
     this.contentContainer.empty();
     if (!this.dashboardService.isEnabled()) {
       this.contentContainer.createDiv({
@@ -7057,15 +8353,27 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
       });
       return;
     }
+    const topicIndex = this.buildTopicIndex();
+    const activeTab = this.resolveActiveTab();
+    if (activeTab === "team") {
+      this.renderTeamTab(this.contentContainer, topicIndex);
+    } else {
+      this.renderMineTab(this.contentContainer, topicIndex);
+    }
+  }
+  /** The original five personal sections. Extracted so the tab switch can route here
+   *  without running the team rendering, and vice versa. */
+  renderMineTab(container, topicIndex) {
+    var _a;
     const err = this.dashboardService.getError();
     if (err) {
-      const errEl = this.contentContainer.createDiv({ cls: "task-bujo-jira-dashboard-error" });
+      const errEl = container.createDiv({ cls: "task-bujo-jira-dashboard-error" });
       errEl.createSpan({ text: `Failed to load dashboard: ${err}` });
       return;
     }
     const issues = this.dashboardService.getIssues();
     if (issues === null) {
-      this.contentContainer.createDiv({
+      container.createDiv({
         cls: "task-bujo-empty",
         text: this.dashboardService.isLoading() ? "Loading JIRA issues\u2026" : "No data yet. Click Refresh."
       });
@@ -7073,13 +8381,39 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
     }
     const filtered = this.applySearch(issues, this.searchQuery);
     const buckets = this.buildBuckets(filtered);
-    const topicIndex = this.buildTopicIndex();
     for (const section of this.sections) {
       const bucket = (_a = buckets.get(section.id)) != null ? _a : [];
       if (bucket.length === 0 && section.id === "reported")
         continue;
-      this.renderSection(this.contentContainer, section, bucket, topicIndex);
+      this.renderSection(container, section, bucket, topicIndex);
     }
+  }
+  /** The Team tab — heatmap + per-person sections. Handles disabled / loading / error
+   *  states here rather than falling through to renderTeamBlock's "hidden when disabled"
+   *  semantics, because on a dedicated tab the user expects an explanation, not a blank. */
+  renderTeamTab(container, topicIndex) {
+    if (!this.teamService.isEnabled()) {
+      container.createDiv({
+        cls: "task-bujo-empty",
+        text: "Team tracking is off. Enable it under Settings \u2192 JIRA Integration \u2192 Team Members."
+      });
+      return;
+    }
+    const err = this.teamService.getError();
+    if (err) {
+      const errEl = container.createDiv({ cls: "task-bujo-jira-dashboard-error" });
+      errEl.createSpan({ text: `Failed to load team issues: ${err}` });
+      return;
+    }
+    const issues = this.teamService.getIssues();
+    if (issues === null) {
+      container.createDiv({
+        cls: "task-bujo-empty",
+        text: this.teamService.isLoading() ? "Loading team issues\u2026" : "No team data yet. Click Refresh."
+      });
+      return;
+    }
+    this.renderTeamBlock(container, topicIndex);
   }
   updateHeaderMeta() {
     var _a, _b;
@@ -7209,7 +8543,7 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
   }
   async openTopic(topic) {
     const file = this.app.vault.getAbstractFileByPath(topic.filePath);
-    if (!(file instanceof import_obsidian20.TFile))
+    if (!(file instanceof import_obsidian23.TFile))
       return;
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
@@ -7356,7 +8690,7 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
   // Both flows go through the normal topic-write path (createTopic / updateTopicFrontmatter)
   // so they participate in the scanner's file-watch → onTopicsChange → re-render cycle.
   openRowContextMenu(evt, issue, linkedTopics) {
-    const menu = new import_obsidian20.Menu();
+    const menu = new import_obsidian23.Menu();
     menu.addItem((item) => item.setTitle("Create topic from this issue").setIcon("plus").onClick(() => this.createTopicFromIssue(issue)));
     const allTopics = this.getAllTopics();
     const linkableTopics = allTopics.filter((t) => !t.jira.includes(issue.key));
@@ -7382,7 +8716,7 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
       this.topicService,
       sprintId,
       (topic) => {
-        new import_obsidian20.Notice(`Topic created: ${topic.title}`);
+        new import_obsidian23.Notice(`Topic created: ${topic.title}`);
       },
       void 0,
       this.sprintService,
@@ -7390,20 +8724,21 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
         title: issue.summary || issue.key,
         jira: issue.key,
         priority: mapJiraPriority(issue.priority)
-      }
+      },
+      this.getSettings()
     );
     modal.open();
   }
   linkIssueToTopic(issue, candidateTopics) {
     if (candidateTopics.length === 0) {
-      new import_obsidian20.Notice("Every topic is already linked to this issue.");
+      new import_obsidian23.Notice("Every topic is already linked to this issue.");
       return;
     }
     new TopicSuggestModal(this.app, candidateTopics, async (topic) => {
       var _a;
       const seen = new Set(topic.jira);
       if (seen.has(issue.key)) {
-        new import_obsidian20.Notice(`${topic.title} already linked to ${issue.key}.`);
+        new import_obsidian23.Notice(`${topic.title} already linked to ${issue.key}.`);
         return;
       }
       const merged = [...topic.jira, issue.key];
@@ -7411,12 +8746,181 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
         await this.topicService.updateTopicFrontmatter(topic.filePath, {
           jira: merged.join(", ")
         });
-        new import_obsidian20.Notice(`Linked ${issue.key} \u2192 ${topic.title}`);
+        new import_obsidian23.Notice(`Linked ${issue.key} \u2192 ${topic.title}`);
       } catch (err) {
         console.error("[JIRA Dashboard] link-to-topic failed:", err);
-        new import_obsidian20.Notice(`Failed to link: ${(_a = err.message) != null ? _a : err}`);
+        new import_obsidian23.Notice(`Failed to link: ${(_a = err.message) != null ? _a : err}`);
       }
     }).open();
+  }
+  // ── Team block ────────────────────────────────────────────────
+  //
+  // Two-part rendering driven by JiraTeamService + PluginSettings.teamMembers:
+  //   1. Workload heatmap — one row per active member, segmented bar showing
+  //      blocked / in-progress / open counts. Quick overview of "who's drowning".
+  //   2. Per-person sections — one collapsible section per member with their
+  //      issues, sorted by workload desc so overloaded people surface first.
+  //
+  // Both are driven from the same in-memory `JiraDashboardIssue[]` fetched by
+  // JiraTeamService. The search filter applies to team issues too.
+  renderTeamBlock(container, topicIndex) {
+    if (!this.teamService.isEnabled())
+      return;
+    const wrap = container.createDiv({ cls: "task-bujo-jira-dashboard-team-block" });
+    const header = wrap.createDiv({ cls: "task-bujo-jira-dashboard-team-header" });
+    header.createSpan({ cls: "task-bujo-jira-dashboard-team-title", text: "Team" });
+    const teamMeta = header.createSpan({ cls: "task-bujo-jira-dashboard-team-meta" });
+    const teamErr = this.teamService.getError();
+    if (this.teamService.isLoading()) {
+      teamMeta.setText("Loading team\u2026");
+    } else if (teamErr) {
+      teamMeta.setText(`error: ${teamErr}`);
+      teamMeta.addClass("is-error");
+    } else {
+      const ts = this.teamService.getFetchedAt();
+      if (ts !== null) {
+        const ageSec = Math.max(0, Math.floor((Date.now() - ts) / 1e3));
+        teamMeta.setText(`Refreshed ${this.formatAge(ageSec)} ago${this.teamService.isStale() ? " \xB7 stale" : ""}`);
+      }
+    }
+    const teamIssues = this.teamService.getIssues();
+    if (teamIssues === null) {
+      if (!teamErr) {
+        wrap.createDiv({
+          cls: "task-bujo-empty",
+          text: this.teamService.isLoading() ? "Loading team issues\u2026" : "No team data yet."
+        });
+      }
+      return;
+    }
+    const members = this.getSettings().teamMembers.filter((m) => m.active);
+    if (members.length === 0) {
+      wrap.createDiv({ cls: "task-bujo-empty", text: "No active team members configured." });
+      return;
+    }
+    const filteredTeam = this.applySearch(teamIssues, this.searchQuery);
+    const byMember = this.bucketByMember(filteredTeam, members);
+    this.renderHeatmap(wrap, members, byMember);
+    const ordered = [...members].map((m) => {
+      var _a;
+      return { member: m, issues: (_a = byMember.get(m.email)) != null ? _a : [] };
+    }).sort((a, b) => b.issues.length - a.issues.length);
+    for (const { member, issues } of ordered) {
+      this.renderMemberSection(wrap, member, issues, topicIndex);
+    }
+  }
+  /** Assign each team issue to exactly one member bucket. Matching priority:
+   *    1. Exact email match against assigneeEmail (most reliable — but JIRA Cloud
+   *       often hides email for privacy).
+   *    2. Display-name match against fullName (case-insensitive, trimmed).
+   *  Issues that match no member (unusual — JQL already scoped to team emails)
+   *  are dropped rather than invented into a bucket. */
+  bucketByMember(issues, members) {
+    const byEmail = /* @__PURE__ */ new Map();
+    const byName = /* @__PURE__ */ new Map();
+    for (const m of members) {
+      if (m.email)
+        byEmail.set(m.email.toLowerCase(), m);
+      if (m.fullName)
+        byName.set(m.fullName.toLowerCase().trim(), m);
+    }
+    const out = /* @__PURE__ */ new Map();
+    for (const m of members)
+      out.set(m.email, []);
+    for (const issue of issues) {
+      let member;
+      if (issue.assigneeEmail) {
+        member = byEmail.get(issue.assigneeEmail.toLowerCase());
+      }
+      if (!member && issue.assignee) {
+        member = byName.get(issue.assignee.toLowerCase().trim());
+      }
+      if (member)
+        out.get(member.email).push(issue);
+    }
+    for (const [, bucket] of out)
+      bucket.sort((a, b) => this.compareIssues(a, b));
+    return out;
+  }
+  renderHeatmap(container, members, byMember) {
+    const wrap = container.createDiv({ cls: "task-bujo-jira-dashboard-heatmap" });
+    const title = wrap.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-title" });
+    title.setText("Workload");
+    const rows = members.map((m) => {
+      var _a;
+      const issues = (_a = byMember.get(m.email)) != null ? _a : [];
+      const blocked = issues.filter((i) => i.flagged).length;
+      const inProgress = issues.filter((i) => !i.flagged && i.statusCategory === "indeterminate").length;
+      const open = issues.filter((i) => !i.flagged && i.statusCategory !== "indeterminate" && i.statusCategory !== "done").length;
+      const done = issues.filter((i) => i.statusCategory === "done").length;
+      return { member: m, blocked, inProgress, open, done, total: blocked + inProgress + open + done };
+    });
+    const maxTotal = Math.max(1, ...rows.map((r) => r.total));
+    rows.sort((a, b) => b.total - a.total);
+    for (const r of rows) {
+      const rowEl = wrap.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-row" });
+      rowEl.createSpan({
+        cls: "task-bujo-jira-dashboard-heatmap-nick",
+        text: r.member.nickname || r.member.fullName || r.member.email,
+        attr: { title: r.member.fullName || r.member.email }
+      });
+      const track = rowEl.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-track" });
+      const fill = track.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-fill" });
+      fill.style.width = `${r.total / maxTotal * 100}%`;
+      const addSeg = (count, cls, label) => {
+        if (count === 0)
+          return;
+        const seg = fill.createDiv({ cls: `task-bujo-jira-dashboard-heatmap-seg ${cls}` });
+        seg.style.flex = `${count} ${count} 0`;
+        seg.setAttribute("title", `${count} ${label}`);
+      };
+      addSeg(r.blocked, "is-blocked", "blocked");
+      addSeg(r.inProgress, "is-in-progress", "in progress");
+      addSeg(r.open, "is-open", "open");
+      addSeg(r.done, "is-done", "done");
+      const counts = rowEl.createSpan({ cls: "task-bujo-jira-dashboard-heatmap-counts" });
+      const parts = [];
+      if (r.blocked)
+        parts.push(`${r.blocked} blocked`);
+      if (r.inProgress)
+        parts.push(`${r.inProgress} in progress`);
+      if (r.open)
+        parts.push(`${r.open} open`);
+      if (r.done)
+        parts.push(`${r.done} done`);
+      counts.setText(parts.length > 0 ? parts.join(" \xB7 ") : "none");
+    }
+  }
+  renderMemberSection(container, member, issues, topicIndex) {
+    var _a;
+    const settings = this.getSettings();
+    const stickyKey = `team:${member.email}`;
+    const collapsed = (_a = settings.jiraDashboardCollapsedSections[stickyKey]) != null ? _a : true;
+    const sectionEl = container.createDiv({ cls: "task-bujo-jira-dashboard-section task-bujo-jira-dashboard-team-section" });
+    if (collapsed)
+      sectionEl.addClass("is-collapsed");
+    const header = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-header" });
+    const chevron = header.createSpan({ cls: "task-bujo-jira-dashboard-section-chevron", text: collapsed ? "\u25B6" : "\u25BC" });
+    const label = member.fullName || member.nickname || member.email;
+    const suffix = member.nickname && member.nickname !== member.fullName ? ` (${member.nickname})` : "";
+    header.createSpan({ cls: "task-bujo-jira-dashboard-section-label", text: `${label}${suffix}` });
+    header.createSpan({ cls: "task-bujo-jira-dashboard-section-count", text: `${issues.length}` });
+    header.addEventListener("click", async () => {
+      const cur = sectionEl.hasClass("is-collapsed");
+      sectionEl.toggleClass("is-collapsed", !cur);
+      chevron.setText(!cur ? "\u25B6" : "\u25BC");
+      const s = this.getSettings();
+      s.jiraDashboardCollapsedSections[stickyKey] = !cur;
+      await this.saveSettings();
+    });
+    const body = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-body" });
+    if (issues.length === 0) {
+      body.createDiv({ cls: "task-bujo-empty task-bujo-jira-dashboard-section-empty", text: "No issues in scope." });
+      return;
+    }
+    for (const issue of issues) {
+      this.renderIssueRow(body, issue, topicIndex);
+    }
   }
   isOverdue(dueDate) {
     const d = /* @__PURE__ */ new Date(dueDate + "T00:00:00");
@@ -7445,30 +8949,339 @@ var JiraDashboardView = class extends import_obsidian20.ItemView {
   }
 };
 
+// src/ui/TeamDashboardView.ts
+var import_obsidian26 = require("obsidian");
+
+// src/ui/components/TeamOverviewView.ts
+var import_obsidian25 = require("obsidian");
+
+// src/ui/OneOnOneModal.ts
+var import_obsidian24 = require("obsidian");
+var OneOnOneModal = class extends import_obsidian24.FuzzySuggestModal {
+  constructor(app, members, onSelect) {
+    super(app);
+    this.members = members;
+    this.onSelect = onSelect;
+    this.setPlaceholder("Pick a teammate for 1:1\u2026");
+    this.setInstructions([
+      { command: "\u2191\u2193", purpose: "navigate" },
+      { command: "\u23CE", purpose: "start 1:1" },
+      { command: "esc", purpose: "cancel" }
+    ]);
+  }
+  getItems() {
+    return this.members;
+  }
+  getItemText(member) {
+    return member.role ? `${member.name} \u2014 ${member.role}` : member.name;
+  }
+  onChooseItem(member) {
+    this.onSelect(member);
+  }
+};
+
+// src/ui/components/TeamOverviewView.ts
+var TeamOverviewView = class {
+  constructor(container, app, service, settings, callbacks = {}) {
+    this.container = container;
+    this.app = app;
+    this.service = service;
+    this.settings = settings;
+    this.callbacks = callbacks;
+  }
+  render() {
+    this.container.empty();
+    this.container.addClass("task-bujo-team-overview");
+    const members = this.service.getVisibleMembers();
+    if (members.length === 0) {
+      this.renderEmptyState();
+      return;
+    }
+    const today = /* @__PURE__ */ new Date();
+    const signals = /* @__PURE__ */ new Map();
+    for (const m of members) {
+      signals.set(m.folderPath, this.service.computeCadenceSignal(m, today));
+    }
+    const rank = {
+      "overdue": 0,
+      "due-soon": 1,
+      "never": 2,
+      "on-track": 3,
+      "suspended": 4
+    };
+    const sorted = [...members].sort((a, b) => {
+      var _a, _b, _c, _d;
+      const sa = signals.get(a.folderPath);
+      const sb = signals.get(b.folderPath);
+      const ra = (_a = rank[sa.state]) != null ? _a : 9;
+      const rb = (_b = rank[sb.state]) != null ? _b : 9;
+      if (ra !== rb)
+        return ra - rb;
+      if (sa.state === "overdue" && sb.state === "overdue") {
+        return ((_c = sb.daysSince) != null ? _c : 0) - ((_d = sa.daysSince) != null ? _d : 0);
+      }
+      return a.name.localeCompare(b.name);
+    });
+    const header = this.container.createDiv({ cls: "task-bujo-team-header" });
+    header.createEl("h2", { text: "Team", cls: "task-bujo-team-title" });
+    const startBtn = header.createEl("button", {
+      cls: "task-bujo-team-start-1on1 mod-cta",
+      text: "Start 1:1\u2026"
+    });
+    startBtn.addEventListener("click", () => this.openOneOnOnePicker());
+    const grid = this.container.createDiv({ cls: "task-bujo-team-grid" });
+    for (const member of sorted) {
+      this.renderCard(grid, member, signals.get(member.folderPath));
+    }
+  }
+  renderEmptyState() {
+    const empty = this.container.createDiv({ cls: "task-bujo-empty" });
+    empty.createEl("p", {
+      text: `No team members found.`
+    });
+    const hint = empty.createEl("p", { cls: "task-bujo-empty-hint" });
+    hint.appendText(`Create a folder under `);
+    hint.createEl("code", { text: this.settings.teamFolderPath });
+    hint.appendText(` with a person page inside, or use the `);
+    hint.createEl("em", { text: "Generate person pages" });
+    hint.appendText(` button in BuJo settings.`);
+  }
+  renderCard(parent, member, signal) {
+    const card = parent.createDiv({ cls: "task-bujo-team-card" });
+    if (member.status === "on_leave")
+      card.addClass("is-on-leave");
+    const topRow = card.createDiv({ cls: "task-bujo-team-card-top" });
+    const avatar = topRow.createDiv({ cls: "task-bujo-team-avatar" });
+    avatar.textContent = initialsOf(member.name);
+    const identityBlock = topRow.createDiv({ cls: "task-bujo-team-identity" });
+    identityBlock.createEl("div", { cls: "task-bujo-team-name", text: member.name });
+    if (member.role) {
+      identityBlock.createEl("div", { cls: "task-bujo-team-role", text: member.role });
+    }
+    const chipRow = topRow.createDiv({ cls: "task-bujo-team-chips" });
+    if (member.status === "on_leave") {
+      chipRow.appendChild(createCadenceChip("suspended", "On leave"));
+    } else {
+      chipRow.appendChild(createCadenceChip(signal.state, formatCadenceLabel(member, signal)));
+    }
+    const actions = card.createDiv({ cls: "task-bujo-team-actions" });
+    const openPageBtn = actions.createEl("button", { cls: "task-bujo-team-action", text: "Open page" });
+    openPageBtn.addEventListener("click", () => this.openFile(member.filePath));
+    const startBtn = actions.createEl("button", {
+      cls: "task-bujo-team-action",
+      text: signal.state === "overdue" ? "Start 1:1 (overdue)" : "Start 1:1"
+    });
+    if (signal.state === "overdue")
+      startBtn.addClass("mod-warning");
+    startBtn.addEventListener("click", () => this.startOneOnOne(member));
+    if (member.sessionPaths.length > 0 && member.lastOneOnOne) {
+      const lastBtn = actions.createEl("button", {
+        cls: "task-bujo-team-action",
+        text: "Last 1:1"
+      });
+      const lastPath = mostRecentSessionPath(member);
+      lastBtn.addEventListener("click", () => this.openFile(lastPath));
+    }
+    if (this.settings.jiraEnabled && this.settings.jiraTeamEnabled && member.jiraIdentity) {
+      const jiraBtn = actions.createEl("button", {
+        cls: "task-bujo-team-action",
+        text: "JIRA workload \u2192"
+      });
+      jiraBtn.addEventListener("click", () => this.openJiraTeamTab());
+    }
+  }
+  async openFile(path) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+      new import_obsidian25.Notice(`File not found: ${path}`);
+      return;
+    }
+    const leaf = this.reuseOrCreateLeaf(path);
+    await leaf.openFile(file);
+    this.app.workspace.revealLeaf(leaf);
+  }
+  /** Reuse an existing leaf already showing the file if there is one, else open a new one. */
+  reuseOrCreateLeaf(path) {
+    let existing = null;
+    this.app.workspace.iterateAllLeaves((l) => {
+      var _a;
+      if (!existing && l.view instanceof import_obsidian25.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === path) {
+        existing = l;
+      }
+    });
+    return existing != null ? existing : this.app.workspace.getLeaf(false);
+  }
+  async startOneOnOne(member) {
+    try {
+      const file = await this.service.startOneOnOne(member, /* @__PURE__ */ new Date());
+      const leaf = this.app.workspace.getLeaf(false);
+      await leaf.openFile(file);
+      this.app.workspace.revealLeaf(leaf);
+    } catch (e) {
+      new import_obsidian25.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+  }
+  openOneOnOnePicker() {
+    const members = this.service.getActiveMembers();
+    if (members.length === 0) {
+      new import_obsidian25.Notice("No active team members to pick from.");
+      return;
+    }
+    new OneOnOneModal(this.app, members, (picked) => this.startOneOnOne(picked)).open();
+  }
+  async openJiraTeamTab() {
+    var _a;
+    if (this.callbacks.onActivateJiraTeamTab) {
+      await this.callbacks.onActivateJiraTeamTab();
+    }
+    const { workspace } = this.app;
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
+    const leaf = (_a = leaves[0]) != null ? _a : workspace.getLeaf(true);
+    if (leaves.length === 0) {
+      await leaf.setViewState({ type: VIEW_TYPE_JIRA_DASHBOARD, active: true });
+    }
+    workspace.revealLeaf(leaf);
+  }
+};
+function initialsOf(name) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0)
+    return "?";
+  if (parts.length === 1)
+    return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+function formatCadenceLabel(member, signal) {
+  var _a;
+  if (member.cadence === "skip")
+    return "Cadence off";
+  if (signal.state === "never")
+    return "No 1:1 yet";
+  if (signal.state === "overdue")
+    return `${signal.daysSince}d overdue`;
+  if (signal.state === "due-soon")
+    return `Due in ~${Math.max(0, cadenceDaysFor(member) - ((_a = signal.daysSince) != null ? _a : 0))}d`;
+  if (signal.state === "on-track")
+    return `${signal.daysSince}d since`;
+  return "";
+}
+function cadenceDaysFor(member) {
+  switch (member.cadence) {
+    case "weekly":
+      return 7;
+    case "biweekly":
+      return 14;
+    case "monthly":
+      return 30;
+    default:
+      return 0;
+  }
+}
+function mostRecentSessionPath(member) {
+  const sorted = [...member.sessionPaths].sort();
+  return sorted[sorted.length - 1];
+}
+
+// src/ui/TeamDashboardView.ts
+var TeamDashboardView = class extends import_obsidian26.ItemView {
+  constructor(leaf, service, getSettings, onTeamChanged, onActivateJiraTeamTab) {
+    super(leaf);
+    this.service = service;
+    this.getSettings = getSettings;
+    this.onTeamChanged = onTeamChanged;
+    this.onActivateJiraTeamTab = onActivateJiraTeamTab;
+    this.contentContainer = null;
+    this.refreshTimer = null;
+  }
+  getViewType() {
+    return VIEW_TYPE_TEAM_DASHBOARD;
+  }
+  getDisplayText() {
+    return "Team";
+  }
+  getIcon() {
+    return "users";
+  }
+  async onOpen() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.addClass("task-bujo-container");
+    containerEl.addClass("task-bujo-team-dashboard-container");
+    this.contentContainer = containerEl.createDiv({
+      cls: "task-bujo-content task-bujo-team-dashboard-content"
+    });
+    this.onTeamChanged(() => {
+      if (!this.contentContainer)
+        return;
+      this.scheduleRender();
+    });
+    this.render();
+  }
+  async onClose() {
+    if (this.refreshTimer !== null) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    this.contentContainer = null;
+  }
+  scheduleRender() {
+    if (this.refreshTimer !== null)
+      clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      this.render();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+  render() {
+    if (!this.contentContainer)
+      return;
+    const view = new TeamOverviewView(
+      this.contentContainer,
+      this.app,
+      this.service,
+      this.getSettings(),
+      { onActivateJiraTeamTab: () => this.onActivateJiraTeamTab() }
+    );
+    view.render();
+  }
+};
+
 // src/ui/MigrationModal.ts
-var import_obsidian21 = require("obsidian");
-var MigrationModal = class extends import_obsidian21.Modal {
-  constructor(app, migrationService, dailyNotes, store, reviewData, onComplete) {
+var import_obsidian27 = require("obsidian");
+var MigrationModal = class extends import_obsidian27.Modal {
+  constructor(app, migrationService, dailyNotes, store, reviewData, onComplete, teamService, topicService, settings) {
     super(app);
     this.migrationService = migrationService;
     this.dailyNotes = dailyNotes;
     this.store = store;
     this.reviewData = reviewData;
     this.onComplete = onComplete;
+    this.teamService = teamService;
+    this.topicService = topicService;
+    this.settings = settings;
     this.decisions = /* @__PURE__ */ new Map();
     this.summaryEl = null;
     this.selectedTasks = /* @__PURE__ */ new Set();
     this.selectedOpenPoints = /* @__PURE__ */ new Set();
     this.pickerSearchTimers = [];
   }
-  onOpen() {
+  async onOpen() {
+    var _a, _b;
     this.modalEl.addClass("task-bujo-migration-modal");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "Morning Review" });
+    const overdueOneOnOnes = (_b = (_a = this.teamService) == null ? void 0 : _a.getOverdueOneOnOnes()) != null ? _b : [];
+    if (overdueOneOnOnes.length > 0) {
+      this.renderOverdueOneOnOnes(contentEl, overdueOneOnOnes);
+    }
+    const staleWaitingTopics = await this.getStaleWaitingTopics();
+    if (staleWaitingTopics.length > 0) {
+      this.renderStaleWaitingTopics(contentEl, staleWaitingTopics);
+    }
     const { yesterdayTasks, overdueTasks, todayTasks } = this.reviewData;
     const hasActionable = yesterdayTasks.length > 0 || overdueTasks.length > 0;
-    if (!hasActionable && todayTasks.length === 0) {
+    if (!hasActionable && todayTasks.length === 0 && overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0) {
       contentEl.createEl("p", {
         text: "No tasks to review. Your slate is clean!",
         cls: "task-bujo-empty"
@@ -7758,6 +9571,124 @@ var MigrationModal = class extends import_obsidian21.Modal {
       this.close();
     });
   }
+  /** Top-of-modal nudge: team members whose 1:1 cadence has elapsed.
+   *  Each row offers a single "Schedule 1:1" action that appends a reminder
+   *  line to today's daily note — the author still decides when to actually
+   *  hold the 1:1 and can trigger `Start 1:1` from the Team view at that point. */
+  renderOverdueOneOnOnes(container, overdue) {
+    const section = container.createDiv({ cls: "task-bujo-review-section task-bujo-review-oneonones" });
+    const header = section.createDiv({ cls: "task-bujo-review-section-header" });
+    header.createSpan({ text: "Overdue 1:1s", cls: "task-bujo-review-section-title" });
+    header.createSpan({ text: ` (${overdue.length})`, cls: "task-bujo-review-section-count" });
+    for (const { member, daysOverdue } of overdue) {
+      const row = section.createDiv({ cls: "task-bujo-migration-item task-bujo-oneonone-row" });
+      const infoEl = row.createDiv({ cls: "task-bujo-migration-item-info" });
+      const textEl = infoEl.createDiv({ cls: "task-bujo-migration-item-text" });
+      textEl.createSpan({ text: member.name, cls: "task-bujo-oneonone-name" });
+      if (member.role) {
+        textEl.createSpan({ text: ` \u2014 ${member.role}`, cls: "task-bujo-oneonone-role" });
+      }
+      const metaEl = infoEl.createDiv({ cls: "task-bujo-migration-item-meta" });
+      metaEl.createSpan({
+        cls: "task-bujo-oneonone-overdue",
+        text: `${daysOverdue}d overdue \xB7 cadence ${member.cadence}`
+      });
+      const actionsEl = row.createDiv({ cls: "task-bujo-migration-item-actions" });
+      const scheduleBtn = actionsEl.createEl("button", {
+        text: "Schedule 1:1",
+        cls: "task-bujo-btn-forward"
+      });
+      scheduleBtn.addEventListener("click", async () => {
+        try {
+          const line = `- [ ] Schedule 1:1 with [[${member.name}]] (${daysOverdue}d overdue)`;
+          await this.dailyNotes.addRawTaskLine(line, /* @__PURE__ */ new Date());
+          scheduleBtn.setText("Scheduled \u2713");
+          scheduleBtn.disabled = true;
+          scheduleBtn.addClass("is-active");
+        } catch (e) {
+          new import_obsidian27.Notice(`Could not schedule reminder: ${e instanceof Error ? e.message : "unknown error"}`);
+        }
+      });
+    }
+  }
+  /** Topics the user is waiting on where either no nudge was ever logged, or the last
+   *  nudge is older than the configured threshold. Returns empty if no service wired up. */
+  async getStaleWaitingTopics() {
+    var _a, _b;
+    if (!this.topicService)
+      return [];
+    const threshold = (_b = (_a = this.settings) == null ? void 0 : _a.nudgeThresholdDays) != null ? _b : 7;
+    const all = await this.topicService.getAllTopics();
+    const now = /* @__PURE__ */ new Date();
+    const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    return all.filter((t) => t.status !== "done" && t.waitingOn).filter((t) => {
+      if (!t.lastNudged)
+        return true;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(t.lastNudged))
+        return true;
+      const then = (/* @__PURE__ */ new Date(t.lastNudged + "T00:00:00")).getTime();
+      if (isNaN(then))
+        return true;
+      const daysSince = Math.floor((todayMs - then) / (24 * 60 * 60 * 1e3));
+      return daysSince > threshold;
+    });
+  }
+  /** Section: topics waiting on someone with no recent nudge. Each row lets the user
+   *  mark the nudge as done (updates `lastNudged`) or clear the waitingOn flag. */
+  renderStaleWaitingTopics(container, topics) {
+    var _a, _b, _c;
+    const section = container.createDiv({ cls: "task-bujo-review-section task-bujo-review-waiting" });
+    const header = section.createDiv({ cls: "task-bujo-review-section-header" });
+    header.createSpan({ text: "Waiting on", cls: "task-bujo-review-section-title" });
+    header.createSpan({ text: ` (${topics.length})`, cls: "task-bujo-review-section-count" });
+    const members = (_b = (_a = this.settings) == null ? void 0 : _a.teamMembers) != null ? _b : [];
+    const byEmail = new Map(members.map((m) => [m.email, m]));
+    for (const topic of topics) {
+      const row = section.createDiv({ cls: "task-bujo-migration-item task-bujo-waiting-row" });
+      const infoEl = row.createDiv({ cls: "task-bujo-migration-item-info" });
+      const textEl = infoEl.createDiv({ cls: "task-bujo-migration-item-text" });
+      textEl.createSpan({ text: topic.title, cls: "task-bujo-waiting-topic" });
+      const waitingOn = (_c = topic.waitingOn) != null ? _c : "";
+      const member = byEmail.get(waitingOn);
+      const label = member ? member.nickname || member.fullName || member.email : waitingOn;
+      const metaEl = infoEl.createDiv({ cls: "task-bujo-migration-item-meta" });
+      const summary = topic.lastNudged ? `Waiting on ${label} \xB7 last nudged ${topic.lastNudged}` : `Waiting on ${label} \xB7 never nudged`;
+      metaEl.createSpan({ text: summary, cls: "task-bujo-waiting-meta" });
+      const actionsEl = row.createDiv({ cls: "task-bujo-migration-item-actions" });
+      const nudgedBtn = actionsEl.createEl("button", {
+        text: "Just nudged",
+        cls: "task-bujo-btn-forward"
+      });
+      nudgedBtn.addEventListener("click", async () => {
+        try {
+          await this.topicService.markNudged(topic.filePath);
+          nudgedBtn.setText("Nudged \u2713");
+          nudgedBtn.disabled = true;
+          nudgedBtn.addClass("is-active");
+        } catch (e) {
+          new import_obsidian27.Notice(`Could not mark nudged: ${e instanceof Error ? e.message : "unknown error"}`);
+        }
+      });
+      const clearBtn = actionsEl.createEl("button", {
+        text: "Unblock",
+        cls: "task-bujo-btn"
+      });
+      clearBtn.addEventListener("click", async () => {
+        try {
+          await this.topicService.updateTopicFrontmatter(topic.filePath, {
+            waitingOn: null,
+            lastNudged: null
+          });
+          clearBtn.setText("Cleared \u2713");
+          clearBtn.disabled = true;
+          nudgedBtn.disabled = true;
+          clearBtn.addClass("is-active");
+        } catch (e) {
+          new import_obsidian27.Notice(`Could not unblock: ${e instanceof Error ? e.message : "unknown error"}`);
+        }
+      });
+    }
+  }
   updateSummary() {
     if (!this.summaryEl)
       return;
@@ -7797,8 +9728,8 @@ var MigrationModal = class extends import_obsidian21.Modal {
 };
 
 // src/ui/WeeklyReviewModal.ts
-var import_obsidian22 = require("obsidian");
-var WeeklyReviewModal = class extends import_obsidian22.Modal {
+var import_obsidian28 = require("obsidian");
+var WeeklyReviewModal = class extends import_obsidian28.Modal {
   constructor(app, analyticsService, settings, weeklyHistory, onSaveSnapshot, precomputedStats) {
     super(app);
     this.analyticsService = analyticsService;
@@ -7875,166 +9806,13 @@ var WeeklyReviewModal = class extends import_obsidian22.Modal {
   }
 };
 
-// src/ui/MonthlyMigrationModal.ts
-var import_obsidian23 = require("obsidian");
-var MonthlyMigrationModal = class extends import_obsidian23.Modal {
-  constructor(app, migrationService, store, reviewData, onComplete) {
-    super(app);
-    this.migrationService = migrationService;
-    this.store = store;
-    this.reviewData = reviewData;
-    this.onComplete = onComplete;
-    this.decisions = /* @__PURE__ */ new Map();
-    this.summaryEl = null;
-  }
-  onOpen() {
-    this.modalEl.addClass("task-bujo-migration-modal");
-    const { contentEl } = this;
-    contentEl.empty();
-    const monthDisplay = formatMonthIdDisplay(this.reviewData.lastMonthId);
-    contentEl.createEl("h2", { text: `Monthly Migration \u2014 ${monthDisplay}` });
-    const { incompleteGoals } = this.reviewData;
-    if (incompleteGoals.length === 0) {
-      contentEl.createEl("p", {
-        text: "No incomplete goals from last month. All clear!",
-        cls: "task-bujo-empty"
-      });
-      this.renderCloseButton(contentEl);
-      return;
-    }
-    contentEl.createEl("p", {
-      text: `You have ${incompleteGoals.length} incomplete goal${incompleteGoals.length > 1 ? "s" : ""} from last month. Choose what to do with each:`,
-      cls: "task-bujo-migration-intro"
-    });
-    for (const goal of incompleteGoals) {
-      this.decisions.set(goal.id, { goal, action: "forward-all" });
-    }
-    for (const goal of incompleteGoals) {
-      this.renderGoalItem(contentEl, goal);
-    }
-    this.summaryEl = contentEl.createDiv({ cls: "task-bujo-migration-summary" });
-    this.updateSummary();
-    const actions = contentEl.createDiv({ cls: "task-bujo-migration-actions" });
-    const applyBtn = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
-    applyBtn.addEventListener("click", async () => {
-      applyBtn.setAttribute("disabled", "true");
-      applyBtn.textContent = "Applying...";
-      const decisions = Array.from(this.decisions.values());
-      const result = await this.migrationService.executeMigrations(decisions);
-      this.onComplete(result);
-      this.close();
-    });
-    const cancelBtn = actions.createEl("button", { text: "Skip", cls: "task-bujo-btn" });
-    cancelBtn.addEventListener("click", () => {
-      this.onComplete(null);
-      this.close();
-    });
-  }
-  renderGoalItem(container, goal) {
-    const wrapper = container.createDiv({ cls: "task-bujo-monthly-migration-item" });
-    const headerRow = wrapper.createDiv({ cls: "task-bujo-monthly-migration-goal-header" });
-    if (goal.priority !== "none" /* None */) {
-      headerRow.appendChild(createPriorityDot(goal.priority));
-    }
-    headerRow.createSpan({ cls: "task-bujo-task-text", text: goal.text });
-    if (goal.dueDate) {
-      const overdue = isOverdue(goal.dueDate);
-      headerRow.appendChild(createDueBadge(formatDateDisplay(goal.dueDate), overdue));
-    }
-    const children = goal.childrenIds.map((id) => this.store.getTaskById(id)).filter((c) => c !== void 0);
-    if (children.length > 0) {
-      const openCount = children.filter((c) => c.status === " " /* Open */).length;
-      const doneCount = children.filter((c) => c.status === "x" /* Done */).length;
-      const subtaskInfo = wrapper.createDiv({ cls: "task-bujo-monthly-migration-subtasks" });
-      subtaskInfo.createSpan({
-        text: `Sub-tasks: ${doneCount} done, ${openCount} open of ${children.length} total`,
-        cls: "task-bujo-text-muted"
-      });
-      const subtaskList = wrapper.createDiv({ cls: "task-bujo-monthly-migration-subtask-list" });
-      for (const child of children) {
-        const row = subtaskList.createDiv({ cls: "task-bujo-monthly-migration-subtask-row" });
-        const statusChar = child.status === "x" /* Done */ ? "\u2713" : child.status === "-" /* Cancelled */ ? "\u2014" : "\u25CB";
-        const statusCls = child.status === "x" /* Done */ ? "task-bujo-task-done" : "";
-        row.createSpan({ text: statusChar, cls: "task-bujo-monthly-migration-subtask-status" });
-        row.createSpan({ text: child.text, cls: `task-bujo-monthly-migration-subtask-text ${statusCls}` });
-      }
-    }
-    const actionsRow = wrapper.createDiv({ cls: "task-bujo-monthly-migration-actions-row" });
-    const actions = [
-      { action: "forward-all", label: "Forward All", cls: "task-bujo-btn task-bujo-btn-primary" },
-      { action: "forward-goal-only", label: "Fresh Start", cls: "task-bujo-btn" },
-      { action: "done", label: "Done", cls: "task-bujo-btn" },
-      { action: "cancel", label: "Cancel", cls: "task-bujo-btn task-bujo-btn-warning" }
-    ];
-    for (const { action, label, cls } of actions) {
-      const btn = actionsRow.createEl("button", { text: label, cls });
-      if (action === "forward-all")
-        btn.addClass("is-active");
-      btn.addEventListener("click", () => {
-        this.decisions.set(goal.id, { goal, action });
-        actionsRow.querySelectorAll("button").forEach((b) => b.removeClass("is-active"));
-        btn.addClass("is-active");
-        this.updateSummary();
-      });
-    }
-  }
-  updateSummary() {
-    if (!this.summaryEl)
-      return;
-    this.summaryEl.empty();
-    let forwardAll = 0;
-    let forwardGoalOnly = 0;
-    let done = 0;
-    let cancel = 0;
-    for (const d of this.decisions.values()) {
-      switch (d.action) {
-        case "forward-all":
-          forwardAll++;
-          break;
-        case "forward-goal-only":
-          forwardGoalOnly++;
-          break;
-        case "done":
-          done++;
-          break;
-        case "cancel":
-          cancel++;
-          break;
-      }
-    }
-    const parts = [];
-    if (forwardAll > 0)
-      parts.push(`${forwardAll} forward`);
-    if (forwardGoalOnly > 0)
-      parts.push(`${forwardGoalOnly} fresh start`);
-    if (done > 0)
-      parts.push(`${done} done`);
-    if (cancel > 0)
-      parts.push(`${cancel} cancel`);
-    this.summaryEl.textContent = parts.join(" \xB7 ");
-  }
-  renderCloseButton(container) {
-    const actions = container.createDiv({ cls: "task-bujo-migration-actions" });
-    const closeBtn = actions.createEl("button", { text: "Close", cls: "mod-cta" });
-    closeBtn.addEventListener("click", () => {
-      this.onComplete(null);
-      this.close();
-    });
-  }
-  onClose() {
-    this.contentEl.empty();
-  }
-};
-
 // src/ui/MonthlyReviewModal.ts
-var import_obsidian24 = require("obsidian");
-var MonthlyReviewModal = class extends import_obsidian24.Modal {
-  constructor(app, monthlyAnalytics, monthlyNotes, store, settings, monthlyHistory, onSaveSnapshot) {
+var import_obsidian29 = require("obsidian");
+var MonthlyReviewModal = class extends import_obsidian29.Modal {
+  constructor(app, monthlyAnalytics, monthlyNotes, _store, _settings, monthlyHistory, onSaveSnapshot) {
     super(app);
     this.monthlyAnalytics = monthlyAnalytics;
     this.monthlyNotes = monthlyNotes;
-    this.store = store;
-    this.settings = settings;
     this.monthlyHistory = monthlyHistory;
     this.onSaveSnapshot = onSaveSnapshot;
     this.reflectionsText = "";
@@ -8051,15 +9829,13 @@ var MonthlyReviewModal = class extends import_obsidian24.Modal {
       { label: "Completed", value: String(this.stats.totalCompleted) },
       { label: "Migrated", value: String(this.stats.totalMigrated) },
       { label: "Cancelled", value: String(this.stats.totalCancelled) },
-      { label: "Completion Rate", value: `${this.stats.completionRate.toFixed(0)}%` },
-      { label: "Goals", value: `${this.stats.goalsCompleted}/${this.stats.goalsTotal}` }
+      { label: "Completion Rate", value: `${this.stats.completionRate.toFixed(0)}%` }
     ];
     for (const item of summaryItems) {
       const row = summarySection.createDiv({ cls: "task-bujo-review-stat" });
       row.createSpan({ cls: "task-bujo-review-stat-label", text: item.label });
       row.createSpan({ cls: "task-bujo-review-stat-value", text: item.value });
     }
-    this.renderGoalProgress(contentEl);
     await this.renderReflections(contentEl);
     if (this.monthlyHistory.length > 0) {
       this.renderComparison(contentEl);
@@ -8077,37 +9853,6 @@ var MonthlyReviewModal = class extends import_obsidian24.Modal {
     });
     const closeBtn = actions.createEl("button", { text: "Close" });
     closeBtn.addEventListener("click", () => this.close());
-  }
-  renderGoalProgress(container) {
-    const monthId = getMonthId(/* @__PURE__ */ new Date());
-    const monthlyNotePath = `${this.settings.monthlyNotePath}/${monthId}.md`;
-    const goals = this.store.getGoalsForPath(monthlyNotePath);
-    if (goals.length === 0)
-      return;
-    const section = container.createDiv({ cls: "task-bujo-review-breakdown" });
-    section.createEl("h3", { text: "Goal Progress" });
-    for (const goal of goals) {
-      const row = section.createDiv({ cls: "task-bujo-review-breakdown-row" });
-      row.createSpan({ cls: "task-bujo-review-breakdown-name", text: goal.text });
-      const barWrap = row.createDiv({ cls: "task-bujo-review-breakdown-bar-wrap" });
-      let pct;
-      if (goal.childrenIds.length > 0) {
-        const progress = getChildProgress(goal, (id) => this.store.getTaskById(id));
-        pct = progress.total > 0 ? progress.completed / progress.total * 100 : 0;
-        row.createSpan({
-          cls: "task-bujo-review-breakdown-value",
-          text: `${progress.completed}/${progress.total}`
-        });
-      } else {
-        pct = goal.status === "x" /* Done */ ? 100 : 0;
-        row.createSpan({
-          cls: "task-bujo-review-breakdown-value",
-          text: goal.status === "x" /* Done */ ? "Done" : "Open"
-        });
-      }
-      const bar = barWrap.createDiv({ cls: "task-bujo-review-breakdown-bar" });
-      bar.style.width = `${pct}%`;
-    }
   }
   async renderReflections(container) {
     const section = container.createDiv({ cls: "task-bujo-monthly-reflections-section" });
@@ -8135,7 +9880,7 @@ var MonthlyReviewModal = class extends import_obsidian24.Modal {
       const rate = snap.totalPlanned > 0 ? (snap.totalCompleted / snap.totalPlanned * 100).toFixed(0) : "0";
       const row = section.createDiv({ cls: "task-bujo-review-comparison-row" });
       row.createSpan({ text: formatMonthIdDisplay(snap.monthId) });
-      row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%) \xB7 Goals: ${snap.goalsCompleted}/${snap.goalsTotal}` });
+      row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%)` });
     }
   }
   onClose() {
@@ -8143,9 +9888,63 @@ var MonthlyReviewModal = class extends import_obsidian24.Modal {
   }
 };
 
+// src/ui/QuickCaptureModal.ts
+var import_obsidian30 = require("obsidian");
+var QuickCaptureModal = class extends import_obsidian30.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+    this.text = "";
+  }
+  onOpen() {
+    const { contentEl } = this;
+    this.modalEl.addClass("task-bujo-quick-capture-modal");
+    contentEl.createEl("h3", { text: "Capture to Inbox" });
+    const textarea = contentEl.createEl("textarea", {
+      cls: "task-bujo-quick-capture-textarea",
+      attr: {
+        placeholder: "e.g. follow up with architect about API versioning \u2014 details, links, whatever\u2026",
+        rows: "6"
+      }
+    });
+    textarea.value = this.text;
+    textarea.addEventListener("input", () => {
+      this.text = textarea.value;
+    });
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        this.submit();
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        this.close();
+      }
+    });
+    setTimeout(() => textarea.focus(), 50);
+    const hint = contentEl.createDiv({ cls: "task-bujo-quick-capture-hint" });
+    hint.setText("Ctrl+Enter to capture \xB7 Esc to cancel");
+    const actions = contentEl.createDiv({ cls: "task-bujo-quick-capture-actions" });
+    const saveBtn = actions.createEl("button", { text: "Capture", cls: "mod-cta" });
+    saveBtn.addEventListener("click", () => this.submit());
+    const cancelBtn = actions.createEl("button", { text: "Cancel" });
+    cancelBtn.addEventListener("click", () => this.close());
+  }
+  submit() {
+    const trimmed = this.text.trim();
+    if (!trimmed)
+      return;
+    this.onSubmit(trimmed);
+    this.close();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
 // src/ui/DueDateModal.ts
-var import_obsidian25 = require("obsidian");
-var DueDateModal = class extends import_obsidian25.Modal {
+var import_obsidian31 = require("obsidian");
+var DueDateModal = class extends import_obsidian31.Modal {
   constructor(app, currentDate, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -8156,7 +9955,7 @@ var DueDateModal = class extends import_obsidian25.Modal {
     const { contentEl } = this;
     this.modalEl.addClass("task-bujo-due-modal");
     contentEl.createEl("h3", { text: "Set Due Date" });
-    new import_obsidian25.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian31.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.isoValue;
       text.onChange((v) => {
@@ -8170,7 +9969,7 @@ var DueDateModal = class extends import_obsidian25.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    const btnContainer = new import_obsidian25.Setting(contentEl);
+    const btnContainer = new import_obsidian31.Setting(contentEl);
     btnContainer.addButton(
       (btn) => btn.setButtonText("Set").setCta().onClick(() => {
         this.onSubmit(this.value.trim());
@@ -8190,19 +9989,21 @@ var DueDateModal = class extends import_obsidian25.Modal {
 };
 
 // src/main.ts
-var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
+var TaskBuJoPlugin = class extends import_obsidian32.Plugin {
   async onload() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     const saved = await this.loadData();
     this.data = Object.assign({}, DEFAULT_PLUGIN_DATA, saved);
     this.data.settings = Object.assign({}, DEFAULT_PLUGIN_DATA.settings, saved == null ? void 0 : saved.settings);
     this.data.weeklyHistory = (_a = this.data.weeklyHistory) != null ? _a : [];
     this.data.lastWeeklyReviewWeek = (_b = this.data.lastWeeklyReviewWeek) != null ? _b : null;
-    this.data.lastMonthlyMigrationMonth = (_c = this.data.lastMonthlyMigrationMonth) != null ? _c : null;
-    this.data.monthlyHistory = (_d = this.data.monthlyHistory) != null ? _d : [];
+    this.data.monthlyHistory = (_c = this.data.monthlyHistory) != null ? _c : [];
     const staleModes = ["eisenhower", "impactEffort"];
     if (staleModes.includes(this.data.settings.defaultViewMode)) {
       this.data.settings.defaultViewMode = "topics" /* Topics */;
+    }
+    if (this.data.settings.defaultViewMode === "team") {
+      this.data.settings.defaultViewMode = "daily" /* Daily */;
     }
     this.settings = this.data.settings;
     this.store = new TaskStore();
@@ -8222,14 +10023,6 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
     );
     this.analyticsService = new AnalyticsService(this.store, () => this.settings);
     this.monthlyNoteService = new MonthlyNoteService(this.app.vault, () => this.settings);
-    this.monthlyMigrationService = new MonthlyMigrationService(
-      this.store,
-      this.writer,
-      this.monthlyNoteService,
-      () => this.data,
-      () => this.saveSettings(false),
-      () => this.settings
-    );
     this.monthlyAnalyticsService = new MonthlyAnalyticsService(
       this.store,
       () => this.settings,
@@ -8238,6 +10031,8 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
     this.archiveService = new ArchiveService(this.app.vault, this.store, () => this.settings);
     this.jiraService = new JiraService(() => this.settings);
     this.jiraDashboardService = new JiraDashboardService(() => this.settings);
+    this.jiraTeamService = new JiraTeamService(() => this.settings);
+    this.teamMemberService = new TeamMemberService(this.app.vault, this.scanner, () => this.settings);
     this.scanner.onChange(() => {
       this.store.setTasks(this.scanner.getAllTasks());
       this.updateStatusBar();
@@ -8266,6 +10061,18 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
       )
     );
     this.registerView(
+      VIEW_TYPE_TEAM_DASHBOARD,
+      (leaf) => new TeamDashboardView(
+        leaf,
+        this.teamMemberService,
+        () => this.settings,
+        // Scanner has no unsubscribe API; the view guards on `contentContainer`
+        // being non-null so closures fired post-close are safe.
+        (cb) => this.scanner.onTeamChange(cb),
+        () => this.activateJiraTeamTab()
+      )
+    );
+    this.registerView(
       VIEW_TYPE_JIRA_DASHBOARD,
       (leaf) => new JiraDashboardView(
         leaf,
@@ -8278,13 +10085,15 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
         () => this.scanner.getAllTopics(),
         this.sprintTopicService,
         this.sprintService,
-        (cb) => this.scanner.onTopicsChange(cb)
+        (cb) => this.scanner.onTopicsChange(cb),
+        this.jiraTeamService
       )
     );
     const refs = this.scanner.registerEvents();
     refs.forEach((ref) => this.registerEvent(ref));
     this.addRibbonIcon("check-square", "Open BuJo", () => this.activateView());
     this.addRibbonIcon("layout-dashboard", "Open JIRA Dashboard", () => this.activateJiraDashboard());
+    this.addRibbonIcon("users", "Open Team Dashboard", () => this.activateTeamDashboard());
     this.statusBarEl = this.addStatusBarItem();
     this.statusBarEl.setText("BuJo ...");
     this.addCommand({
@@ -8303,9 +10112,18 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
       callback: () => this.activateJiraDashboard()
     });
     this.addCommand({
+      id: "open-team-dashboard",
+      name: "Open Team Dashboard",
+      callback: () => this.activateTeamDashboard()
+    });
+    this.addCommand({
       id: "refresh-jira-dashboard",
       name: "Refresh JIRA Dashboard",
-      callback: () => this.jiraDashboardService.refresh()
+      // Refresh both in parallel — if the team service is disabled it no-ops.
+      callback: () => {
+        this.jiraDashboardService.refresh();
+        this.jiraTeamService.refresh();
+      }
     });
     this.addCommand({
       id: "run-daily-migration",
@@ -8323,11 +10141,6 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
       callback: () => new SyntaxReferenceModal(this.app).open()
     });
     this.addCommand({
-      id: "run-monthly-migration",
-      name: "Run Monthly Migration",
-      callback: () => this.showMonthlyMigrationModal()
-    });
-    this.addCommand({
       id: "monthly-review",
       name: "Monthly Review",
       callback: () => this.showMonthlyReview()
@@ -8338,14 +10151,23 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
       callback: () => this.monthlyNoteService.getOrCreateMonthlyNote(/* @__PURE__ */ new Date())
     });
     this.addCommand({
+      id: "start-1-on-1",
+      name: "Start 1:1",
+      callback: () => this.openOneOnOnePicker()
+    });
+    this.addCommand({
       id: "archive-completed",
       name: "Archive Completed Tasks",
       callback: async () => {
         const result = await this.archiveService.archiveCompleted();
-        if (result.archived === 0) {
-          new import_obsidian26.Notice("No completed tasks to archive.");
+        if (result.archived === 0 && result.skipped === 0) {
+          new import_obsidian32.Notice("No completed tasks to archive.");
         } else {
-          new import_obsidian26.Notice(`Archived ${result.archived} task(s) to ${result.files.length} file(s).`);
+          const parts = [`Archived ${result.archived} task(s) to ${result.files.length} file(s).`];
+          if (result.skipped > 0) {
+            parts.push(`${result.skipped} skipped (source file edited since last scan \u2014 try again).`);
+          }
+          new import_obsidian32.Notice(parts.join(" "));
         }
       }
     });
@@ -8356,7 +10178,7 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
       callback: () => {
         new InsertTaskModal(this.app, async (result) => {
           const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
-          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian26.MarkdownView);
+          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian32.MarkdownView);
           if (activeView == null ? void 0 : activeView.editor) {
             const editor = activeView.editor;
             const cursor = editor.getCursor();
@@ -8365,9 +10187,25 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
             editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
           } else {
             await this.dailyNoteService.addRawTaskLine(block, /* @__PURE__ */ new Date());
-            new import_obsidian26.Notice("Task added to today's daily note");
+            new import_obsidian32.Notice("Task added to today's daily note");
           }
         }, this.settings.workTypes, this.settings.purposes).open();
+      }
+    });
+    this.addCommand({
+      id: "quick-capture-inbox",
+      name: "Quick Capture to Inbox",
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "i" }],
+      callback: () => {
+        new QuickCaptureModal(this.app, async (text) => {
+          const lines = text.split("\n");
+          const first = lines[0];
+          const rest = lines.slice(1).map((l) => `    ${l}`).join("\n");
+          const block = rest ? `- [ ] ${first}
+${rest}` : `- [ ] ${first}`;
+          await this.dailyNoteService.addRawInboxLine(block, /* @__PURE__ */ new Date());
+          new import_obsidian32.Notice("Captured to today's Inbox");
+        }).open();
       }
     });
     this.registerEvent(
@@ -8433,10 +10271,37 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
       await this.scanner.fullScan();
       this.store.setTasks(this.scanner.getAllTasks());
       this.updateStatusBar();
+      await this.autoGenerateTeamPagesIfNeeded();
       this.checkMigration();
       this.checkWeeklyReview();
-      this.checkMonthlyMigration();
     });
+  }
+  /** One-shot: if the user has a populated `teamMembers[]` list from the JIRA
+   *  team-tracking feature but no person pages in `teamFolderPath`, create
+   *  skeleton pages automatically. Idempotent — safe on every startup.
+   *  Skipped when the team folder already contains at least one person page so
+   *  a user who's curated their own layout isn't disturbed. */
+  async autoGenerateTeamPagesIfNeeded() {
+    const members = this.settings.teamMembers;
+    if (!members || members.length === 0)
+      return;
+    if (this.teamMemberService.getAllMembers().length > 0)
+      return;
+    let created = 0;
+    for (const m of members) {
+      if (!m.fullName)
+        continue;
+      try {
+        if (await this.teamMemberService.ensurePageFromSettings(m))
+          created++;
+      } catch (e) {
+      }
+    }
+    if (created > 0) {
+      await this.scanner.fullScan();
+      this.store.setTasks(this.scanner.getAllTasks());
+      new import_obsidian32.Notice(`BuJo: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
+    }
   }
   async activateView(newTab = false) {
     const { workspace } = this.app;
@@ -8466,6 +10331,52 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
     if (leaf)
       workspace.revealLeaf(leaf);
   }
+  async activateTeamDashboard() {
+    const { workspace } = this.app;
+    let leaf = null;
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE_TEAM_DASHBOARD);
+    if (leaves.length > 0) {
+      leaf = leaves[0];
+    } else {
+      leaf = workspace.getLeaf(true);
+      if (leaf)
+        await leaf.setViewState({ type: VIEW_TYPE_TEAM_DASHBOARD, active: true });
+    }
+    if (leaf)
+      workspace.revealLeaf(leaf);
+  }
+  /** Open the JIRA Dashboard with the Team tab pre-selected. Called from the
+   *  Team Overview "JIRA workload" chip on each person card. Uses the sticky-state
+   *  save path so fetched caches aren't wiped. */
+  async activateJiraTeamTab() {
+    if (this.settings.jiraDashboardActiveTab !== "team") {
+      this.settings.jiraDashboardActiveTab = "team";
+      await this.saveData(this.data);
+    }
+    await this.activateJiraDashboard();
+  }
+  /** Open the fuzzy picker for 1:1 start. Separates the "pick" from "start"
+   *  so the same flow is reachable from a keyboard shortcut (no view open)
+   *  as well as from the Team Overview button. Scopes to active members —
+   *  on-leave teammates can still be reached via the per-card button on the
+   *  Team tab if an urgent 1:1 is needed. */
+  openOneOnOnePicker() {
+    const members = this.teamMemberService.getActiveMembers();
+    if (members.length === 0) {
+      new import_obsidian32.Notice("No active team members found. Create a person page under " + this.settings.teamFolderPath + "/.");
+      return;
+    }
+    new OneOnOneModal(this.app, members, async (member) => {
+      try {
+        const file = await this.teamMemberService.startOneOnOne(member, /* @__PURE__ */ new Date());
+        const leaf = this.app.workspace.getLeaf(false);
+        await leaf.openFile(file);
+        this.app.workspace.revealLeaf(leaf);
+      } catch (e) {
+        new import_obsidian32.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
+      }
+    }).open();
+  }
   checkMigration() {
     if (this.settings.migrationPromptOnStartup && this.migrationService.needsMigration()) {
       this.showMigrationModal();
@@ -8473,8 +10384,18 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
   }
   showMigrationModal() {
     const reviewData = this.migrationService.getMorningReviewData();
-    new MigrationModal(this.app, this.migrationService, this.dailyNoteService, this.store, reviewData, (_result) => {
-    }).open();
+    new MigrationModal(
+      this.app,
+      this.migrationService,
+      this.dailyNoteService,
+      this.store,
+      reviewData,
+      (_result) => {
+      },
+      this.teamMemberService,
+      this.sprintTopicService,
+      this.settings
+    ).open();
   }
   updateStatusBar() {
     this.statusBarEl.setText(`${this.store.getPendingCount()} pending`);
@@ -8513,7 +10434,7 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
     await this.saveData(this.data);
   }
   async saveSettings(requiresRescan = true) {
-    var _a, _b;
+    var _a, _b, _c;
     this.data.settings = this.settings;
     await this.saveData(this.data);
     if (requiresRescan) {
@@ -8523,17 +10444,8 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
     }
     (_a = this.jiraService) == null ? void 0 : _a.clearCache();
     (_b = this.jiraDashboardService) == null ? void 0 : _b.clearCache();
+    (_c = this.jiraTeamService) == null ? void 0 : _c.clearCache();
     this.updateStatusBar();
-  }
-  checkMonthlyMigration() {
-    if (this.settings.monthlyMigrationPromptOnStartup && this.monthlyMigrationService.needsMonthlyMigration()) {
-      this.showMonthlyMigrationModal();
-    }
-  }
-  showMonthlyMigrationModal() {
-    const reviewData = this.monthlyMigrationService.getMonthlyReviewData();
-    new MonthlyMigrationModal(this.app, this.monthlyMigrationService, this.store, reviewData, (_result) => {
-    }).open();
   }
   showMonthlyReview() {
     new MonthlyReviewModal(
@@ -8570,6 +10482,7 @@ var TaskBuJoPlugin = class extends import_obsidian26.Plugin {
   onunload() {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_TASK_BUJO);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_TEAM_DASHBOARD);
     this.scanner.destroy();
   }
 };

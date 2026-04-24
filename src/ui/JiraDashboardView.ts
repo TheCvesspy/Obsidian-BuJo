@@ -1,7 +1,8 @@
 import { ItemView, WorkspaceLeaf, debounce, TFile, Menu, Notice, FuzzySuggestModal, App } from 'obsidian';
-import { JiraDashboardIssue, PluginSettings, SprintTopic, Priority } from '../types';
+import { JiraDashboardIssue, PluginSettings, SprintTopic, Priority, TeamMember } from '../types';
 import { VIEW_TYPE_JIRA_DASHBOARD, SEARCH_DEBOUNCE_MS } from '../constants';
 import { JiraDashboardService } from '../services/jiraDashboardService';
+import { JiraTeamService } from '../services/jiraTeamService';
 import { SprintTopicService } from '../services/sprintTopicService';
 import { SprintService } from '../services/sprintService';
 import { SprintTopicModal } from './SprintTopicModal';
@@ -68,9 +69,12 @@ interface SectionContext {
 export class JiraDashboardView extends ItemView {
 	private searchQuery: string = '';
 	private listenerHandle: (() => void) | null = null;
+	private teamListenerHandle: (() => void) | null = null;
 	private contentContainer: HTMLElement | null = null;
 	private headerMetaEl: HTMLElement | null = null;
 	private refreshBtnEl: HTMLButtonElement | null = null;
+	/** Tab bar root — rebuilt on every render so the active-tab class stays in sync. */
+	private tabBarEl: HTMLElement | null = null;
 	private debouncedSearch: (value: string) => void;
 
 	/** Active sections — evaluated in order; each issue appears in at most one
@@ -127,6 +131,11 @@ export class JiraDashboardView extends ItemView {
 		 *  function (or void — the scanner currently exposes no off() API, so we just
 		 *  null out the handle on close). */
 		private onTopicsChanged: (cb: () => void) => void,
+		/** Team service fed by TeamMember settings. When its isEnabled() returns false
+		 *  (toggle off / no members / no JIRA creds), nothing is fetched and the team
+		 *  block is hidden. Subscribed independently of the personal dashboard so one
+		 *  service's error doesn't hide the other's results. */
+		private teamService: JiraTeamService,
 	) {
 		super(leaf);
 		this.debouncedSearch = debounce((value: string) => {
@@ -161,6 +170,9 @@ export class JiraDashboardView extends ItemView {
 		this.listenerHandle = () => this.renderContent();
 		this.dashboardService.on(this.listenerHandle);
 
+		this.teamListenerHandle = () => this.renderContent();
+		this.teamService.on(this.teamListenerHandle);
+
 		// Re-render on topic changes so newly-created or re-linked topics surface
 		// their chip immediately. Scanner has no unsubscribe API, so the closure
 		// no-ops after onClose() nulls contentContainer.
@@ -168,9 +180,12 @@ export class JiraDashboardView extends ItemView {
 			if (this.contentContainer) this.renderContent();
 		});
 
-		// Trigger a fetch on open if enabled and stale
+		// Trigger a fetch on open if enabled and stale (both services independently)
 		if (this.dashboardService.isEnabled() && this.dashboardService.isStale()) {
 			this.dashboardService.refresh();
+		}
+		if (this.teamService.isEnabled() && this.teamService.isStale()) {
+			this.teamService.refresh();
 		}
 
 		this.renderContent();
@@ -181,6 +196,10 @@ export class JiraDashboardView extends ItemView {
 			this.dashboardService.off(this.listenerHandle);
 			this.listenerHandle = null;
 		}
+		if (this.teamListenerHandle) {
+			this.teamService.off(this.teamListenerHandle);
+			this.teamListenerHandle = null;
+		}
 	}
 
 	/** Called by Obsidian when the view becomes visible again (pane focus / tab switch).
@@ -188,6 +207,9 @@ export class JiraDashboardView extends ItemView {
 	onResize(): void {
 		if (this.dashboardService.isEnabled() && this.dashboardService.isStale() && !this.dashboardService.isLoading()) {
 			this.dashboardService.refresh();
+		}
+		if (this.teamService.isEnabled() && this.teamService.isStale() && !this.teamService.isLoading()) {
+			this.teamService.refresh();
 		}
 	}
 
@@ -212,6 +234,12 @@ export class JiraDashboardView extends ItemView {
 			this.dashboardService.refresh();
 		});
 
+		// Tab bar — lets the user switch between personal dashboard and team view
+		// without losing either one's cache. Hidden entirely when team tracking is off
+		// (single-tab case), so the user never sees a vestigial switcher.
+		this.tabBarEl = header.createDiv({ cls: 'task-bujo-jira-dashboard-tabs' });
+		this.renderTabs();
+
 		const searchRow = header.createDiv({ cls: 'task-bujo-jira-dashboard-search-row' });
 		const searchInput = searchRow.createEl('input', {
 			cls: 'task-bujo-jira-dashboard-search',
@@ -221,10 +249,67 @@ export class JiraDashboardView extends ItemView {
 		searchInput.addEventListener('input', () => this.debouncedSearch(searchInput.value));
 	}
 
+	/** Render the two tabs ("My Work" / "Team") and wire click handlers. Called from
+	 *  renderHeader initially and from renderContent whenever the active tab or the
+	 *  team-enabled flag may have changed. */
+	private renderTabs(): void {
+		if (!this.tabBarEl) return;
+		this.tabBarEl.empty();
+
+		const active = this.resolveActiveTab();
+		const teamEnabled = this.teamService.isEnabled();
+
+		// Hide the tab bar entirely when team tracking is off — there's only one
+		// thing to show, so a one-tab bar would be noise.
+		if (!teamEnabled) {
+			this.tabBarEl.addClass('is-hidden');
+			return;
+		}
+		this.tabBarEl.removeClass('is-hidden');
+
+		const mkTab = (id: 'mine' | 'team', label: string) => {
+			const tab = this.tabBarEl!.createDiv({ cls: 'task-bujo-jira-dashboard-tab' });
+			tab.setText(label);
+			if (id === active) tab.addClass('is-active');
+			tab.addEventListener('click', () => this.switchTab(id));
+		};
+		mkTab('mine', 'My Work');
+		mkTab('team', 'Team');
+	}
+
+	/** Read the persisted tab, coercing 'team' → 'mine' when team tracking is off
+	 *  (e.g. toggle flipped off after a previous session left 'team' sticky). */
+	private resolveActiveTab(): 'mine' | 'team' {
+		const s = this.getSettings();
+		const stored = s.jiraDashboardActiveTab ?? 'mine';
+		if (stored === 'team' && !this.teamService.isEnabled()) return 'mine';
+		return stored;
+	}
+
+	private async switchTab(tab: 'mine' | 'team'): Promise<void> {
+		const s = this.getSettings();
+		if (s.jiraDashboardActiveTab === tab) return;
+		s.jiraDashboardActiveTab = tab;
+		// Direct saveData bypass like section-collapse — avoids clearing fetched caches.
+		await this.saveSettings();
+		// Kick a refresh on the newly-active tab's service if its cache is stale.
+		// Cheap: isStale() is false on a fresh cache, so most switches cost nothing.
+		if (tab === 'mine' && this.dashboardService.isEnabled() && this.dashboardService.isStale()) {
+			this.dashboardService.refresh();
+		}
+		if (tab === 'team' && this.teamService.isEnabled() && this.teamService.isStale()) {
+			this.teamService.refresh();
+		}
+		this.renderContent();
+	}
+
 	private renderContent(): void {
 		if (!this.contentContainer) return;
 
 		this.updateHeaderMeta();
+		// Tab bar visibility depends on teamService.isEnabled() — which can flip between
+		// renders when the user toggles the feature in settings. Re-render on every pass.
+		this.renderTabs();
 
 		this.contentContainer.empty();
 
@@ -236,17 +321,29 @@ export class JiraDashboardView extends ItemView {
 			return;
 		}
 
+		const topicIndex = this.buildTopicIndex();
+		const activeTab = this.resolveActiveTab();
+
+		if (activeTab === 'team') {
+			this.renderTeamTab(this.contentContainer, topicIndex);
+		} else {
+			this.renderMineTab(this.contentContainer, topicIndex);
+		}
+	}
+
+	/** The original five personal sections. Extracted so the tab switch can route here
+	 *  without running the team rendering, and vice versa. */
+	private renderMineTab(container: HTMLElement, topicIndex: Map<string, SprintTopic[]>): void {
 		const err = this.dashboardService.getError();
 		if (err) {
-			const errEl = this.contentContainer.createDiv({ cls: 'task-bujo-jira-dashboard-error' });
+			const errEl = container.createDiv({ cls: 'task-bujo-jira-dashboard-error' });
 			errEl.createSpan({ text: `Failed to load dashboard: ${err}` });
 			return;
 		}
 
 		const issues = this.dashboardService.getIssues();
 		if (issues === null) {
-			// Nothing cached yet — loading state
-			this.contentContainer.createDiv({
+			container.createDiv({
 				cls: 'task-bujo-empty',
 				text: this.dashboardService.isLoading() ? 'Loading JIRA issues…' : 'No data yet. Click Refresh.',
 			});
@@ -255,15 +352,47 @@ export class JiraDashboardView extends ItemView {
 
 		const filtered = this.applySearch(issues, this.searchQuery);
 		const buckets = this.buildBuckets(filtered);
-		const topicIndex = this.buildTopicIndex();
 
 		for (const section of this.sections) {
 			const bucket = buckets.get(section.id) ?? [];
 			// Hide empty "Reported by Me" section — reporter-only work is often zero
 			// and an always-visible empty section becomes noise.
 			if (bucket.length === 0 && section.id === 'reported') continue;
-			this.renderSection(this.contentContainer, section, bucket, topicIndex);
+			this.renderSection(container, section, bucket, topicIndex);
 		}
+	}
+
+	/** The Team tab — heatmap + per-person sections. Handles disabled / loading / error
+	 *  states here rather than falling through to renderTeamBlock's "hidden when disabled"
+	 *  semantics, because on a dedicated tab the user expects an explanation, not a blank. */
+	private renderTeamTab(container: HTMLElement, topicIndex: Map<string, SprintTopic[]>): void {
+		if (!this.teamService.isEnabled()) {
+			// Redundant — the tab bar hides "Team" when team tracking is off — but
+			// covers the edge case where teamEnabled flips between render passes.
+			container.createDiv({
+				cls: 'task-bujo-empty',
+				text: 'Team tracking is off. Enable it under Settings → JIRA Integration → Team Members.',
+			});
+			return;
+		}
+
+		const err = this.teamService.getError();
+		if (err) {
+			const errEl = container.createDiv({ cls: 'task-bujo-jira-dashboard-error' });
+			errEl.createSpan({ text: `Failed to load team issues: ${err}` });
+			return;
+		}
+
+		const issues = this.teamService.getIssues();
+		if (issues === null) {
+			container.createDiv({
+				cls: 'task-bujo-empty',
+				text: this.teamService.isLoading() ? 'Loading team issues…' : 'No team data yet. Click Refresh.',
+			});
+			return;
+		}
+
+		this.renderTeamBlock(container, topicIndex);
 	}
 
 	private updateHeaderMeta(): void {
@@ -617,6 +746,7 @@ export class JiraDashboardView extends ItemView {
 				jira: issue.key,
 				priority: mapJiraPriority(issue.priority),
 			},
+			this.getSettings(),
 		);
 		modal.open();
 	}
@@ -644,6 +774,198 @@ export class JiraDashboardView extends ItemView {
 				new Notice(`Failed to link: ${(err as Error).message ?? err}`);
 			}
 		}).open();
+	}
+
+	// ── Team block ────────────────────────────────────────────────
+	//
+	// Two-part rendering driven by JiraTeamService + PluginSettings.teamMembers:
+	//   1. Workload heatmap — one row per active member, segmented bar showing
+	//      blocked / in-progress / open counts. Quick overview of "who's drowning".
+	//   2. Per-person sections — one collapsible section per member with their
+	//      issues, sorted by workload desc so overloaded people surface first.
+	//
+	// Both are driven from the same in-memory `JiraDashboardIssue[]` fetched by
+	// JiraTeamService. The search filter applies to team issues too.
+
+	private renderTeamBlock(container: HTMLElement, topicIndex: Map<string, SprintTopic[]>): void {
+		if (!this.teamService.isEnabled()) return;
+
+		const wrap = container.createDiv({ cls: 'task-bujo-jira-dashboard-team-block' });
+		const header = wrap.createDiv({ cls: 'task-bujo-jira-dashboard-team-header' });
+		header.createSpan({ cls: 'task-bujo-jira-dashboard-team-title', text: 'Team' });
+
+		const teamMeta = header.createSpan({ cls: 'task-bujo-jira-dashboard-team-meta' });
+		const teamErr = this.teamService.getError();
+		if (this.teamService.isLoading()) {
+			teamMeta.setText('Loading team…');
+		} else if (teamErr) {
+			teamMeta.setText(`error: ${teamErr}`);
+			teamMeta.addClass('is-error');
+		} else {
+			const ts = this.teamService.getFetchedAt();
+			if (ts !== null) {
+				const ageSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+				teamMeta.setText(`Refreshed ${this.formatAge(ageSec)} ago${this.teamService.isStale() ? ' · stale' : ''}`);
+			}
+		}
+
+		const teamIssues = this.teamService.getIssues();
+		if (teamIssues === null) {
+			if (!teamErr) {
+				wrap.createDiv({
+					cls: 'task-bujo-empty',
+					text: this.teamService.isLoading() ? 'Loading team issues…' : 'No team data yet.',
+				});
+			}
+			return;
+		}
+
+		const members = this.getSettings().teamMembers.filter(m => m.active);
+		if (members.length === 0) {
+			wrap.createDiv({ cls: 'task-bujo-empty', text: 'No active team members configured.' });
+			return;
+		}
+
+		const filteredTeam = this.applySearch(teamIssues, this.searchQuery);
+		const byMember = this.bucketByMember(filteredTeam, members);
+
+		// Heatmap row — always visible (even when filter hides everyone) so the lead
+		// analyst sees the shape of the team load immediately.
+		this.renderHeatmap(wrap, members, byMember);
+
+		// Per-person sections, sorted by workload desc (total issues)
+		const ordered = [...members]
+			.map(m => ({ member: m, issues: byMember.get(m.email) ?? [] }))
+			.sort((a, b) => b.issues.length - a.issues.length);
+
+		for (const { member, issues } of ordered) {
+			this.renderMemberSection(wrap, member, issues, topicIndex);
+		}
+	}
+
+	/** Assign each team issue to exactly one member bucket. Matching priority:
+	 *    1. Exact email match against assigneeEmail (most reliable — but JIRA Cloud
+	 *       often hides email for privacy).
+	 *    2. Display-name match against fullName (case-insensitive, trimmed).
+	 *  Issues that match no member (unusual — JQL already scoped to team emails)
+	 *  are dropped rather than invented into a bucket. */
+	private bucketByMember(issues: JiraDashboardIssue[], members: TeamMember[]): Map<string, JiraDashboardIssue[]> {
+		const byEmail = new Map<string, TeamMember>();
+		const byName = new Map<string, TeamMember>();
+		for (const m of members) {
+			if (m.email) byEmail.set(m.email.toLowerCase(), m);
+			if (m.fullName) byName.set(m.fullName.toLowerCase().trim(), m);
+		}
+
+		const out = new Map<string, JiraDashboardIssue[]>();
+		for (const m of members) out.set(m.email, []);
+
+		for (const issue of issues) {
+			let member: TeamMember | undefined;
+			if (issue.assigneeEmail) {
+				member = byEmail.get(issue.assigneeEmail.toLowerCase());
+			}
+			if (!member && issue.assignee) {
+				member = byName.get(issue.assignee.toLowerCase().trim());
+			}
+			if (member) out.get(member.email)!.push(issue);
+		}
+
+		// Sort each bucket with the existing cross-section comparator (flagged → priority → due → updated).
+		for (const [, bucket] of out) bucket.sort((a, b) => this.compareIssues(a, b));
+		return out;
+	}
+
+	private renderHeatmap(container: HTMLElement, members: TeamMember[], byMember: Map<string, JiraDashboardIssue[]>): void {
+		const wrap = container.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap' });
+		const title = wrap.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-title' });
+		title.setText('Workload');
+
+		// Max total across all members — drives bar scaling so the busiest member's
+		// bar fills the track and others are proportional. Min width 1 to avoid /0.
+		const rows = members.map(m => {
+			const issues = byMember.get(m.email) ?? [];
+			const blocked = issues.filter(i => i.flagged).length;
+			const inProgress = issues.filter(i => !i.flagged && i.statusCategory === 'indeterminate').length;
+			const open = issues.filter(i => !i.flagged && i.statusCategory !== 'indeterminate' && i.statusCategory !== 'done').length;
+			const done = issues.filter(i => i.statusCategory === 'done').length;
+			return { member: m, blocked, inProgress, open, done, total: blocked + inProgress + open + done };
+		});
+		const maxTotal = Math.max(1, ...rows.map(r => r.total));
+
+		// Sort visually: heaviest at top.
+		rows.sort((a, b) => b.total - a.total);
+
+		for (const r of rows) {
+			const rowEl = wrap.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-row' });
+			rowEl.createSpan({
+				cls: 'task-bujo-jira-dashboard-heatmap-nick',
+				text: r.member.nickname || r.member.fullName || r.member.email,
+				attr: { title: r.member.fullName || r.member.email },
+			});
+
+			// Track with four segments: blocked (red), in-progress (blue), open (grey),
+			// done (green, faded). Segment widths are proportional to r.total / maxTotal.
+			const track = rowEl.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-track' });
+			const fill = track.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-fill' });
+			fill.style.width = `${(r.total / maxTotal) * 100}%`;
+
+			const addSeg = (count: number, cls: string, label: string) => {
+				if (count === 0) return;
+				const seg = fill.createDiv({ cls: `task-bujo-jira-dashboard-heatmap-seg ${cls}` });
+				seg.style.flex = `${count} ${count} 0`;
+				seg.setAttribute('title', `${count} ${label}`);
+			};
+			addSeg(r.blocked, 'is-blocked', 'blocked');
+			addSeg(r.inProgress, 'is-in-progress', 'in progress');
+			addSeg(r.open, 'is-open', 'open');
+			addSeg(r.done, 'is-done', 'done');
+
+			// Compact count summary to the right.
+			const counts = rowEl.createSpan({ cls: 'task-bujo-jira-dashboard-heatmap-counts' });
+			const parts: string[] = [];
+			if (r.blocked) parts.push(`${r.blocked} blocked`);
+			if (r.inProgress) parts.push(`${r.inProgress} in progress`);
+			if (r.open) parts.push(`${r.open} open`);
+			if (r.done) parts.push(`${r.done} done`);
+			counts.setText(parts.length > 0 ? parts.join(' · ') : 'none');
+		}
+	}
+
+	private renderMemberSection(container: HTMLElement, member: TeamMember, issues: JiraDashboardIssue[], topicIndex: Map<string, SprintTopic[]>): void {
+		const settings = this.getSettings();
+		// Member sections share the same sticky-state dict as the personal sections,
+		// keyed by "team:<email>" so they don't collide with section ids like "blocked".
+		const stickyKey = `team:${member.email}`;
+		const collapsed = settings.jiraDashboardCollapsedSections[stickyKey] ?? true;
+
+		const sectionEl = container.createDiv({ cls: 'task-bujo-jira-dashboard-section task-bujo-jira-dashboard-team-section' });
+		if (collapsed) sectionEl.addClass('is-collapsed');
+
+		const header = sectionEl.createDiv({ cls: 'task-bujo-jira-dashboard-section-header' });
+		const chevron = header.createSpan({ cls: 'task-bujo-jira-dashboard-section-chevron', text: collapsed ? '▶' : '▼' });
+		const label = member.fullName || member.nickname || member.email;
+		const suffix = member.nickname && member.nickname !== member.fullName ? ` (${member.nickname})` : '';
+		header.createSpan({ cls: 'task-bujo-jira-dashboard-section-label', text: `${label}${suffix}` });
+		header.createSpan({ cls: 'task-bujo-jira-dashboard-section-count', text: `${issues.length}` });
+
+		header.addEventListener('click', async () => {
+			const cur = sectionEl.hasClass('is-collapsed');
+			sectionEl.toggleClass('is-collapsed', !cur);
+			chevron.setText(!cur ? '▶' : '▼');
+			const s = this.getSettings();
+			s.jiraDashboardCollapsedSections[stickyKey] = !cur;
+			await this.saveSettings();
+		});
+
+		const body = sectionEl.createDiv({ cls: 'task-bujo-jira-dashboard-section-body' });
+		if (issues.length === 0) {
+			body.createDiv({ cls: 'task-bujo-empty task-bujo-jira-dashboard-section-empty', text: 'No issues in scope.' });
+			return;
+		}
+		for (const issue of issues) {
+			this.renderIssueRow(body, issue, topicIndex);
+		}
 	}
 
 	private isOverdue(dueDate: string): boolean {

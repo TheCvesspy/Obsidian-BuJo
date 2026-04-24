@@ -31,7 +31,7 @@ export class DailyNoteService {
 
 		const displayDate = formatDateDisplay(date);
 		const year = date.getFullYear();
-		const template = `# Daily Log — ${displayDate}, ${year}\n\n## Tasks\n\n## Migrated Tasks\n`;
+		const template = `# Daily Log — ${displayDate}, ${year}\n\n## Inbox\n\n## Tasks\n\n## Migrated Tasks\n`;
 
 		const file = await this.vault.create(path, template);
 		return file;
@@ -40,38 +40,57 @@ export class DailyNoteService {
 	/** Add a task to the daily note under ## Tasks heading */
 	async addTaskToDaily(task: TaskItem, date: Date): Promise<void> {
 		const file = await this.getOrCreateDailyNote(date);
-		const content = await this.vault.read(file);
 		const taskLine = this.buildTaskLine(task);
-		const newContent = this.insertAfterHeading(content, '## Tasks', taskLine);
-		await this.vault.modify(file, newContent);
+		await this.vault.process(file, content =>
+			this.insertAfterHeading(content, '## Tasks', taskLine),
+		);
 	}
 
 	/** Add a migrated task to the daily note under ## Migrated Tasks heading */
 	async addMigratedTask(task: TaskItem, date: Date): Promise<void> {
 		const file = await this.getOrCreateDailyNote(date);
-		const content = await this.vault.read(file);
 		const taskLine = this.buildTaskLine(task);
-		const newContent = this.insertAfterHeading(content, '## Migrated Tasks', taskLine);
-		await this.vault.modify(file, newContent);
+		await this.vault.process(file, content =>
+			this.insertAfterHeading(content, '## Migrated Tasks', taskLine),
+		);
 	}
 
 	/** Add a migrated parent task with its children as a block under ## Migrated Tasks */
 	async addMigratedTaskWithChildren(parent: TaskItem, children: TaskItem[], date: Date): Promise<void> {
 		const file = await this.getOrCreateDailyNote(date);
-		const content = await this.vault.read(file);
 		const parentLine = this.buildTaskLine(parent);
 		const childLines = children.map(child => '\t' + this.buildChildTaskLine(child));
 		const block = [parentLine, ...childLines].join('\n');
-		const newContent = this.insertAfterHeading(content, '## Migrated Tasks', block);
-		await this.vault.modify(file, newContent);
+		await this.vault.process(file, content =>
+			this.insertAfterHeading(content, '## Migrated Tasks', block),
+		);
 	}
 
 	/** Add a raw task line to the daily note under ## Tasks heading */
 	async addRawTaskLine(taskLine: string, date: Date): Promise<void> {
 		const file = await this.getOrCreateDailyNote(date);
-		const content = await this.vault.read(file);
-		const newContent = this.insertAfterHeading(content, '## Tasks', taskLine);
-		await this.vault.modify(file, newContent);
+		await this.vault.process(file, content =>
+			this.insertAfterHeading(content, '## Tasks', taskLine),
+		);
+	}
+
+	/** Add a raw task line to the daily note under ## Inbox heading.
+	 *  If the heading is missing, it's created just above ## Tasks (or at the end). */
+	async addRawInboxLine(taskLine: string, date: Date): Promise<void> {
+		const file = await this.getOrCreateDailyNote(date);
+		await this.vault.process(file, content => {
+			let updated = content;
+			if (updated.indexOf('## Inbox') === -1) {
+				const tasksIdx = updated.indexOf('## Tasks');
+				const block = '## Inbox\n\n';
+				if (tasksIdx !== -1) {
+					updated = updated.slice(0, tasksIdx) + block + updated.slice(tasksIdx);
+				} else {
+					updated = updated.trimEnd() + '\n\n' + block;
+				}
+			}
+			return this.insertAfterHeading(updated, '## Inbox', taskLine);
+		});
 	}
 
 	/** Insert a line after a heading, or append to end if heading not found */

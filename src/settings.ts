@@ -12,12 +12,16 @@ import { getEffectiveState } from './utils/pathUtils';
 import { SETTINGS_DEBOUNCE_MS } from './constants';
 import { JiraService } from './services/jiraService';
 import { JiraDashboardService } from './services/jiraDashboardService';
+import { JiraTeamService } from './services/jiraTeamService';
+import { TeamMemberService } from './services/teamMemberService';
 
 interface TaskBuJoPlugin {
     settings: PluginSettings;
     saveSettings(requiresRescan?: boolean): Promise<void>;
     jiraService: JiraService;
     jiraDashboardService: JiraDashboardService;
+    jiraTeamService: JiraTeamService;
+    teamMemberService: TeamMemberService;
 }
 
 /** Recursive folder tree node */
@@ -109,6 +113,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                         [BuJoViewMode.Calendar]: 'Calendar',
                         [BuJoViewMode.Sprint]: 'Sprint',
                         [BuJoViewMode.Topics]: 'Topics',
+                        [BuJoViewMode.Inbox]: 'Inbox',
                         [BuJoViewMode.Overdue]: 'Overdue',
                         [BuJoViewMode.Overview]: 'Overview',
                         [BuJoViewMode.Analytics]: 'Analytics',
@@ -156,19 +161,31 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
-            .setName('Goal headings')
-            .setDesc('Comma-separated heading names that identify goal sections.')
+            .setName('Inbox headings')
+            .setDesc('Comma-separated heading names that identify quick-capture inbox sections.')
             .addText(text =>
                 text
-                    .setPlaceholder('Goals')
-                    .setValue(this.plugin.settings.goalHeadings.join(', '))
+                    .setPlaceholder('Inbox, Triage')
+                    .setValue(this.plugin.settings.inboxHeadings.join(', '))
                     .onChange(value => {
-                        this.plugin.settings.goalHeadings = value
+                        this.plugin.settings.inboxHeadings = value
                             .split(',')
                             .map(s => s.trim())
                             .filter(s => s.length > 0);
                         this.debouncedSave(true);
                     })
+            );
+
+        new Setting(containerEl)
+            .setName('Default quick-add target')
+            .setDesc('Where the Add Task bar writes by default: under ## Tasks or ## Inbox.')
+            .addDropdown(dropdown => dropdown
+                .addOptions({ tasks: 'Tasks', inbox: 'Inbox' })
+                .setValue(this.plugin.settings.defaultQuickAddTarget)
+                .onChange(value => {
+                    this.plugin.settings.defaultQuickAddTarget = value as 'tasks' | 'inbox';
+                    this.debouncedSave(false);
+                })
             );
 
         // ── BuJo ──────────────────────────────────────────────────
@@ -209,18 +226,6 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                     .onChange(value => {
                         this.plugin.settings.monthlyNotePath = value.trim();
                         this.debouncedSave(false);
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Monthly migration prompt on startup')
-            .setDesc('Prompt to migrate incomplete goals at the start of each month.')
-            .addToggle(toggle =>
-                toggle
-                    .setValue(this.plugin.settings.monthlyMigrationPromptOnStartup)
-                    .onChange(async value => {
-                        this.plugin.settings.monthlyMigrationPromptOnStartup = value;
-                        await this.plugin.saveSettings(false);
                     })
             );
 
@@ -326,6 +331,22 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                         const parsed = parseInt(value, 10);
                         if (!isNaN(parsed) && parsed >= 0) {
                             this.plugin.settings.urgencyThresholdDays = parsed;
+                            this.debouncedSave(false);
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Nudge threshold (days)')
+            .setDesc('Topics waiting on someone show up in the morning review after this many days without a nudge.')
+            .addText(text =>
+                text
+                    .setPlaceholder('7')
+                    .setValue(String(this.plugin.settings.nudgeThresholdDays))
+                    .onChange(value => {
+                        const parsed = parseInt(value, 10);
+                        if (!isNaN(parsed) && parsed >= 0) {
+                            this.plugin.settings.nudgeThresholdDays = parsed;
                             this.debouncedSave(false);
                         }
                     })
@@ -535,6 +556,199 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                             }
                         })
                 );
+
+            // ── Team Members sub-section ───────────────────────────
+            // Lead-analyst feature: configured list of team members whose JIRA work
+            // gets surfaced on the dashboard as a workload heatmap + per-person sections.
+            // Email is the identity used in `assignee = "email"` JQL clauses.
+            containerEl.createEl('h3', { text: 'Team Members' });
+            containerEl.createEl('p', {
+                text: 'Configure your team so the JIRA Dashboard can show a workload heatmap and per-person sections. Email is used as the JIRA identity. Toggle "Show team section" off to hide the block without losing the list.',
+                cls: 'setting-item-description',
+            });
+
+            new Setting(containerEl)
+                .setName('Show team section on JIRA Dashboard')
+                .setDesc('When on, the dashboard runs a second JQL scoped to the team and renders a workload heatmap plus one section per active member.')
+                .addToggle(toggle =>
+                    toggle
+                        .setValue(this.plugin.settings.jiraTeamEnabled)
+                        .onChange(async value => {
+                            this.plugin.settings.jiraTeamEnabled = value;
+                            await this.plugin.saveSettings(false);
+                        })
+                );
+
+            this.renderTeamMembersList(containerEl);
+        }
+
+        // ── Team Management ──────────────────────────────────────────
+        // Person pages (one .md per teammate) + 1:1 session notes. Independent of
+        // JIRA — this section appears even when JIRA is off.
+        this.renderTeamManagementSection(containerEl);
+    }
+
+    /** Team-management section: person-page folder + one-shot generator from
+     *  the existing `teamMembers[]` list. */
+    private renderTeamManagementSection(containerEl: HTMLElement): void {
+        containerEl.createEl('h2', { text: 'Team Management' });
+        containerEl.createEl('p', {
+            text: 'One folder per teammate with a canonical person page and a 1on1/ subfolder for dated 1:1 session notes. The Team tab in the BuJo view surfaces cadence signals so you don\'t miss 1:1s.',
+            cls: 'setting-item-description',
+        });
+
+        new Setting(containerEl)
+            .setName('Team folder path')
+            .setDesc('Where person pages live. Each teammate gets a subfolder: {folder}/Alice Smith/Alice Smith.md.')
+            .addText(text =>
+                text
+                    .setPlaceholder('BuJo/Team')
+                    .setValue(this.plugin.settings.teamFolderPath)
+                    .onChange(value => {
+                        this.plugin.settings.teamFolderPath = value.trim() || 'BuJo/Team';
+                        this.debouncedSave(true);
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Generate person pages from team members')
+            .setDesc('For each entry in the team-member list above, create a skeleton person page (if it doesn\'t already exist). Safe to run repeatedly — existing pages are never overwritten.')
+            .addButton(btn =>
+                btn
+                    .setButtonText('Generate')
+                    .onClick(async () => {
+                        btn.setDisabled(true);
+                        btn.setButtonText('Generating…');
+                        try {
+                            let created = 0;
+                            let skipped = 0;
+                            for (const member of this.plugin.settings.teamMembers) {
+                                if (!member.fullName) { skipped++; continue; }
+                                const made = await this.plugin.teamMemberService.ensurePageFromSettings(member);
+                                made ? created++ : skipped++;
+                            }
+                            if (created === 0) {
+                                new Notice(`No new pages created — all ${skipped} member(s) already have pages.`);
+                            } else {
+                                new Notice(`Created ${created} person page(s). Open the Team tab in BuJo view to see them.`);
+                            }
+                        } catch (e) {
+                            new Notice(`Generation failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+                        } finally {
+                            btn.setDisabled(false);
+                            btn.setButtonText('Generate');
+                        }
+                    })
+            );
+    }
+
+    /** Render the editable team member list. Rebuilds the whole block on any change
+     *  because Obsidian Settings don't trivially support in-place row edits. Cheap
+     *  given typical team sizes (5–15 people). */
+    private renderTeamMembersList(containerEl: HTMLElement): void {
+        const listWrap = containerEl.createDiv({ cls: 'task-bujo-team-members-list' });
+        const rerender = () => {
+            listWrap.empty();
+            this.renderTeamMembersRows(listWrap);
+        };
+        this.renderTeamMembersRows(listWrap);
+
+        new Setting(containerEl)
+            .addButton(btn =>
+                btn
+                    .setButtonText('+ Add team member')
+                    .setCta()
+                    .onClick(async () => {
+                        this.plugin.settings.teamMembers.push({
+                            fullName: '',
+                            nickname: '',
+                            email: '',
+                            active: true,
+                        });
+                        await this.plugin.saveSettings(false);
+                        rerender();
+                    })
+            );
+    }
+
+    private renderTeamMembersRows(listEl: HTMLElement): void {
+        const members = this.plugin.settings.teamMembers;
+        if (members.length === 0) {
+            listEl.createDiv({
+                cls: 'task-bujo-empty',
+                text: 'No team members configured yet. Click "+ Add team member" to start.',
+            });
+            return;
+        }
+
+        for (let i = 0; i < members.length; i++) {
+            const row = listEl.createDiv({ cls: 'task-bujo-team-member-row' });
+
+            // Row 1: full name + nickname + email (all in one row for density)
+            const inputsRow = row.createDiv({ cls: 'task-bujo-team-member-inputs' });
+
+            const nameInput = inputsRow.createEl('input', {
+                cls: 'task-bujo-team-member-input',
+                type: 'text',
+                attr: { placeholder: 'Full name', value: members[i].fullName },
+            });
+            nameInput.addEventListener('change', async () => {
+                this.plugin.settings.teamMembers[i].fullName = nameInput.value.trim();
+                await this.plugin.saveSettings(false);
+            });
+
+            const nickInput = inputsRow.createEl('input', {
+                cls: 'task-bujo-team-member-input task-bujo-team-member-input-nick',
+                type: 'text',
+                attr: { placeholder: 'Nickname', value: members[i].nickname },
+            });
+            nickInput.addEventListener('change', async () => {
+                this.plugin.settings.teamMembers[i].nickname = nickInput.value.trim();
+                await this.plugin.saveSettings(false);
+            });
+
+            const emailInput = inputsRow.createEl('input', {
+                cls: 'task-bujo-team-member-input task-bujo-team-member-input-email',
+                type: 'email',
+                attr: { placeholder: 'email@domain.com', value: members[i].email },
+            });
+            emailInput.addEventListener('change', async () => {
+                const raw = emailInput.value.trim();
+                // Permissive validation: warn if missing @ but save anyway so typos
+                // don't nuke the row. The team service filters invalid emails at fetch time.
+                if (raw && !raw.includes('@')) {
+                    new Notice('Email looks malformed — expected "name@domain.com".');
+                }
+                this.plugin.settings.teamMembers[i].email = raw;
+                await this.plugin.saveSettings(false);
+            });
+
+            // Row 2: active toggle + remove button
+            const controlsRow = row.createDiv({ cls: 'task-bujo-team-member-controls' });
+
+            const activeLabel = controlsRow.createEl('label', { cls: 'task-bujo-team-member-active' });
+            const activeCheck = activeLabel.createEl('input', {
+                type: 'checkbox',
+                attr: members[i].active ? { checked: 'true' } : {},
+            });
+            activeCheck.checked = members[i].active;
+            activeLabel.createSpan({ text: ' Active' });
+            activeCheck.addEventListener('change', async () => {
+                this.plugin.settings.teamMembers[i].active = activeCheck.checked;
+                await this.plugin.saveSettings(false);
+            });
+
+            const removeBtn = controlsRow.createEl('button', {
+                cls: 'task-bujo-team-member-remove',
+                text: 'Remove',
+            });
+            removeBtn.addEventListener('click', async () => {
+                this.plugin.settings.teamMembers.splice(i, 1);
+                await this.plugin.saveSettings(false);
+                // Full re-render to keep indices correct
+                listEl.empty();
+                this.renderTeamMembersRows(listEl);
+            });
         }
     }
 

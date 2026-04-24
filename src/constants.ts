@@ -1,5 +1,6 @@
 export const VIEW_TYPE_TASK_BUJO = 'task-bujo-view';
 export const VIEW_TYPE_JIRA_DASHBOARD = 'task-bujo-jira-dashboard';
+export const VIEW_TYPE_TEAM_DASHBOARD = 'task-bujo-team-dashboard';
 
 /** Regex to match a checkbox line: - [ ] text, - [x] text, - [>] text, etc. */
 export const CHECKBOX_REGEX = /^(\s*)-\s*\[([ x><!-])\]\s+(.*)$/i;

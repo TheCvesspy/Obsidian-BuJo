@@ -1,9 +1,9 @@
 {
 	"id": "obsidian-task-bujo",
 	"name": "BuJo",
-	"version": "1.0.0",
+	"version": "2.0.0",
 	"minAppVersion": "1.0.0",
 	"description": "Aggregate tasks and open points from across your vault with Bullet Journal planning — daily/weekly logs, sprints, and migration workflows.",
-	"author": "Obsidian Task BuJo",
+	"author": "Quill of the Weavers",
 	"isDesktopOnly": false
 }

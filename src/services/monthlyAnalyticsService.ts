@@ -9,9 +9,6 @@ export interface MonthlyStats {
 	totalMigrated: number;
 	totalCancelled: number;
 	completionRate: number;
-	goalsTotal: number;
-	goalsCompleted: number;
-	goalCompletionRate: number;
 }
 
 export class MonthlyAnalyticsService {
@@ -50,8 +47,6 @@ export class MonthlyAnalyticsService {
 			totalCompleted: stats.totalCompleted,
 			totalMigrated: stats.totalMigrated,
 			totalCancelled: stats.totalCancelled,
-			goalsTotal: stats.goalsTotal,
-			goalsCompleted: stats.goalsCompleted,
 			completionRate: stats.completionRate,
 			reflections,
 			savedAt: new Date().toISOString(),
@@ -111,14 +106,7 @@ export class MonthlyAnalyticsService {
 			}
 		}
 
-		// Goal stats from live data
-		const monthlyNotePath = `${settings.monthlyNotePath}/${monthId}.md`;
-		const goals = this.store.getGoalsForPath(monthlyNotePath);
-		const goalsTotal = goals.length;
-		const goalsCompleted = goals.filter(g => g.status === TaskStatus.Done).length;
-
 		const completionRate = totalPlanned > 0 ? (totalCompleted / totalPlanned) * 100 : 0;
-		const goalCompletionRate = goalsTotal > 0 ? (goalsCompleted / goalsTotal) * 100 : 0;
 
 		return {
 			monthId,
@@ -127,9 +115,6 @@ export class MonthlyAnalyticsService {
 			totalMigrated,
 			totalCancelled,
 			completionRate,
-			goalsTotal,
-			goalsCompleted,
-			goalCompletionRate,
 		};
 	}
 

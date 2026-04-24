@@ -3,39 +3,32 @@ import { TaskItem, TaskStatus } from '../types';
 import { CHECKBOX_REGEX, DUE_DATE_REGEX, SYNC_CLEAR_DELAY_MS } from '../constants';
 
 export class TaskWriter {
-    private syncing = false;
+    // Depth counter (not boolean): overlapping syncs can't prematurely clear each other.
+    // Decrement is deferred via setTimeout(SYNC_CLEAR_DELAY_MS) so the vault modify event
+    // and the scanner's ~300ms debounced scan both still see isSyncing=true.
+    private syncDepth = 0;
 
     constructor(private vault: Vault) {}
 
     /** Whether a sync write is in progress (used to avoid re-scan loops) */
     get isSyncing(): boolean {
-        return this.syncing;
+        return this.syncDepth > 0;
     }
 
     /** Update the status checkbox of a task in its source file */
     async setStatus(task: TaskItem, newStatus: TaskStatus): Promise<boolean> {
-        const line = this.findTaskLine(task, await this.readLines(task));
-        if (line === null) return false;
-
-        const { lines, index, file } = line;
-        lines[index] = lines[index].replace(/\[([ x><!-])\]/i, `[${newStatus}]`);
-        await this.vault.modify(file, lines.join('\n'));
-        return true;
+        return this.processTaskLine(task, line =>
+            line.replace(/\[([ x><!-])\]/i, `[${newStatus}]`),
+        );
     }
 
     /** Update the @due date of a task in its source file */
     async updateDueDate(task: TaskItem, newDateRaw: string): Promise<boolean> {
-        const line = this.findTaskLine(task, await this.readLines(task));
-        if (line === null) return false;
-
-        const { lines, index, file } = line;
-        if (DUE_DATE_REGEX.test(lines[index])) {
-            lines[index] = lines[index].replace(DUE_DATE_REGEX, `@due ${newDateRaw}`);
-        } else {
-            lines[index] = `${lines[index]} @due ${newDateRaw}`;
-        }
-        await this.vault.modify(file, lines.join('\n'));
-        return true;
+        return this.processTaskLine(task, line =>
+            DUE_DATE_REGEX.test(line)
+                ? line.replace(DUE_DATE_REGEX, `@due ${newDateRaw}`)
+                : `${line} @due ${newDateRaw}`,
+        );
     }
 
     /**
@@ -51,40 +44,41 @@ export class TaskWriter {
         const originalFile = this.resolveWikiLink(task.migratedFrom);
         if (!originalFile) return false;
 
-        const content = await this.vault.read(originalFile);
-        const lines = content.split('\n');
-
-        // Find the original task: migrated status [>] with matching text
         const cleanText = task.text.trim();
         let found = false;
 
-        for (let i = 0; i < lines.length; i++) {
-            const match = lines[i].match(CHECKBOX_REGEX);
-            if (!match) continue;
+        this.syncDepth++;
+        try {
+            await this.vault.process(originalFile, content => {
+                const lines = content.split('\n');
 
-            const statusChar = match[2];
-            if (statusChar !== '>') continue;
+                // Find the original task: migrated status [>] with matching text
+                for (let i = 0; i < lines.length; i++) {
+                    const match = lines[i].match(CHECKBOX_REGEX);
+                    if (!match) continue;
+                    if (match[2] !== '>') continue;
 
-            // Extract text portion and compare (strip tags for comparison)
-            const lineText = match[3]
-                .replace(/#priority\/\w+/g, '')
-                .replace(/@due\s+\S+/g, '')
-                .replace(/#type\/\w+/g, '')
-                .replace(/\s{2,}/g, ' ')
-                .trim();
+                    // Extract text portion and compare (strip tags for comparison)
+                    const lineText = match[3]
+                        .replace(/#priority\/\w+/g, '')
+                        .replace(/@due\s+\S+/g, '')
+                        .replace(/#type\/\w+/g, '')
+                        .replace(/\s{2,}/g, ' ')
+                        .trim();
 
-            if (lineText === cleanText) {
-                this.syncing = true;
-                try {
-                    lines[i] = lines[i].replace(/\[([ x><!-])\]/i, `[${newStatus}]`);
-                    await this.vault.modify(originalFile, lines.join('\n'));
-                    found = true;
-                } finally {
-                    // Small delay before clearing flag so the modify event can be skipped
-                    setTimeout(() => { this.syncing = false; }, SYNC_CLEAR_DELAY_MS);
+                    if (lineText === cleanText) {
+                        lines[i] = lines[i].replace(/\[([ x><!-])\]/i, `[${newStatus}]`);
+                        found = true;
+                        break;
+                    }
                 }
-                break;
-            }
+
+                return found ? lines.join('\n') : content;
+            });
+        } finally {
+            // Deferred decrement so the ensuing modify event + scan debounce
+            // still observe isSyncing=true and skip the re-scan.
+            setTimeout(() => { this.syncDepth--; }, SYNC_CLEAR_DELAY_MS);
         }
 
         return found;
@@ -108,21 +102,21 @@ export class TaskWriter {
             const abstract = this.vault.getAbstractFileByPath(path);
             if (!(abstract instanceof TFile)) continue;
 
-            const content = await this.vault.read(abstract);
-            const lines = content.split('\n');
-
-            for (const task of fileTasks) {
-                const result = this.findTaskLine(task, { file: abstract, lines });
-                if (result) {
-                    lines[result.index] = lines[result.index].replace(
+            await this.vault.process(abstract, content => {
+                const lines = content.split('\n');
+                let mutated = false;
+                for (const task of fileTasks) {
+                    const index = this.locateTaskLine(task, lines);
+                    if (index === -1) continue;
+                    lines[index] = lines[index].replace(
                         /\[([ x><!-])\]/i,
-                        `[${newStatus}]`
+                        `[${newStatus}]`,
                     );
                     count++;
+                    mutated = true;
                 }
-            }
-
-            await this.vault.modify(abstract, lines.join('\n'));
+                return mutated ? lines.join('\n') : content;
+            });
         }
         return count;
     }
@@ -137,29 +131,38 @@ export class TaskWriter {
         return allFiles.find(f => f.basename === name) ?? null;
     }
 
-    private async readLines(task: TaskItem): Promise<{ file: TFile; lines: string[] } | null> {
-        const abstract = this.vault.getAbstractFileByPath(task.sourcePath);
-        if (!(abstract instanceof TFile)) return null;
+    /** Apply a transform to a task's line inside a single atomic vault.process call. */
+    private async processTaskLine(
+        task: TaskItem,
+        transform: (line: string) => string,
+    ): Promise<boolean> {
+        const file = this.vault.getAbstractFileByPath(task.sourcePath);
+        if (!(file instanceof TFile)) return false;
 
-        const content = await this.vault.read(abstract);
-        return { file: abstract, lines: content.split('\n') };
+        let matched = false;
+        await this.vault.process(file, content => {
+            const lines = content.split('\n');
+            const index = this.locateTaskLine(task, lines);
+            if (index === -1) return content;
+            const updated = transform(lines[index]);
+            if (updated === lines[index]) return content;
+            lines[index] = updated;
+            matched = true;
+            return lines.join('\n');
+        });
+        return matched;
     }
 
-    private findTaskLine(
-        task: TaskItem,
-        result: { file: TFile; lines: string[] } | null
-    ): { file: TFile; lines: string[]; index: number } | null {
-        if (!result) return null;
-        const { file, lines } = result;
-
-        // Try the recorded line number first
-        if (task.lineNumber >= 0 && task.lineNumber < lines.length && lines[task.lineNumber] === task.rawLine) {
-            return { file, lines, index: task.lineNumber };
+    /** Locate a task's line in freshly-read content. Prefers the recorded
+     *  lineNumber when rawLine still matches; falls back to exact-line search. */
+    private locateTaskLine(task: TaskItem, lines: string[]): number {
+        if (
+            task.lineNumber >= 0 &&
+            task.lineNumber < lines.length &&
+            lines[task.lineNumber] === task.rawLine
+        ) {
+            return task.lineNumber;
         }
-
-        // Fallback: search all lines for an exact match
-        const index = lines.indexOf(task.rawLine);
-        if (index === -1) return null;
-        return { file, lines, index };
+        return lines.indexOf(task.rawLine);
     }
 }

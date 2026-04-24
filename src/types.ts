@@ -11,7 +11,7 @@ export enum TaskStatus {
 export enum ItemCategory {
 	Task = 'task',
 	OpenPoint = 'openpoint',
-	Goal = 'goal',
+	Inbox = 'inbox',
 	Uncategorized = 'uncategorized',
 }
 
@@ -37,7 +37,50 @@ export enum BuJoViewMode {
 	Topics = 'topics',
 	Overview = 'overview',
 	Overdue = 'overdue',
+	Inbox = 'inbox',
 	Analytics = 'analytics',
+}
+
+// ─── Team management types ─────────────────────────────────────────
+/** Person-page lifecycle state. Drives visibility on the overview and the
+ *  cadence-overdue signal. `on_leave` suspends the 1:1 cadence; `departed`
+ *  hides the person entirely but preserves the folder for history. */
+export type TeamMemberStatus = 'active' | 'on_leave' | 'departed';
+
+/** How often a 1:1 should happen. `skip` disables the cadence entirely. */
+export type OneOnOneCadence = 'weekly' | 'biweekly' | 'monthly' | 'skip';
+
+/** A person page parsed from {teamFolderPath}/{Name}/{Name}.md. `lastOneOnOne`
+ *  is derived from `1on1/*.md` filenames, not stored in frontmatter. */
+export interface TeamMemberPage {
+	/** Canonical .md file path */
+	filePath: string;
+	/** Containing folder (the person's folder) */
+	folderPath: string;
+	/** Display name (folder basename) */
+	name: string;
+	status: TeamMemberStatus;
+	role: string | null;
+	email: string | null;
+	/** Date parsed from frontmatter `start_date` (YYYY-MM-DD). */
+	startDate: Date | null;
+	cadence: OneOnOneCadence;
+	/** JIRA identity (usually email). Used to cross-link to the JIRA Team tab. */
+	jiraIdentity: string | null;
+	/** Max ISO date across child `1on1/*.md` filenames. Null when no sessions yet. */
+	lastOneOnOne: Date | null;
+	/** Paths of session files belonging to this person (under `1on1/`). */
+	sessionPaths: string[];
+}
+
+/** A 1:1 session file at {memberFolder}/1on1/YYYY-MM-DD.md. The scanner stores
+ *  only the path + derived date — the body is not parsed. */
+export interface OneOnOneSession {
+	filePath: string;
+	/** The parent person folder (everything before `/1on1/`). */
+	memberFolderPath: string;
+	/** Date parsed from the filename, or null if filename isn't YYYY-MM-DD. */
+	sessionDate: Date | null;
 }
 
 export interface TaskItem {
@@ -133,6 +176,17 @@ export interface SprintTopic {
 	 *  Persists through backlog moves and archives — used for sprint-history tracking.
 	 *  Stored in frontmatter as a comma-separated string. */
 	sprintHistory: string[];
+	/** Email of the assigned team member (matches `TeamMember.email`). Null when unassigned. */
+	assignee: string | null;
+	/** Who we're waiting on. Either a team member email (resolves via settings.teamMembers)
+	 *  or free text (e.g. "Legal", "Vendor X"). Null when not waiting on anyone. */
+	waitingOn: string | null;
+	/** ISO YYYY-MM-DD of the last nudge/follow-up. Null when never nudged or not waiting. */
+	lastNudged: string | null;
+	/** External reference links (Confluence pages, Figma files, SAP transactions, etc.).
+	 *  Empty array when none. Stored in frontmatter as a folded scalar of `label | url`
+	 *  lines. Distinct from `jira` (issue keys) and `linkedPages` (Obsidian wiki-links). */
+	refs: Array<{ label: string; url: string }>;
 }
 
 /** Decision for a single topic when closing a sprint */
@@ -172,6 +226,11 @@ export interface PluginSettings {
 	taskHeadings: string[];
 	/** Heading names that classify items as Open Points (case-insensitive) */
 	openPointHeadings: string[];
+	/** Heading names that classify items as Inbox (case-insensitive).
+	 *  Inbox items are the "drop zone" for quick-capture stuff that needs triage later. */
+	inboxHeadings: string[];
+	/** Where AddTaskBar writes quick-added tasks by default: under `## Tasks` or `## Inbox`. */
+	defaultQuickAddTarget: 'tasks' | 'inbox';
 	/** Configurable work type categories */
 	workTypes: TagCategory[];
 	/** Configurable purpose categories */
@@ -180,10 +239,6 @@ export interface PluginSettings {
 	weekStartDay: number;
 	/** Folder path for monthly log notes */
 	monthlyNotePath: string;
-	/** Show monthly migration prompt on startup at month boundaries */
-	monthlyMigrationPromptOnStartup: boolean;
-	/** Heading names that classify items as Goals (case-insensitive) */
-	goalHeadings: string[];
 	/** Folder path for sprint topic files */
 	sprintTopicsPath: string;
 	/** Only count work days (Mon-Fri) for sprint duration and remaining days */
@@ -194,6 +249,12 @@ export interface PluginSettings {
 	archiveGroupBy: 'month' | 'source';
 	/** Number of days before due date to consider a task "urgent" in Eisenhower view */
 	urgencyThresholdDays: number;
+	/** Number of days after `lastNudged` before a waiting-on topic is shown in the
+	 *  morning migration modal as "stale". Default 7. */
+	nudgeThresholdDays: number;
+	/** Folder path for team member person pages. Each person lives in its own subfolder:
+	 *  `{teamFolderPath}/Alice Smith/Alice Smith.md`, with 1:1s under `1on1/YYYY-MM-DD.md`. */
+	teamFolderPath: string;
 
 	// ─── JIRA Integration Module ──────────────────────────────────
 	// All JIRA-related behavior is gated by jiraEnabled. When false,
@@ -220,6 +281,34 @@ export interface PluginSettings {
 	jiraSprintFieldId: string;
 	/** Sticky collapsed state for dashboard sections. Keys are section IDs, value = collapsed. */
 	jiraDashboardCollapsedSections: Record<string, boolean>;
+
+	// ─── Team tracking (lead-analyst mode) ────────────────────────
+	// Configured list of team members. Email is the identity key used in team-scoped
+	// JQL (`assignee in (...)`). When jiraTeamEnabled is true AND at least one active
+	// member is configured, the JIRA Dashboard renders a workload heatmap and one
+	// collapsible section per person below the personal sections.
+
+	/** Master switch for the team block on the JIRA Dashboard. Off by default. */
+	jiraTeamEnabled: boolean;
+	/** List of team members. Order is not meaningful — the dashboard sorts by workload. */
+	teamMembers: TeamMember[];
+	/** Which JIRA Dashboard tab is active. Sticky so a relaunch lands back on the
+	 *  last-used view. 'team' is silently coerced to 'mine' when team tracking is off. */
+	jiraDashboardActiveTab: 'mine' | 'team';
+}
+
+/** A configured team member. Email is the JIRA identity (used in `assignee = "email"`
+ *  JQL clauses). Nickname is a short display label used in UI chips and bar segments. */
+export interface TeamMember {
+	/** Full display name, e.g. "Tomáš Nováček" */
+	fullName: string;
+	/** Short label shown in heatmap bars and section headers, e.g. "Tom" */
+	nickname: string;
+	/** Atlassian account email — used as the JIRA identity key */
+	email: string;
+	/** Tombstone flag. When false the member is hidden from dashboard but preserved
+	 *  in the list (so historical tickets still match if we ever join back on email). */
+	active: boolean;
 }
 
 /** A richer JIRA issue shape fetched by JiraDashboardService. Carries the fields
@@ -236,6 +325,13 @@ export interface JiraDashboardIssue {
 	/** Priority icon URL from JIRA, if present. */
 	priorityIconUrl: string | null;
 	assignee: string | null;
+	/** Assignee's email address from JIRA, when the tenant exposes it. Used to bucket
+	 *  issues into per-team-member sections by matching against `TeamMember.email`.
+	 *  Many Cloud instances hide this by default (GDPR) — fall back to accountId. */
+	assigneeEmail: string | null;
+	/** Atlassian account ID for the assignee. Always present when there's an assignee
+	 *  (even when emailAddress is hidden). Future JQL upgrades can target this directly. */
+	assigneeAccountId: string | null;
 	reporter: string | null;
 	/** ISO YYYY-MM-DD, or null if unset. */
 	dueDate: string | null;
@@ -306,17 +402,19 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	migrationPromptOnStartup: true,
 	taskHeadings: ['Tasks', 'TODO', 'Action Items'],
 	openPointHeadings: ['Open Points', 'Questions', 'Discussion Points'],
+	inboxHeadings: ['Inbox', 'Triage'],
+	defaultQuickAddTarget: 'tasks',
 	workTypes: DEFAULT_WORK_TYPES,
 	purposes: DEFAULT_PURPOSES,
 	weekStartDay: 1,
 	monthlyNotePath: 'BuJo/Monthly',
-	monthlyMigrationPromptOnStartup: true,
-	goalHeadings: ['Goals'],
 	sprintTopicsPath: 'BuJo/Sprints/Topics',
 	sprintWorkDaysOnly: false,
 	archiveFolderPath: 'BuJo/Archive',
 	archiveGroupBy: 'month',
 	urgencyThresholdDays: 2,
+	nudgeThresholdDays: 7,
+	teamFolderPath: 'BuJo/Team',
 	// JIRA module defaults — OFF until explicitly configured
 	jiraEnabled: false,
 	jiraBaseUrl: '',
@@ -327,6 +425,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	jiraDashboardTtlMinutes: 10,
 	jiraSprintFieldId: 'customfield_10020',
 	jiraDashboardCollapsedSections: {},
+	// Team tracking defaults — OFF until you add members + toggle on
+	jiraTeamEnabled: false,
+	teamMembers: [],
+	jiraDashboardActiveTab: 'mine',
 };
 
 /** Snapshot of weekly analytics for historical tracking */
@@ -363,10 +465,6 @@ export interface MonthlySnapshot {
 	totalMigrated: number;
 	/** Tasks cancelled */
 	totalCancelled: number;
-	/** Total goals for the month */
-	goalsTotal: number;
-	/** Goals completed */
-	goalsCompleted: number;
 	/** Completion rate percentage */
 	completionRate: number;
 	/** Free-form reflections text */
@@ -383,8 +481,6 @@ export interface PluginData {
 	weeklyHistory: WeeklySnapshot[];
 	/** Last week that was reviewed (WW-YYYY), prevents re-prompting */
 	lastWeeklyReviewWeek: string | null;
-	/** Last month that monthly migration was run (YYYY-MM), prevents re-prompting */
-	lastMonthlyMigrationMonth: string | null;
 	/** Historical monthly analytics snapshots */
 	monthlyHistory: MonthlySnapshot[];
 }
@@ -395,7 +491,6 @@ export const DEFAULT_PLUGIN_DATA: PluginData = {
 	lastMigrationDate: null,
 	weeklyHistory: [],
 	lastWeeklyReviewWeek: null,
-	lastMonthlyMigrationMonth: null,
 	monthlyHistory: [],
 };
 

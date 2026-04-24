@@ -1,6 +1,6 @@
 import { Vault, TFile, TFolder } from 'obsidian';
 import { SprintTopic, TopicStatus, Priority, PluginSettings, TopicImpact, TopicEffort } from '../types';
-import { parseTopicFile, parseFrontmatter, serializeFrontmatter } from '../parser/topicParser';
+import { parseTopicFile, parseFrontmatter, serializeFrontmatter, serializeRefs, foldedScalar } from '../parser/topicParser';
 
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
 
@@ -36,6 +36,10 @@ export class SprintTopicService {
 		impact: TopicImpact | null = null,
 		effort: TopicEffort | null = null,
 		dueDate: string | null = null,
+		assignee: string | null = null,
+		waitingOn: string | null = null,
+		lastNudged: string | null = null,
+		refs: Array<{ label: string; url: string }> = [],
 	): Promise<SprintTopic> {
 		const filePath = this.getTopicFilePath(title);
 
@@ -58,6 +62,10 @@ export class SprintTopicService {
 			effort,
 			dueDate,
 			sprintHistory: sprintId || null,
+			assignee,
+			waitingOn,
+			lastNudged,
+			refs: refs.length > 0 ? foldedScalar(serializeRefs(refs)) : null,
 		});
 
 		const linkedSection = linkedPages.length > 0
@@ -81,6 +89,13 @@ export class SprintTopicService {
 		return parseTopicFile(content, filePath);
 	}
 
+	/** Mark a topic as nudged today. Sets `lastNudged` to the current ISO date.
+	 *  Used by the morning migration modal "Just nudged" button. */
+	async markNudged(filePath: string): Promise<void> {
+		const today = new Date().toISOString().slice(0, 10);
+		await this.updateTopicFrontmatter(filePath, { lastNudged: today });
+	}
+
 	/** Update specific frontmatter fields in a topic file, preserving body content.
 	 *  Passing `null` for a value removes the key from the frontmatter entirely. */
 	async updateTopicFrontmatter(
@@ -90,10 +105,19 @@ export class SprintTopicService {
 		const file = this.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) return;
 
-		const content = await this.vault.read(file);
-		const fm = parseFrontmatter(content);
+		await this.vault.process(file, content => {
+			const fm = parseFrontmatter(content);
+			this.applyFrontmatterUpdates(fm, updates);
+			return this.rebuildWithFrontmatter(content, fm);
+		});
+	}
 
-		// Apply updates: null deletes the key, anything else stringifies.
+	/** Apply updates to a parsed frontmatter object.
+	 *  `null`/`undefined` deletes the key; everything else stringifies. */
+	private applyFrontmatterUpdates(
+		fm: Record<string, string>,
+		updates: Partial<Record<string, string | number | boolean | null>>,
+	): void {
 		for (const [key, value] of Object.entries(updates)) {
 			if (value === null || value === undefined) {
 				delete fm[key];
@@ -101,19 +125,28 @@ export class SprintTopicService {
 				fm[key] = String(value);
 			}
 		}
+	}
 
-		// Rebuild frontmatter (empty-string values are retained — legacy callers rely on that)
+	/** Serialize a frontmatter object and splice it back into the original content.
+	 *  Empty-string values are retained — legacy callers rely on that.
+	 *  Values containing newlines are emitted as a YAML folded scalar (`key: |`) so
+	 *  multi-line fields like `refs:` round-trip correctly. */
+	private rebuildWithFrontmatter(content: string, fm: Record<string, string>): string {
 		const fmLines = ['---'];
 		for (const [key, value] of Object.entries(fm)) {
-			fmLines.push(`${key}: ${value}`);
+			if (value.includes('\n')) {
+				fmLines.push(`${key}: |`);
+				for (const bodyLine of value.split('\n')) {
+					fmLines.push(`  ${bodyLine}`);
+				}
+			} else {
+				fmLines.push(`${key}: ${value}`);
+			}
 		}
 		fmLines.push('---');
 		const newFm = fmLines.join('\n');
-
-		// Replace frontmatter in content
 		const body = content.replace(FRONTMATTER_REGEX, '').trimStart();
-		const newContent = newFm + '\n' + body;
-		await this.vault.modify(file, newContent);
+		return newFm + '\n' + body;
 	}
 
 	/** Set the status of a topic (open, in-progress, done) */
@@ -160,31 +193,36 @@ export class SprintTopicService {
 	 *  Appends the previous sprint (if any) AND the new sprint to sprintHistory —
 	 *  the old one may be missing on legacy topics that were assigned before history
 	 *  tracking existed, so we defensively capture it here. History is cumulative:
-	 *  moving to backlog does NOT remove anything. */
+	 *  moving to backlog does NOT remove anything.
+	 *
+	 *  Entirely inside one vault.process call so reading oldSprint/history and writing
+	 *  the merged result is atomic against any concurrent external edit. */
 	async assignTopicToSprint(filePath: string, sprintId: string): Promise<void> {
 		const file = this.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) return;
 
-		const content = await this.vault.read(file);
-		const fm = parseFrontmatter(content);
-		const oldSprint = (fm['sprint'] || '').trim();
-		const existing = (fm['sprintHistory'] || '')
-			.split(',')
-			.map(s => s.trim())
-			.filter(Boolean);
+		await this.vault.process(file, content => {
+			const fm = parseFrontmatter(content);
+			const oldSprint = (fm['sprint'] || '').trim();
+			const existing = (fm['sprintHistory'] || '')
+				.split(',')
+				.map(s => s.trim())
+				.filter(Boolean);
 
-		const merged: string[] = [...existing];
-		const seen = new Set(existing);
-		for (const s of [oldSprint, sprintId]) {
-			if (s && !seen.has(s)) {
-				merged.push(s);
-				seen.add(s);
+			const merged: string[] = [...existing];
+			const seen = new Set(existing);
+			for (const s of [oldSprint, sprintId]) {
+				if (s && !seen.has(s)) {
+					merged.push(s);
+					seen.add(s);
+				}
 			}
-		}
 
-		await this.updateTopicFrontmatter(filePath, {
-			sprint: sprintId,
-			sprintHistory: merged.length > 0 ? merged.join(',') : null,
+			this.applyFrontmatterUpdates(fm, {
+				sprint: sprintId,
+				sprintHistory: merged.length > 0 ? merged.join(',') : null,
+			});
+			return this.rebuildWithFrontmatter(content, fm);
 		});
 	}
 
