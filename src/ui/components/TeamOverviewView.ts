@@ -27,7 +27,7 @@ export class TeamOverviewView {
 
 	render(): void {
 		this.container.empty();
-		this.container.addClass('task-bujo-team-overview');
+		this.container.addClass('friday-team-overview');
 
 		const members = this.service.getVisibleMembers();
 
@@ -64,49 +64,49 @@ export class TeamOverviewView {
 		});
 
 		// Header with a "Start 1:1" CTA
-		const header = this.container.createDiv({ cls: 'task-bujo-team-header' });
-		header.createEl('h2', { text: 'Team', cls: 'task-bujo-team-title' });
+		const header = this.container.createDiv({ cls: 'friday-team-header' });
+		header.createEl('h2', { text: 'Team', cls: 'friday-team-title' });
 		const startBtn = header.createEl('button', {
-			cls: 'task-bujo-team-start-1on1 mod-cta',
+			cls: 'friday-team-start-1on1 mod-cta',
 			text: 'Start 1:1…',
 		});
 		startBtn.addEventListener('click', () => this.openOneOnOnePicker());
 
-		const grid = this.container.createDiv({ cls: 'task-bujo-team-grid' });
+		const grid = this.container.createDiv({ cls: 'friday-team-grid' });
 		for (const member of sorted) {
 			this.renderCard(grid, member, signals.get(member.folderPath)!);
 		}
 	}
 
 	private renderEmptyState(): void {
-		const empty = this.container.createDiv({ cls: 'task-bujo-empty' });
+		const empty = this.container.createDiv({ cls: 'friday-empty' });
 		empty.createEl('p', {
 			text: `No team members found.`,
 		});
-		const hint = empty.createEl('p', { cls: 'task-bujo-empty-hint' });
+		const hint = empty.createEl('p', { cls: 'friday-empty-hint' });
 		hint.appendText(`Create a folder under `);
 		hint.createEl('code', { text: this.settings.teamFolderPath });
 		hint.appendText(` with a person page inside, or use the `);
 		hint.createEl('em', { text: 'Generate person pages' });
-		hint.appendText(` button in BuJo settings.`);
+		hint.appendText(` button in Friday settings.`);
 	}
 
 	private renderCard(parent: HTMLElement, member: TeamMemberPage, signal: CadenceSignal): void {
-		const card = parent.createDiv({ cls: 'task-bujo-team-card' });
+		const card = parent.createDiv({ cls: 'friday-team-card' });
 		if (member.status === 'on_leave') card.addClass('is-on-leave');
 
 		// Row 1: avatar + name + cadence chip
-		const topRow = card.createDiv({ cls: 'task-bujo-team-card-top' });
-		const avatar = topRow.createDiv({ cls: 'task-bujo-team-avatar' });
+		const topRow = card.createDiv({ cls: 'friday-team-card-top' });
+		const avatar = topRow.createDiv({ cls: 'friday-team-avatar' });
 		avatar.textContent = initialsOf(member.name);
 
-		const identityBlock = topRow.createDiv({ cls: 'task-bujo-team-identity' });
-		identityBlock.createEl('div', { cls: 'task-bujo-team-name', text: member.name });
+		const identityBlock = topRow.createDiv({ cls: 'friday-team-identity' });
+		identityBlock.createEl('div', { cls: 'friday-team-name', text: member.name });
 		if (member.role) {
-			identityBlock.createEl('div', { cls: 'task-bujo-team-role', text: member.role });
+			identityBlock.createEl('div', { cls: 'friday-team-role', text: member.role });
 		}
 
-		const chipRow = topRow.createDiv({ cls: 'task-bujo-team-chips' });
+		const chipRow = topRow.createDiv({ cls: 'friday-team-chips' });
 		if (member.status === 'on_leave') {
 			chipRow.appendChild(createCadenceChip('suspended', 'On leave'));
 		} else {
@@ -119,13 +119,13 @@ export class TeamOverviewView {
 		// be surfaced in Phase 2 by extending the parser to pick up the "## Current Focus" first line.
 
 		// Row 3: action buttons
-		const actions = card.createDiv({ cls: 'task-bujo-team-actions' });
+		const actions = card.createDiv({ cls: 'friday-team-actions' });
 
-		const openPageBtn = actions.createEl('button', { cls: 'task-bujo-team-action', text: 'Open page' });
+		const openPageBtn = actions.createEl('button', { cls: 'friday-team-action', text: 'Open page' });
 		openPageBtn.addEventListener('click', () => this.openFile(member.filePath));
 
 		const startBtn = actions.createEl('button', {
-			cls: 'task-bujo-team-action',
+			cls: 'friday-team-action',
 			text: signal.state === 'overdue' ? 'Start 1:1 (overdue)' : 'Start 1:1',
 		});
 		if (signal.state === 'overdue') startBtn.addClass('mod-warning');
@@ -133,7 +133,7 @@ export class TeamOverviewView {
 
 		if (member.sessionPaths.length > 0 && member.lastOneOnOne) {
 			const lastBtn = actions.createEl('button', {
-				cls: 'task-bujo-team-action',
+				cls: 'friday-team-action',
 				text: 'Last 1:1',
 			});
 			const lastPath = mostRecentSessionPath(member);
@@ -142,7 +142,7 @@ export class TeamOverviewView {
 
 		if (this.settings.jiraEnabled && this.settings.jiraTeamEnabled && member.jiraIdentity) {
 			const jiraBtn = actions.createEl('button', {
-				cls: 'task-bujo-team-action',
+				cls: 'friday-team-action',
 				text: 'JIRA workload →',
 			});
 			jiraBtn.addEventListener('click', () => this.openJiraTeamTab());

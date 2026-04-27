@@ -116,7 +116,7 @@ export class VaultScanner {
                             session: isOneOnOne ? parseOneOnOneSession(file.path) : null,
                         };
                     } catch (e) {
-                        console.warn('[BuJo scan] failed to process', file.path, e);
+                        console.warn('[Friday scan] failed to process', file.path, e);
                         return { path: file.path, tasks: [], topic: null, teamPage: null, session: null };
                     }
                 })

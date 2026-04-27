@@ -11,40 +11,40 @@ export class GroupHeader {
 		private collapsedGroups?: Set<string>
 	) {
 		this.collapsed = collapsedGroups?.has(label) ?? false;
-		this.el = container.createDiv({ cls: 'task-bujo-group-header' });
-		this.contentEl = container.createDiv({ cls: 'task-bujo-group-content' });
+		this.el = container.createDiv({ cls: 'friday-group-header' });
+		this.contentEl = container.createDiv({ cls: 'friday-group-content' });
 		this.render();
 	}
 
 	private render(): void {
-		const headerRow = this.el.createDiv({ cls: 'task-bujo-group-header-row' });
+		const headerRow = this.el.createDiv({ cls: 'friday-group-header-row' });
 
 		if (this.collapsible) {
-			const chevron = headerRow.createSpan({ cls: 'task-bujo-chevron' });
+			const chevron = headerRow.createSpan({ cls: 'friday-chevron' });
 			chevron.textContent = this.collapsed ? '▶' : '▼';
 			this.el.addEventListener('click', () => this.toggle());
-			this.el.addClass('task-bujo-clickable');
+			this.el.addClass('friday-clickable');
 		}
 
 		headerRow.createSpan({
-			cls: 'task-bujo-group-label',
+			cls: 'friday-group-label',
 			text: this.label
 		});
 
 		headerRow.createSpan({
-			cls: 'task-bujo-group-count',
+			cls: 'friday-group-count',
 			text: `(${this.count})`
 		});
 
 		if (this.collapsed) {
-			this.contentEl.addClass('task-bujo-collapsed');
+			this.contentEl.addClass('friday-collapsed');
 		}
 	}
 
 	toggle(): void {
 		this.collapsed = !this.collapsed;
-		this.contentEl.toggleClass('task-bujo-collapsed', this.collapsed);
-		const chevron = this.el.querySelector('.task-bujo-chevron');
+		this.contentEl.toggleClass('friday-collapsed', this.collapsed);
+		const chevron = this.el.querySelector('.friday-chevron');
 		if (chevron) {
 			chevron.textContent = this.collapsed ? '▶' : '▼';
 		}

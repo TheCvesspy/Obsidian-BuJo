@@ -37,10 +37,10 @@ export class SyntaxReferenceModal extends Modal {
 
 	/** Create a clickable syntax row — inserts on click if editor is available */
 	private createSyntaxRow(table: HTMLTableElement, syntax: string, desc: string): void {
-		const row = table.createEl('tr', { cls: 'task-bujo-syntax-row-clickable' });
-		row.createEl('td', { cls: 'task-bujo-syntax-code' })
+		const row = table.createEl('tr', { cls: 'friday-syntax-row-clickable' });
+		row.createEl('td', { cls: 'friday-syntax-code' })
 			.createEl('code', { text: syntax });
-		row.createEl('td', { cls: 'task-bujo-syntax-desc', text: desc });
+		row.createEl('td', { cls: 'friday-syntax-desc', text: desc });
 
 		row.addEventListener('click', () => this.insertAtCursor(syntax));
 		row.setAttribute('title', 'Click to insert at cursor');
@@ -48,14 +48,14 @@ export class SyntaxReferenceModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		this.modalEl.addClass('task-bujo-syntax-modal');
+		this.modalEl.addClass('friday-syntax-modal');
 		contentEl.createEl('h2', { text: 'Syntax Reference' });
 
 		const hasEditor = this.getActiveEditor() !== null;
 		if (hasEditor) {
 			contentEl.createEl('p', {
 				text: 'Click any row to insert at cursor position.',
-				cls: 'task-bujo-syntax-hint',
+				cls: 'friday-syntax-hint',
 			});
 		}
 
@@ -93,10 +93,10 @@ export class SyntaxReferenceModal extends Modal {
 			['## Inbox', 'Heading → items are quick-capture Inbox'],
 		];
 
-		const table = contentEl.createEl('table', { cls: 'task-bujo-syntax-table' });
+		const table = contentEl.createEl('table', { cls: 'friday-syntax-table' });
 		for (const [syntax, desc] of entries) {
 			if (!syntax && !desc) {
-				const row = table.createEl('tr', { cls: 'task-bujo-syntax-separator' });
+				const row = table.createEl('tr', { cls: 'friday-syntax-separator' });
 				row.createEl('td', { attr: { colspan: '2' } });
 				continue;
 			}
@@ -104,15 +104,15 @@ export class SyntaxReferenceModal extends Modal {
 				this.createSyntaxRow(table, syntax, desc);
 			} else {
 				const row = table.createEl('tr');
-				row.createEl('td', { cls: 'task-bujo-syntax-code' })
+				row.createEl('td', { cls: 'friday-syntax-code' })
 					.createEl('code', { text: syntax });
-				row.createEl('td', { cls: 'task-bujo-syntax-desc', text: desc });
+				row.createEl('td', { cls: 'friday-syntax-desc', text: desc });
 			}
 		}
 
 		// Work type and purpose defaults
 		contentEl.createEl('h3', { text: 'Default Work Types' });
-		const wtTable = contentEl.createEl('table', { cls: 'task-bujo-syntax-table' });
+		const wtTable = contentEl.createEl('table', { cls: 'friday-syntax-table' });
 		const workTypes = [
 			['Deep Work', 'DW'], ['Review', 'RV'], ['Coordination', 'CO'],
 			['Admin', 'AD'], ['Learning', 'LN'], ['Leadership', 'LD'],
@@ -122,14 +122,14 @@ export class SyntaxReferenceModal extends Modal {
 				this.createSyntaxRow(wtTable, `#w/${code}`, name);
 			} else {
 				const row = wtTable.createEl('tr');
-				row.createEl('td', { cls: 'task-bujo-syntax-code' })
+				row.createEl('td', { cls: 'friday-syntax-code' })
 					.createEl('code', { text: `#w/${code}` });
-				row.createEl('td', { cls: 'task-bujo-syntax-desc', text: name });
+				row.createEl('td', { cls: 'friday-syntax-desc', text: name });
 			}
 		}
 
 		contentEl.createEl('h3', { text: 'Default Purposes' });
-		const pTable = contentEl.createEl('table', { cls: 'task-bujo-syntax-table' });
+		const pTable = contentEl.createEl('table', { cls: 'friday-syntax-table' });
 		const purposes = [
 			['Delivery', 'D'], ['Capability', 'CA'], ['Strategy', 'ST'], ['Support', 'SU'],
 		];
@@ -138,9 +138,9 @@ export class SyntaxReferenceModal extends Modal {
 				this.createSyntaxRow(pTable, `#p/${code}`, name);
 			} else {
 				const row = pTable.createEl('tr');
-				row.createEl('td', { cls: 'task-bujo-syntax-code' })
+				row.createEl('td', { cls: 'friday-syntax-code' })
 					.createEl('code', { text: `#p/${code}` });
-				row.createEl('td', { cls: 'task-bujo-syntax-desc', text: name });
+				row.createEl('td', { cls: 'friday-syntax-desc', text: name });
 			}
 		}
 	}

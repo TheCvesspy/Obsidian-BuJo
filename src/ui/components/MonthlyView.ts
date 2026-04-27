@@ -22,7 +22,7 @@ export class MonthlyView {
 		private onSaveSnapshot: (snapshot: MonthlySnapshot) => void,
 		private collapsedGroups: Set<string>,
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-monthly' });
+		this.el = container.createDiv({ cls: 'friday-monthly' });
 		this.selectedMonth = new Date();
 	}
 
@@ -39,10 +39,10 @@ export class MonthlyView {
 	}
 
 	private renderHeader(_monthId: string): void {
-		const header = this.el.createDiv({ cls: 'task-bujo-monthly-header' });
+		const header = this.el.createDiv({ cls: 'friday-monthly-header' });
 
-		const nav = header.createDiv({ cls: 'task-bujo-monthly-nav' });
-		const prevBtn = nav.createEl('button', { cls: 'task-bujo-btn task-bujo-monthly-nav-btn', text: '‹' });
+		const nav = header.createDiv({ cls: 'friday-monthly-nav' });
+		const prevBtn = nav.createEl('button', { cls: 'friday-btn friday-monthly-nav-btn', text: '‹' });
 		prevBtn.addEventListener('click', () => {
 			this.selectedMonth = getPreviousMonth(this.selectedMonth);
 			this.render();
@@ -50,14 +50,14 @@ export class MonthlyView {
 
 		nav.createEl('h3', { text: formatMonthDisplay(this.selectedMonth) });
 
-		const nextBtn = nav.createEl('button', { cls: 'task-bujo-btn task-bujo-monthly-nav-btn', text: '›' });
+		const nextBtn = nav.createEl('button', { cls: 'friday-btn friday-monthly-nav-btn', text: '›' });
 		nextBtn.addEventListener('click', () => {
 			this.selectedMonth = getNextMonth(this.selectedMonth);
 			this.render();
 		});
 
 		const saveBtn = header.createEl('button', {
-			cls: 'task-bujo-analytics-save-btn',
+			cls: 'friday-analytics-save-btn',
 			text: 'Save Snapshot',
 		});
 		saveBtn.addEventListener('click', async () => {
@@ -75,7 +75,7 @@ export class MonthlyView {
 	}
 
 	private renderStats(stats: MonthlyStats): void {
-		const section = this.el.createDiv({ cls: 'task-bujo-analytics-summary' });
+		const section = this.el.createDiv({ cls: 'friday-analytics-summary' });
 
 		const cards: { label: string; value: string; cls?: string }[] = [
 			{ label: 'Planned', value: String(stats.totalPlanned) },
@@ -85,14 +85,14 @@ export class MonthlyView {
 		];
 
 		for (const card of cards) {
-			const cardEl = section.createDiv({ cls: `task-bujo-analytics-card ${card.cls || ''}` });
-			cardEl.createDiv({ cls: 'task-bujo-analytics-card-value', text: card.value });
-			cardEl.createDiv({ cls: 'task-bujo-analytics-card-label', text: card.label });
+			const cardEl = section.createDiv({ cls: `friday-analytics-card ${card.cls || ''}` });
+			cardEl.createDiv({ cls: 'friday-analytics-card-value', text: card.value });
+			cardEl.createDiv({ cls: 'friday-analytics-card-label', text: card.label });
 		}
 	}
 
 	private renderTasks(monthId: string): void {
-		const section = this.el.createDiv({ cls: 'task-bujo-monthly-tasks' });
+		const section = this.el.createDiv({ cls: 'friday-monthly-tasks' });
 		section.createEl('h4', { text: 'Tasks' });
 
 		const monthlyNotePath = `${this.settings.monthlyNotePath}/${monthId}.md`;
@@ -107,7 +107,7 @@ export class MonthlyView {
 		tasks = this.store.filterCompleted(tasks, this.settings.showCompletedTasks);
 
 		if (tasks.length === 0) {
-			section.createDiv({ cls: 'task-bujo-empty', text: 'No tasks for this month' });
+			section.createDiv({ cls: 'friday-empty', text: 'No tasks for this month' });
 			return;
 		}
 
@@ -119,12 +119,12 @@ export class MonthlyView {
 		const history = this.getData().monthlyHistory;
 		if (history.length === 0) return;
 
-		const section = this.el.createDiv({ cls: 'task-bujo-analytics-trends' });
+		const section = this.el.createDiv({ cls: 'friday-analytics-trends' });
 		section.createEl('h4', { text: 'Monthly Trends' });
 
 		const recent = history.slice(-6);
 
-		const table = section.createEl('table', { cls: 'task-bujo-analytics-trend-table' });
+		const table = section.createEl('table', { cls: 'friday-analytics-trend-table' });
 		const thead = table.createEl('thead');
 		const headerRow = thead.createEl('tr');
 		for (const h of ['Month', 'Planned', 'Done', 'Rate']) {

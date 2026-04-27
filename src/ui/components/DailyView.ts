@@ -14,7 +14,7 @@ export class DailyView {
 		private callbacks: TaskItemRowCallbacks,
 		private searchQuery: string = ''
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-daily-view' });
+		this.el = container.createDiv({ cls: 'friday-daily-view' });
 	}
 
 	render(): void {
@@ -71,9 +71,9 @@ export class DailyView {
 		}
 
 		// Header
-		const header = this.el.createDiv({ cls: 'task-bujo-view-header' });
+		const header = this.el.createDiv({ cls: 'friday-view-header' });
 		header.createSpan({ text: `Daily Log — ${formatDateDisplay(today)}` });
-		header.createSpan({ cls: 'task-bujo-pending-count', text: ` (${pendingCount} pending)` });
+		header.createSpan({ cls: 'friday-pending-count', text: ` (${pendingCount} pending)` });
 
 		// Sections
 		const sections: [string, TaskItem[]][] = [
@@ -86,10 +86,10 @@ export class DailyView {
 		];
 
 		for (const [label, items] of sections) {
-			const sectionEl = this.el.createDiv({ cls: 'task-bujo-section' });
-			sectionEl.createEl('h4', { cls: 'task-bujo-section-header', text: label });
+			const sectionEl = this.el.createDiv({ cls: 'friday-section' });
+			sectionEl.createEl('h4', { cls: 'friday-section-header', text: label });
 			if (items.length === 0) {
-				sectionEl.createDiv({ cls: 'task-bujo-muted', text: 'No tasks' });
+				sectionEl.createDiv({ cls: 'friday-muted', text: 'No tasks' });
 			} else {
 				const grouped = new Map<string, TaskItem[]>();
 				grouped.set(label, items);

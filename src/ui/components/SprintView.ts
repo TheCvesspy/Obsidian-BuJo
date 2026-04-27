@@ -38,7 +38,7 @@ export class SprintView {
 		private searchQuery: string = '',
 		private jiraService: JiraService | null = null,
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-sprint-view' });
+		this.el = container.createDiv({ cls: 'friday-sprint-view' });
 	}
 
 	render(): void {
@@ -54,10 +54,10 @@ export class SprintView {
 	}
 
 	private renderNoSprint(): void {
-		const empty = this.el.createDiv({ cls: 'task-bujo-sprint-empty' });
+		const empty = this.el.createDiv({ cls: 'friday-sprint-empty' });
 		empty.createDiv({ text: 'No active sprint' });
 		const btn = empty.createEl('button', {
-			cls: 'task-bujo-btn',
+			cls: 'friday-btn',
 			text: 'Create Sprint',
 		});
 		btn.addEventListener('click', () => this.onNewSprint());
@@ -79,29 +79,29 @@ export class SprintView {
 		}
 
 		// Header
-		const header = this.el.createDiv({ cls: 'task-bujo-sprint-header' });
-		const headerInfo = header.createDiv({ cls: 'task-bujo-sprint-header-info' });
-		const nameEl = headerInfo.createSpan({ cls: 'task-bujo-sprint-name', text: sprint.name });
+		const header = this.el.createDiv({ cls: 'friday-sprint-header' });
+		const headerInfo = header.createDiv({ cls: 'friday-sprint-header-info' });
+		const nameEl = headerInfo.createSpan({ cls: 'friday-sprint-name', text: sprint.name });
 		nameEl.setAttribute('title', 'Click to edit sprint');
 		nameEl.style.cursor = 'pointer';
 		nameEl.addEventListener('click', () => this.onEditSprint(sprint));
 		headerInfo.createSpan({
-			cls: 'task-bujo-sprint-dates',
+			cls: 'friday-sprint-dates',
 			text: ` ${startDate.toLocaleDateString()} – ${endDate.toLocaleDateString()}`,
 		});
 		headerInfo.createSpan({
-			cls: 'task-bujo-sprint-remaining',
+			cls: 'friday-sprint-remaining',
 			text: ` · ${daysRemaining} ${dayLabel} remaining`,
 		});
 		const editBtn = headerInfo.createEl('button', {
-			cls: 'task-bujo-btn task-bujo-sprint-edit-btn',
+			cls: 'friday-btn friday-sprint-edit-btn',
 			text: 'Edit',
 		});
 		editBtn.setAttribute('title', 'Edit sprint name and dates');
 		editBtn.addEventListener('click', () => this.onEditSprint(sprint));
 
 		const addTopicBtn = header.createEl('button', {
-			cls: 'task-bujo-btn',
+			cls: 'friday-btn',
 			text: '+ Topic',
 		});
 		addTopicBtn.addEventListener('click', () => this.onNewTopic());
@@ -122,7 +122,7 @@ export class SprintView {
 		this.prefetchJiraKeys(filteredTopics);
 
 		// Kanban board
-		const board = this.el.createDiv({ cls: 'task-bujo-kanban' });
+		const board = this.el.createDiv({ cls: 'friday-kanban' });
 
 		for (const col of COLUMNS) {
 			const columnTopics = filteredTopics
@@ -133,15 +133,15 @@ export class SprintView {
 		}
 
 		// Action buttons
-		const actions = this.el.createDiv({ cls: 'task-bujo-sprint-actions' });
+		const actions = this.el.createDiv({ cls: 'friday-sprint-actions' });
 		const endBtn = actions.createEl('button', {
-			cls: 'task-bujo-btn task-bujo-btn-warning',
+			cls: 'friday-btn friday-btn-warning',
 			text: 'End Sprint',
 		});
 		endBtn.addEventListener('click', () => this.onEndSprint(sprint));
 
 		const newBtn = actions.createEl('button', {
-			cls: 'task-bujo-btn',
+			cls: 'friday-btn',
 			text: 'New Sprint',
 		});
 		newBtn.addEventListener('click', () => this.onNewSprint());
@@ -159,29 +159,29 @@ export class SprintView {
 	}
 
 	private renderColumn(board: HTMLElement, status: TopicStatus, label: string, topics: SprintTopic[]): void {
-		const column = board.createDiv({ cls: 'task-bujo-kanban-column' });
+		const column = board.createDiv({ cls: 'friday-kanban-column' });
 		column.dataset.status = status;
 
 		// Column header
-		const headerEl = column.createDiv({ cls: 'task-bujo-kanban-column-header' });
+		const headerEl = column.createDiv({ cls: 'friday-kanban-column-header' });
 		headerEl.createSpan({ text: label });
-		headerEl.createSpan({ cls: 'task-bujo-kanban-column-count', text: `${topics.length}` });
+		headerEl.createSpan({ cls: 'friday-kanban-column-count', text: `${topics.length}` });
 
 		// Column body (drop zone)
-		const body = column.createDiv({ cls: 'task-bujo-kanban-column-body' });
+		const body = column.createDiv({ cls: 'friday-kanban-column-body' });
 
 		// Drag-and-drop on the column body
 		body.addEventListener('dragover', (e) => {
 			e.preventDefault();
 			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-			body.addClass('task-bujo-kanban-column-dragover');
+			body.addClass('friday-kanban-column-dragover');
 		});
 		body.addEventListener('dragleave', () => {
-			body.removeClass('task-bujo-kanban-column-dragover');
+			body.removeClass('friday-kanban-column-dragover');
 		});
 		body.addEventListener('drop', async (e) => {
 			e.preventDefault();
-			body.removeClass('task-bujo-kanban-column-dragover');
+			body.removeClass('friday-kanban-column-dragover');
 			const filePath = e.dataTransfer?.getData('text/plain');
 			if (!filePath) return;
 
@@ -216,7 +216,7 @@ export class SprintView {
 
 		// Empty state
 		if (topics.length === 0) {
-			body.createDiv({ cls: 'task-bujo-kanban-empty', text: 'No topics' });
+			body.createDiv({ cls: 'friday-kanban-empty', text: 'No topics' });
 		}
 	}
 

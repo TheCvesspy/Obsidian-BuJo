@@ -22,8 +22,11 @@ export interface MigrationResult {
 
 /** Data structure for the morning review modal */
 export interface MorningReviewData {
-    /** Open tasks from yesterday's daily note */
+    /** Open tasks from the most recent prior daily note */
     yesterdayTasks: TaskItem[];
+    /** ISO date (YYYY-MM-DD) of the prior daily note used for `yesterdayTasks`,
+     *  or null if no prior daily note was found. */
+    yesterdayDate: string | null;
     /** Open overdue tasks from across the vault (excluding yesterday's) */
     overdueTasks: TaskItem[];
     /** Tasks due today from across the vault */
@@ -67,9 +70,10 @@ export class MigrationService {
     getMorningReviewData(): MorningReviewData {
         const today = todayStart();
         const now = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayNotePath = this.dailyNotes.getDailyNotePath(yesterday);
+        const yesterdayNotePath = this.dailyNotes.getMostRecentPriorDailyNotePath(today);
+        const yesterdayDate = yesterdayNotePath
+            ? (yesterdayNotePath.match(/(\d{4}-\d{2}-\d{2})\.md$/)?.[1] ?? null)
+            : null;
 
         const allTasks = this.store.getTasks();
         let yesterdayTasks: TaskItem[] = [];
@@ -78,10 +82,10 @@ export class MigrationService {
         const availableTasks: TaskItem[] = [];
         const yesterdayIds = new Set<string>();
 
-        // First pass: identify yesterday's open root tasks
+        // First pass: identify the prior daily note's open root tasks
         for (const t of allTasks) {
             if (t.parentId !== null) continue; // Skip children
-            if (t.sourcePath === yesterdayNotePath && t.status === TaskStatus.Open) {
+            if (yesterdayNotePath && t.sourcePath === yesterdayNotePath && t.status === TaskStatus.Open) {
                 yesterdayTasks.push(t);
                 yesterdayIds.add(t.id);
             }
@@ -116,7 +120,7 @@ export class MigrationService {
             .getOpenPoints()
             .filter(t => t.status === TaskStatus.Open);
 
-        return { yesterdayTasks, overdueTasks, todayTasks, availableTasks, availableOpenPoints };
+        return { yesterdayTasks, yesterdayDate, overdueTasks, todayTasks, availableTasks, availableOpenPoints };
     }
 
     /** Get overdue tasks only (for backward compat / needsMigration) */

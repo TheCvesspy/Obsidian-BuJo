@@ -22,25 +22,25 @@ export class SubtaskConfirmModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		contentEl.addClass('task-bujo-confirm-modal');
+		contentEl.addClass('friday-confirm-modal');
 
 		// Task name
 		contentEl.createDiv({
-			cls: 'task-bujo-confirm-task-name',
+			cls: 'friday-confirm-task-name',
 			text: this.task.text,
 		});
 
 		// Message
 		contentEl.createDiv({
-			cls: 'task-bujo-confirm-message',
+			cls: 'friday-confirm-message',
 			text: `This task has ${this.openChildCount} incomplete subtask${this.openChildCount !== 1 ? 's' : ''}. ${this.actionLabel} them too?`,
 		});
 
 		// Buttons
-		const actions = contentEl.createDiv({ cls: 'task-bujo-confirm-actions' });
+		const actions = contentEl.createDiv({ cls: 'friday-confirm-actions' });
 
 		const cancelBtn = actions.createEl('button', {
-			cls: 'task-bujo-btn',
+			cls: 'friday-btn',
 			text: 'Cancel',
 		});
 		cancelBtn.addEventListener('click', () => {
@@ -49,7 +49,7 @@ export class SubtaskConfirmModal extends Modal {
 		});
 
 		const parentOnlyBtn = actions.createEl('button', {
-			cls: 'task-bujo-btn',
+			cls: 'friday-btn',
 			text: 'Parent Only',
 		});
 		parentOnlyBtn.addEventListener('click', () => {
@@ -58,7 +58,7 @@ export class SubtaskConfirmModal extends Modal {
 		});
 
 		const allBtn = actions.createEl('button', {
-			cls: 'task-bujo-btn task-bujo-btn-primary',
+			cls: 'friday-btn friday-btn-primary',
 			text: `${this.actionLabel} All`,
 		});
 		allBtn.addEventListener('click', () => {

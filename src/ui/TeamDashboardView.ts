@@ -48,11 +48,11 @@ export class TeamDashboardView extends ItemView {
 	async onOpen(): Promise<void> {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.addClass('task-bujo-container');
-		containerEl.addClass('task-bujo-team-dashboard-container');
+		containerEl.addClass('friday-container');
+		containerEl.addClass('friday-team-dashboard-container');
 
 		this.contentContainer = (containerEl as HTMLElement).createDiv({
-			cls: 'task-bujo-content task-bujo-team-dashboard-content',
+			cls: 'friday-content friday-team-dashboard-content',
 		});
 
 		// Subscribe to scanner team-change events. Debounce so rapid edits coalesce.

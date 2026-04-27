@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, MarkdownView } from 'obsidian';
-import { BuJoViewMode, GroupMode, TaskItem, TaskStatus, PluginSettings, PluginData, Sprint, SprintTopic, WeeklySnapshot, MonthlySnapshot, StoreEventCallback } from '../types';
-import { VIEW_TYPE_TASK_BUJO, REFRESH_DEBOUNCE_MS } from '../constants';
+import { FridayViewMode, GroupMode, TaskItem, TaskStatus, PluginSettings, PluginData, Sprint, SprintTopic, WeeklySnapshot, MonthlySnapshot, StoreEventCallback } from '../types';
+import { VIEW_TYPE_FRIDAY, REFRESH_DEBOUNCE_MS } from '../constants';
 import { TaskStore } from '../services/taskStore';
 import { TaskWriter } from '../services/taskWriter';
 import { SprintService } from '../services/sprintService';
@@ -31,8 +31,8 @@ import { SprintCloseModal } from './SprintCloseModal';
 import { TaskItemRowCallbacks } from './components/TaskItemRow';
 import { SubtaskConfirmModal } from './SubtaskConfirmModal';
 
-export class TaskBuJoView extends ItemView {
-	private currentMode: BuJoViewMode;
+export class FridayView extends ItemView {
+	private currentMode: FridayViewMode;
 	private currentGroupMode: GroupMode;
 	private searchQuery: string = '';
 	private contentContainer: HTMLElement;
@@ -68,11 +68,11 @@ export class TaskBuJoView extends ItemView {
 	}
 
 	getViewType(): string {
-		return VIEW_TYPE_TASK_BUJO;
+		return VIEW_TYPE_FRIDAY;
 	}
 
 	getDisplayText(): string {
-		return 'BuJo';
+		return 'Friday';
 	}
 
 	getIcon(): string {
@@ -82,10 +82,10 @@ export class TaskBuJoView extends ItemView {
 	async onOpen(): Promise<void> {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.addClass('task-bujo-container');
+		containerEl.addClass('friday-container');
 
 		new ViewSwitcher(containerEl, this.currentMode, {
-			onViewChange: (mode: BuJoViewMode) => {
+			onViewChange: (mode: FridayViewMode) => {
 				this.currentMode = mode;
 				// Update toolbar for new view mode
 				if (this.toolbar) {
@@ -106,10 +106,10 @@ export class TaskBuJoView extends ItemView {
 			},
 		});
 
-		this.contentContainer = containerEl.createDiv({ cls: 'task-bujo-content' });
+		this.contentContainer = containerEl.createDiv({ cls: 'friday-content' });
 
 		// Sticky footer for quick-add bar + syntax reference
-		const footer = containerEl.createDiv({ cls: 'task-bujo-footer' });
+		const footer = containerEl.createDiv({ cls: 'friday-footer' });
 
 		// Add Task quick-add bar
 		new AddTaskBar(footer, this.app, () => this.settings, {
@@ -118,7 +118,7 @@ export class TaskBuJoView extends ItemView {
 
 		// Syntax reference button
 		const syntaxBtn = footer.createEl('button', {
-			cls: 'task-bujo-syntax-toggle',
+			cls: 'friday-syntax-toggle',
 			text: 'Syntax Reference',
 		});
 		syntaxBtn.addEventListener('click', () => {
@@ -215,17 +215,17 @@ export class TaskBuJoView extends ItemView {
 		this.contentContainer.empty();
 
 		switch (this.currentMode) {
-			case BuJoViewMode.Daily: {
+			case FridayViewMode.Daily: {
 				const view = new DailyView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery);
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Weekly: {
+			case FridayViewMode.Weekly: {
 				const view = new WeeklyView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery);
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Monthly: {
+			case FridayViewMode.Monthly: {
 				const view = new MonthlyView(
 					this.contentContainer,
 					this.store,
@@ -241,12 +241,12 @@ export class TaskBuJoView extends ItemView {
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Calendar: {
+			case FridayViewMode.Calendar: {
 				const view = new CalendarView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery);
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Sprint: {
+			case FridayViewMode.Sprint: {
 				const activeSprint = this.sprintService.getActiveSprint();
 				const topics = activeSprint
 					? this.scanner.getAllTopics().filter(t => t.sprintId === activeSprint.id)
@@ -270,7 +270,7 @@ export class TaskBuJoView extends ItemView {
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Topics: {
+			case FridayViewMode.Topics: {
 				const view = new TopicsOverviewView(
 					this.contentContainer,
 					this.scanner.getAllTopics(),
@@ -287,22 +287,22 @@ export class TaskBuJoView extends ItemView {
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Overdue: {
+			case FridayViewMode.Overdue: {
 				const view = new OverdueView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Overview: {
+			case FridayViewMode.Overview: {
 				const view = new OverviewView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Inbox: {
+			case FridayViewMode.Inbox: {
 				const view = new InboxView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
 				view.render();
 				break;
 			}
-			case BuJoViewMode.Analytics: {
+			case FridayViewMode.Analytics: {
 				const view = new AnalyticsView(
 					this.contentContainer,
 					this.store,

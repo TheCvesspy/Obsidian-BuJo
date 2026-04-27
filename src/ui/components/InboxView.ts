@@ -15,7 +15,7 @@ export class InboxView {
 		private searchQuery: string = '',
 		private collapsedGroups?: Set<string>,
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-inbox-view' });
+		this.el = container.createDiv({ cls: 'friday-inbox-view' });
 	}
 
 	render(): void {
@@ -33,16 +33,16 @@ export class InboxView {
 
 		const openCount = items.filter(t => t.status === TaskStatus.Open).length;
 
-		const header = this.el.createDiv({ cls: 'task-bujo-view-header' });
+		const header = this.el.createDiv({ cls: 'friday-view-header' });
 		header.createSpan({ text: '\u{1F4E5} Inbox' });
 		header.createSpan({
-			cls: 'task-bujo-pending-count',
+			cls: 'friday-pending-count',
 			text: ` (${openCount} to triage, ${items.length} total)`,
 		});
 
 		if (items.length === 0) {
 			this.el.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: 'Nothing to triage — capture new items under `## Inbox` in your daily note.',
 			});
 			return;

@@ -35,9 +35,15 @@ export class MigrationModal extends Modal {
     }
 
     async onOpen(): Promise<void> {
-        this.modalEl.addClass('task-bujo-migration-modal');
+        this.modalEl.addClass('friday-migration-modal');
         const { contentEl } = this;
         contentEl.empty();
+
+        try {
+            await this.dailyNotes.getOrCreateDailyNote(new Date());
+        } catch (e) {
+            new Notice(`Could not create today's daily note: ${e instanceof Error ? e.message : 'unknown error'}`);
+        }
 
         contentEl.createEl('h2', { text: 'Morning Review' });
 
@@ -57,16 +63,19 @@ export class MigrationModal extends Modal {
         if (!hasActionable && todayTasks.length === 0 && overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0) {
             contentEl.createEl('p', {
                 text: 'No tasks to review. Your slate is clean!',
-                cls: 'task-bujo-empty'
+                cls: 'friday-empty'
             });
             this.renderQuickAdd(contentEl);
             this.renderCloseButton(contentEl);
             return;
         }
 
-        // Section 1: Yesterday's incomplete tasks
+        // Section 1: Incomplete tasks from the most recent prior daily note
         if (yesterdayTasks.length > 0) {
-            this.renderSection(contentEl, 'Yesterday\'s Incomplete', yesterdayTasks, true);
+            const label = this.reviewData.yesterdayDate
+                ? `Incomplete from ${formatDateDisplay(new Date(this.reviewData.yesterdayDate + 'T00:00:00'))}`
+                : "Yesterday's Incomplete";
+            this.renderSection(contentEl, label, yesterdayTasks, true);
         }
 
         // Section 2: Overdue tasks from elsewhere
@@ -81,7 +90,7 @@ export class MigrationModal extends Modal {
 
         // Summary bar
         if (hasActionable) {
-            this.summaryEl = contentEl.createDiv({ cls: 'task-bujo-migration-summary' });
+            this.summaryEl = contentEl.createDiv({ cls: 'friday-migration-summary' });
             this.updateSummary();
         }
 
@@ -97,9 +106,9 @@ export class MigrationModal extends Modal {
 
         // Add selected button (if pickers have items)
         if (this.reviewData.availableTasks.length > 0 || this.reviewData.availableOpenPoints.length > 0) {
-            const addSelectedContainer = contentEl.createDiv({ cls: 'task-bujo-picker-actions' });
+            const addSelectedContainer = contentEl.createDiv({ cls: 'friday-picker-actions' });
             const addSelectedBtn = addSelectedContainer.createEl('button', { text: 'Add Selected to Today', cls: 'mod-cta' });
-            const addedFeedback = addSelectedContainer.createDiv({ cls: 'task-bujo-picker-feedback' });
+            const addedFeedback = addSelectedContainer.createDiv({ cls: 'friday-picker-feedback' });
 
             addSelectedBtn.addEventListener('click', async () => {
                 const allItems = [...this.reviewData.availableTasks, ...this.reviewData.availableOpenPoints];
@@ -135,7 +144,7 @@ export class MigrationModal extends Modal {
         this.renderQuickAdd(contentEl);
 
         // Action buttons
-        const buttonContainer = contentEl.createDiv({ cls: 'task-bujo-migration-actions' });
+        const buttonContainer = contentEl.createDiv({ cls: 'friday-migration-actions' });
 
         if (hasActionable) {
             const applyBtn = buttonContainer.createEl('button', { text: 'Apply', cls: 'mod-cta' });
@@ -165,10 +174,10 @@ export class MigrationModal extends Modal {
     }
 
     private renderSection(container: HTMLElement, title: string, tasks: TaskItem[], actionable: boolean): void {
-        const section = container.createDiv({ cls: 'task-bujo-review-section' });
-        const header = section.createDiv({ cls: 'task-bujo-review-section-header' });
-        header.createSpan({ text: title, cls: 'task-bujo-review-section-title' });
-        header.createSpan({ text: ` (${tasks.length})`, cls: 'task-bujo-review-section-count' });
+        const section = container.createDiv({ cls: 'friday-review-section' });
+        const header = section.createDiv({ cls: 'friday-review-section-header' });
+        header.createSpan({ text: title, cls: 'friday-review-section-title' });
+        header.createSpan({ text: ` (${tasks.length})`, cls: 'friday-review-section-count' });
 
         for (const task of tasks) {
             if (actionable) {
@@ -180,21 +189,21 @@ export class MigrationModal extends Modal {
     }
 
     private renderActionableTask(container: HTMLElement, task: TaskItem): void {
-        const itemEl = container.createDiv({ cls: 'task-bujo-migration-item' });
+        const itemEl = container.createDiv({ cls: 'friday-migration-item' });
 
         // Task info
-        const infoEl = itemEl.createDiv({ cls: 'task-bujo-migration-item-info' });
-        const textEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-text' });
+        const infoEl = itemEl.createDiv({ cls: 'friday-migration-item-info' });
+        const textEl = infoEl.createDiv({ cls: 'friday-migration-item-text' });
         if (task.priority && task.priority !== Priority.None) {
-            textEl.createSpan({ cls: `task-bujo-priority-dot task-bujo-priority-${task.priority}` });
+            textEl.createSpan({ cls: `friday-priority-dot friday-priority-${task.priority}` });
         }
         textEl.createSpan({ text: task.text });
 
-        const metaEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-meta' });
-        metaEl.createSpan({ cls: 'task-bujo-migration-item-source', text: this.getFileName(task.sourcePath) });
+        const metaEl = infoEl.createDiv({ cls: 'friday-migration-item-meta' });
+        metaEl.createSpan({ cls: 'friday-migration-item-source', text: this.getFileName(task.sourcePath) });
         if (task.dueDate) {
             metaEl.createSpan({ text: ' · ' });
-            metaEl.createSpan({ cls: 'task-bujo-migration-item-date', text: formatDateDisplay(task.dueDate) });
+            metaEl.createSpan({ cls: 'friday-migration-item-date', text: formatDateDisplay(task.dueDate) });
         }
 
         // Show children as read-only context
@@ -202,7 +211,7 @@ export class MigrationModal extends Modal {
             for (const childId of task.childrenIds) {
                 const child = this.store.getTaskById(childId);
                 if (child) {
-                    const childEl = itemEl.createDiv({ cls: 'task-bujo-migration-subtask' });
+                    const childEl = itemEl.createDiv({ cls: 'friday-migration-subtask' });
                     const statusIcon = child.status === TaskStatus.Done ? '[x]' : child.status === TaskStatus.Cancelled ? '[-]' : '[ ]';
                     childEl.textContent = `${statusIcon} ${child.text}`;
                 }
@@ -210,17 +219,17 @@ export class MigrationModal extends Modal {
         }
 
         // Action buttons
-        const actionsEl = itemEl.createDiv({ cls: 'task-bujo-migration-item-actions' });
+        const actionsEl = itemEl.createDiv({ cls: 'friday-migration-item-actions' });
 
         const actions: { action: MigrationAction; label: string; cls: string }[] = [
-            { action: 'forward', label: 'Forward', cls: 'task-bujo-btn-forward' },
-            { action: 'reschedule', label: 'Reschedule', cls: 'task-bujo-btn-reschedule' },
-            { action: 'done', label: 'Done', cls: 'task-bujo-btn-done' },
-            { action: 'cancel', label: 'Cancel', cls: 'task-bujo-btn-cancel' },
+            { action: 'forward', label: 'Forward', cls: 'friday-btn-forward' },
+            { action: 'reschedule', label: 'Reschedule', cls: 'friday-btn-reschedule' },
+            { action: 'done', label: 'Done', cls: 'friday-btn-done' },
+            { action: 'cancel', label: 'Cancel', cls: 'friday-btn-cancel' },
         ];
 
         const buttons: HTMLElement[] = [];
-        const dateInputContainer = itemEl.createDiv({ cls: 'task-bujo-migration-date-input' });
+        const dateInputContainer = itemEl.createDiv({ cls: 'friday-migration-date-input' });
         dateInputContainer.style.display = 'none';
         const dateInput = dateInputContainer.createEl('input', { type: 'date' }) as HTMLInputElement;
 
@@ -265,24 +274,24 @@ export class MigrationModal extends Modal {
     }
 
     private renderPreviewTask(container: HTMLElement, task: TaskItem): void {
-        const itemEl = container.createDiv({ cls: 'task-bujo-migration-item task-bujo-preview-item' });
+        const itemEl = container.createDiv({ cls: 'friday-migration-item friday-preview-item' });
 
-        const infoEl = itemEl.createDiv({ cls: 'task-bujo-migration-item-info' });
-        const textEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-text' });
+        const infoEl = itemEl.createDiv({ cls: 'friday-migration-item-info' });
+        const textEl = infoEl.createDiv({ cls: 'friday-migration-item-text' });
         if (task.priority && task.priority !== Priority.None) {
-            textEl.createSpan({ cls: `task-bujo-priority-dot task-bujo-priority-${task.priority}` });
+            textEl.createSpan({ cls: `friday-priority-dot friday-priority-${task.priority}` });
         }
         textEl.createSpan({ text: task.text });
 
-        const metaEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-meta' });
-        metaEl.createSpan({ cls: 'task-bujo-migration-item-source', text: this.getFileName(task.sourcePath) });
+        const metaEl = infoEl.createDiv({ cls: 'friday-migration-item-meta' });
+        metaEl.createSpan({ cls: 'friday-migration-item-source', text: this.getFileName(task.sourcePath) });
 
         // Show children as read-only context
         if (task.childrenIds.length > 0) {
             for (const childId of task.childrenIds) {
                 const child = this.store.getTaskById(childId);
                 if (child) {
-                    const childEl = itemEl.createDiv({ cls: 'task-bujo-migration-subtask' });
+                    const childEl = itemEl.createDiv({ cls: 'friday-migration-subtask' });
                     const statusIcon = child.status === TaskStatus.Done ? '[x]' : child.status === TaskStatus.Cancelled ? '[-]' : '[ ]';
                     childEl.textContent = `${statusIcon} ${child.text}`;
                 }
@@ -291,28 +300,28 @@ export class MigrationModal extends Modal {
     }
 
     private renderQuickAdd(container: HTMLElement): void {
-        const section = container.createDiv({ cls: 'task-bujo-review-quickadd' });
+        const section = container.createDiv({ cls: 'friday-review-quickadd' });
         section.createEl('h3', { text: 'Add Task for Today' });
 
-        const form = section.createDiv({ cls: 'task-bujo-add-form' });
+        const form = section.createDiv({ cls: 'friday-add-form' });
 
         const textInput = form.createEl('input', {
-            type: 'text', placeholder: 'New task...', cls: 'task-bujo-add-input'
+            type: 'text', placeholder: 'New task...', cls: 'friday-add-input'
         });
 
-        const prioritySelect = form.createEl('select', { cls: 'task-bujo-add-priority' });
+        const prioritySelect = form.createEl('select', { cls: 'friday-add-priority' });
         const opts: [string, string][] = [['none', '--'], ['high', 'H'], ['medium', 'M'], ['low', 'L']];
         for (const [val, label] of opts) {
             prioritySelect.createEl('option', { value: val, text: label });
         }
 
         const dateInput = form.createEl('input', {
-            type: 'date', cls: 'task-bujo-add-date'
+            type: 'date', cls: 'friday-add-date'
         });
 
-        const addBtn = form.createEl('button', { text: '+ Add', cls: 'task-bujo-add-btn' });
+        const addBtn = form.createEl('button', { text: '+ Add', cls: 'friday-add-btn' });
 
-        const addedList = section.createDiv({ cls: 'task-bujo-review-added' });
+        const addedList = section.createDiv({ cls: 'friday-review-added' });
 
         const doAdd = async () => {
             const text = textInput.value.trim();
@@ -323,7 +332,7 @@ export class MigrationModal extends Modal {
 
             await this.dailyNotes.addRawTaskLine(line, new Date());
 
-            addedList.createDiv({ cls: 'task-bujo-muted', text: `Added: ${text}` });
+            addedList.createDiv({ cls: 'friday-muted', text: `Added: ${text}` });
             textInput.value = '';
             dateInput.value = '';
             prioritySelect.value = 'none';
@@ -337,20 +346,20 @@ export class MigrationModal extends Modal {
     }
 
     private renderPicker(container: HTMLElement, title: string, items: TaskItem[], selectedSet: Set<string>): void {
-        const section = container.createDiv({ cls: 'task-bujo-picker-section' });
+        const section = container.createDiv({ cls: 'friday-picker-section' });
 
-        const header = section.createDiv({ cls: 'task-bujo-picker-header' });
-        header.createSpan({ text: title, cls: 'task-bujo-review-section-title' });
-        header.createSpan({ text: ` (${items.length})`, cls: 'task-bujo-review-section-count' });
+        const header = section.createDiv({ cls: 'friday-picker-header' });
+        header.createSpan({ text: title, cls: 'friday-review-section-title' });
+        header.createSpan({ text: ` (${items.length})`, cls: 'friday-review-section-count' });
 
         // Search filter
         const searchInput = section.createEl('input', {
             type: 'text',
             placeholder: 'Search...',
-            cls: 'task-bujo-picker-search'
+            cls: 'friday-picker-search'
         });
 
-        const listEl = section.createDiv({ cls: 'task-bujo-picker-list' });
+        const listEl = section.createDiv({ cls: 'friday-picker-list' });
         const MAX_VISIBLE = 50;
 
         const renderList = (query: string) => {
@@ -363,12 +372,12 @@ export class MigrationModal extends Modal {
             const visible = filtered.slice(0, MAX_VISIBLE);
 
             if (visible.length === 0) {
-                listEl.createDiv({ cls: 'task-bujo-muted', text: 'No items match' });
+                listEl.createDiv({ cls: 'friday-muted', text: 'No items match' });
                 return;
             }
 
             for (const item of visible) {
-                const row = listEl.createDiv({ cls: 'task-bujo-picker-item' });
+                const row = listEl.createDiv({ cls: 'friday-picker-item' });
 
                 const checkbox = row.createEl('input', { type: 'checkbox' }) as HTMLInputElement;
                 checkbox.checked = selectedSet.has(item.id);
@@ -380,13 +389,13 @@ export class MigrationModal extends Modal {
                     }
                 });
 
-                const textEl = row.createDiv({ cls: 'task-bujo-picker-item-text' });
+                const textEl = row.createDiv({ cls: 'friday-picker-item-text' });
                 if (item.priority && item.priority !== Priority.None) {
-                    textEl.createSpan({ cls: `task-bujo-priority-dot task-bujo-priority-${item.priority}` });
+                    textEl.createSpan({ cls: `friday-priority-dot friday-priority-${item.priority}` });
                 }
                 textEl.createSpan({ text: item.text });
 
-                const sourceEl = row.createDiv({ cls: 'task-bujo-picker-item-source' });
+                const sourceEl = row.createDiv({ cls: 'friday-picker-item-source' });
                 sourceEl.textContent = this.getFileName(item.sourcePath);
                 if (item.dueDate) {
                     sourceEl.textContent += ` · ${formatDateDisplay(item.dueDate)}`;
@@ -394,7 +403,7 @@ export class MigrationModal extends Modal {
             }
 
             if (filtered.length > MAX_VISIBLE) {
-                listEl.createDiv({ cls: 'task-bujo-muted', text: `+ ${filtered.length - MAX_VISIBLE} more (use search to narrow)` });
+                listEl.createDiv({ cls: 'friday-muted', text: `+ ${filtered.length - MAX_VISIBLE} more (use search to narrow)` });
             }
         };
 
@@ -409,7 +418,7 @@ export class MigrationModal extends Modal {
     }
 
     private renderCloseButton(container: HTMLElement): void {
-        const buttonContainer = container.createDiv({ cls: 'task-bujo-migration-actions' });
+        const buttonContainer = container.createDiv({ cls: 'friday-migration-actions' });
         const closeBtn = buttonContainer.createEl('button', { text: 'Close' });
         closeBtn.addEventListener('click', () => {
             this.onComplete(null);
@@ -422,37 +431,37 @@ export class MigrationModal extends Modal {
      *  line to today's daily note — the author still decides when to actually
      *  hold the 1:1 and can trigger `Start 1:1` from the Team view at that point. */
     private renderOverdueOneOnOnes(container: HTMLElement, overdue: OverdueOneOnOne[]): void {
-        const section = container.createDiv({ cls: 'task-bujo-review-section task-bujo-review-oneonones' });
-        const header = section.createDiv({ cls: 'task-bujo-review-section-header' });
-        header.createSpan({ text: 'Overdue 1:1s', cls: 'task-bujo-review-section-title' });
-        header.createSpan({ text: ` (${overdue.length})`, cls: 'task-bujo-review-section-count' });
+        const section = container.createDiv({ cls: 'friday-review-section friday-review-oneonones' });
+        const header = section.createDiv({ cls: 'friday-review-section-header' });
+        header.createSpan({ text: 'Overdue 1:1s', cls: 'friday-review-section-title' });
+        header.createSpan({ text: ` (${overdue.length})`, cls: 'friday-review-section-count' });
 
         for (const { member, daysOverdue } of overdue) {
-            const row = section.createDiv({ cls: 'task-bujo-migration-item task-bujo-oneonone-row' });
+            const row = section.createDiv({ cls: 'friday-migration-item friday-oneonone-row' });
 
-            const infoEl = row.createDiv({ cls: 'task-bujo-migration-item-info' });
-            const textEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-text' });
-            textEl.createSpan({ text: member.name, cls: 'task-bujo-oneonone-name' });
+            const infoEl = row.createDiv({ cls: 'friday-migration-item-info' });
+            const textEl = infoEl.createDiv({ cls: 'friday-migration-item-text' });
+            textEl.createSpan({ text: member.name, cls: 'friday-oneonone-name' });
             if (member.role) {
-                textEl.createSpan({ text: ` — ${member.role}`, cls: 'task-bujo-oneonone-role' });
+                textEl.createSpan({ text: ` — ${member.role}`, cls: 'friday-oneonone-role' });
             }
 
-            const metaEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-meta' });
+            const metaEl = infoEl.createDiv({ cls: 'friday-migration-item-meta' });
             metaEl.createSpan({
-                cls: 'task-bujo-oneonone-overdue',
+                cls: 'friday-oneonone-overdue',
                 text: `${daysOverdue}d overdue · cadence ${member.cadence}`,
             });
 
-            const actionsEl = row.createDiv({ cls: 'task-bujo-migration-item-actions' });
+            const actionsEl = row.createDiv({ cls: 'friday-migration-item-actions' });
             const scheduleBtn = actionsEl.createEl('button', {
                 text: 'Schedule 1:1',
-                cls: 'task-bujo-btn-forward',
+                cls: 'friday-btn-forward',
             });
             scheduleBtn.addEventListener('click', async () => {
                 try {
                     // Append a plain checkbox reminder with a @to-style annotation so the
                     // user can convert it into a calendar event or mark it done later.
-                    // Kept as a raw task line so it appears in the regular BuJo daily view.
+                    // Kept as a raw task line so it appears in the regular Friday daily view.
                     const line = `- [ ] Schedule 1:1 with [[${member.name}]] (${daysOverdue}d overdue)`;
                     await this.dailyNotes.addRawTaskLine(line, new Date());
                     scheduleBtn.setText('Scheduled ✓');
@@ -488,36 +497,36 @@ export class MigrationModal extends Modal {
     /** Section: topics waiting on someone with no recent nudge. Each row lets the user
      *  mark the nudge as done (updates `lastNudged`) or clear the waitingOn flag. */
     private renderStaleWaitingTopics(container: HTMLElement, topics: SprintTopic[]): void {
-        const section = container.createDiv({ cls: 'task-bujo-review-section task-bujo-review-waiting' });
-        const header = section.createDiv({ cls: 'task-bujo-review-section-header' });
-        header.createSpan({ text: 'Waiting on', cls: 'task-bujo-review-section-title' });
-        header.createSpan({ text: ` (${topics.length})`, cls: 'task-bujo-review-section-count' });
+        const section = container.createDiv({ cls: 'friday-review-section friday-review-waiting' });
+        const header = section.createDiv({ cls: 'friday-review-section-header' });
+        header.createSpan({ text: 'Waiting on', cls: 'friday-review-section-title' });
+        header.createSpan({ text: ` (${topics.length})`, cls: 'friday-review-section-count' });
 
         const members: TeamMember[] = this.settings?.teamMembers ?? [];
         const byEmail = new Map(members.map(m => [m.email, m]));
 
         for (const topic of topics) {
-            const row = section.createDiv({ cls: 'task-bujo-migration-item task-bujo-waiting-row' });
+            const row = section.createDiv({ cls: 'friday-migration-item friday-waiting-row' });
 
-            const infoEl = row.createDiv({ cls: 'task-bujo-migration-item-info' });
-            const textEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-text' });
-            textEl.createSpan({ text: topic.title, cls: 'task-bujo-waiting-topic' });
+            const infoEl = row.createDiv({ cls: 'friday-migration-item-info' });
+            const textEl = infoEl.createDiv({ cls: 'friday-migration-item-text' });
+            textEl.createSpan({ text: topic.title, cls: 'friday-waiting-topic' });
 
             const waitingOn = topic.waitingOn ?? '';
             const member = byEmail.get(waitingOn);
             const label = member ? (member.nickname || member.fullName || member.email) : waitingOn;
 
-            const metaEl = infoEl.createDiv({ cls: 'task-bujo-migration-item-meta' });
+            const metaEl = infoEl.createDiv({ cls: 'friday-migration-item-meta' });
             const summary = topic.lastNudged
                 ? `Waiting on ${label} · last nudged ${topic.lastNudged}`
                 : `Waiting on ${label} · never nudged`;
-            metaEl.createSpan({ text: summary, cls: 'task-bujo-waiting-meta' });
+            metaEl.createSpan({ text: summary, cls: 'friday-waiting-meta' });
 
-            const actionsEl = row.createDiv({ cls: 'task-bujo-migration-item-actions' });
+            const actionsEl = row.createDiv({ cls: 'friday-migration-item-actions' });
 
             const nudgedBtn = actionsEl.createEl('button', {
                 text: 'Just nudged',
-                cls: 'task-bujo-btn-forward',
+                cls: 'friday-btn-forward',
             });
             nudgedBtn.addEventListener('click', async () => {
                 try {
@@ -532,7 +541,7 @@ export class MigrationModal extends Modal {
 
             const clearBtn = actionsEl.createEl('button', {
                 text: 'Unblock',
-                cls: 'task-bujo-btn',
+                cls: 'friday-btn',
             });
             clearBtn.addEventListener('click', async () => {
                 try {

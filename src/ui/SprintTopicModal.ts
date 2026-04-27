@@ -67,7 +67,7 @@ export class SprintTopicModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		this.modalEl.addClass('task-bujo-topic-modal');
+		this.modalEl.addClass('friday-topic-modal');
 
 		if (this.editTopic) {
 			this.title = this.editTopic.title;
@@ -156,16 +156,16 @@ export class SprintTopicModal extends Modal {
 				const historySetting = new Setting(contentEl)
 					.setName('Sprint history')
 					.setDesc('All sprints this topic has been assigned to (in order)');
-				const listEl = historySetting.settingEl.createDiv({ cls: 'task-bujo-topic-sprint-history' });
+				const listEl = historySetting.settingEl.createDiv({ cls: 'friday-topic-sprint-history' });
 				for (const sprintId of this.editTopic.sprintHistory) {
 					const sprint = sprints.find(s => s.id === sprintId);
 					const label = sprint
 						? `${sprint.name} (${sprint.startDate} → ${sprint.endDate})`
 						: `${sprintId} · deleted`;
-					const chip = listEl.createDiv({ cls: 'task-bujo-topic-sprint-history-chip' });
+					const chip = listEl.createDiv({ cls: 'friday-topic-sprint-history-chip' });
 					chip.setText(label);
 					if (sprintId === this.editTopic.sprintId) {
-						chip.addClass('task-bujo-topic-sprint-history-current');
+						chip.addClass('friday-topic-sprint-history-current');
 					}
 				}
 			}
@@ -271,14 +271,14 @@ export class SprintTopicModal extends Modal {
 				})
 			);
 
-		this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: 'task-bujo-page-chips' });
+		this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: 'friday-page-chips' });
 		this.renderChips();
 
 		// External references — Confluence, Figma, SAP, etc.
 		this.renderRefsSection(contentEl);
 
 		// Error display
-		const errorEl = contentEl.createDiv({ cls: 'task-bujo-modal-error' });
+		const errorEl = contentEl.createDiv({ cls: 'friday-modal-error' });
 
 		new Setting(contentEl)
 			.addButton(btn => btn
@@ -302,7 +302,7 @@ export class SprintTopicModal extends Modal {
 		activeMembers: TeamMember[],
 		teamMembers: TeamMember[],
 	): void {
-		const wrapper = contentEl.createDiv({ cls: 'task-bujo-topic-waiting-wrapper' });
+		const wrapper = contentEl.createDiv({ cls: 'friday-topic-waiting-wrapper' });
 		const renderInner = () => {
 			wrapper.empty();
 
@@ -478,16 +478,16 @@ export class SprintTopicModal extends Modal {
 
 		if (this.linkedPages.length === 0) {
 			this.chipsContainer.createSpan({
-				cls: 'task-bujo-page-chips-empty',
+				cls: 'friday-page-chips-empty',
 				text: 'No pages linked yet',
 			});
 			return;
 		}
 
 		for (const page of this.linkedPages) {
-			const chip = this.chipsContainer.createDiv({ cls: 'task-bujo-page-chip' });
+			const chip = this.chipsContainer.createDiv({ cls: 'friday-page-chip' });
 			chip.createSpan({ text: page });
-			const removeBtn = chip.createSpan({ cls: 'task-bujo-page-chip-remove', text: '\u00D7' });
+			const removeBtn = chip.createSpan({ cls: 'friday-page-chip-remove', text: '\u00D7' });
 			removeBtn.addEventListener('click', () => {
 				this.linkedPages = this.linkedPages.filter(p => p !== page);
 				this.renderChips();
@@ -501,14 +501,14 @@ export class SprintTopicModal extends Modal {
 			.setName('References')
 			.setDesc('External links (Confluence, Figma, SAP, Miro, …). label · host');
 
-		this.refsContainer = setting.settingEl.createDiv({ cls: 'task-bujo-refs-chips' });
+		this.refsContainer = setting.settingEl.createDiv({ cls: 'friday-refs-chips' });
 
 		// Inline add-form (label + url + add button)
-		const addForm = setting.settingEl.createDiv({ cls: 'task-bujo-refs-add-form' });
+		const addForm = setting.settingEl.createDiv({ cls: 'friday-refs-add-form' });
 		const labelInput = addForm.createEl('input', { type: 'text', placeholder: 'Label (e.g. Confluence)' });
-		labelInput.addClass('task-bujo-refs-label-input');
+		labelInput.addClass('friday-refs-label-input');
 		const urlInput = addForm.createEl('input', { type: 'url', placeholder: 'https://…' });
-		urlInput.addClass('task-bujo-refs-url-input');
+		urlInput.addClass('friday-refs-url-input');
 		// Auto-fill label from URL hostname on blur when label is empty
 		urlInput.addEventListener('blur', () => {
 			if (!labelInput.value.trim() && urlInput.value.trim()) {
@@ -519,7 +519,7 @@ export class SprintTopicModal extends Modal {
 			}
 		});
 		const addBtn = addForm.createEl('button', { text: '+ Add' });
-		addBtn.addClass('task-bujo-refs-add-btn');
+		addBtn.addClass('friday-refs-add-btn');
 		const tryAdd = () => {
 			const label = labelInput.value.trim();
 			const url = urlInput.value.trim();
@@ -545,20 +545,20 @@ export class SprintTopicModal extends Modal {
 
 		if (this.refs.length === 0) {
 			this.refsContainer.createSpan({
-				cls: 'task-bujo-page-chips-empty',
+				cls: 'friday-page-chips-empty',
 				text: 'No references yet',
 			});
 			return;
 		}
 
 		for (const ref of this.refs) {
-			const chip = this.refsContainer.createDiv({ cls: 'task-bujo-refs-chip' });
+			const chip = this.refsContainer.createDiv({ cls: 'friday-refs-chip' });
 			let host = '';
 			try { host = new URL(ref.url).hostname.replace(/^www\./, ''); } catch { /* ignore */ }
 			const text = host ? `${ref.label} · ${host}` : ref.label;
 			chip.createSpan({ text });
 			chip.setAttribute('title', ref.url);
-			const removeBtn = chip.createSpan({ cls: 'task-bujo-page-chip-remove', text: '\u00D7' });
+			const removeBtn = chip.createSpan({ cls: 'friday-page-chip-remove', text: '\u00D7' });
 			removeBtn.addEventListener('click', () => {
 				this.refs = this.refs.filter(r => r !== ref);
 				this.renderRefsChips();

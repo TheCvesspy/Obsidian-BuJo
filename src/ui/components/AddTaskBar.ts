@@ -19,19 +19,19 @@ export class AddTaskBar {
 		private getSettings: () => PluginSettings,
 		private callbacks: AddTaskBarCallbacks
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-add-bar' });
+		this.el = container.createDiv({ cls: 'friday-add-bar' });
 		this.target = this.getSettings().defaultQuickAddTarget ?? 'tasks';
 		this.render();
 	}
 
 	private render(): void {
 		this.el.empty();
-		const form = this.el.createDiv({ cls: 'task-bujo-add-form' });
+		const form = this.el.createDiv({ cls: 'friday-add-form' });
 
 		// Target toggle — Tasks vs Inbox. Inbox mode strips priority/date so capture
 		// stays frictionless; triage happens later from the Inbox view.
 		const targetToggle = form.createEl('button', {
-			cls: 'task-bujo-add-target-toggle',
+			cls: 'friday-add-target-toggle',
 			text: this.target === 'inbox' ? '\u{1F4E5} Inbox' : '\u2713 Tasks',
 		});
 		targetToggle.setAttribute('title', 'Toggle between Tasks and Inbox');
@@ -44,14 +44,14 @@ export class AddTaskBar {
 		const textInput = form.createEl('input', {
 			type: 'text',
 			placeholder: this.target === 'inbox' ? 'Quick capture note...' : 'Quick add task...',
-			cls: 'task-bujo-add-input',
+			cls: 'friday-add-input',
 		});
 
 		// Priority + date only show up for the Tasks target — Inbox is intentionally minimal.
 		let prioritySelect: HTMLSelectElement | null = null;
 		let dateInput: HTMLInputElement | null = null;
 		if (this.target === 'tasks') {
-			prioritySelect = form.createEl('select', { cls: 'task-bujo-add-priority' });
+			prioritySelect = form.createEl('select', { cls: 'friday-add-priority' });
 			const options: [string, string][] = [
 				['none', '—'],
 				['high', 'H'],
@@ -65,13 +65,13 @@ export class AddTaskBar {
 			dateInput = form.createEl('input', {
 				type: 'text',
 				placeholder: 'DD-MM-YYYY',
-				cls: 'task-bujo-add-date',
+				cls: 'friday-add-date',
 			});
 		}
 
 		const addBtn = form.createEl('button', {
 			text: this.target === 'inbox' ? 'Capture' : '+ Add',
-			cls: 'task-bujo-add-btn',
+			cls: 'friday-add-btn',
 		});
 
 		const doAdd = async () => {

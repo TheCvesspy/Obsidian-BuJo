@@ -23,7 +23,7 @@ export class CalendarView {
 		private callbacks: TaskItemRowCallbacks,
 		private searchQuery: string,
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-calendar' });
+		this.el = container.createDiv({ cls: 'friday-calendar' });
 		const now = new Date();
 		this.selectedMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 	}
@@ -39,10 +39,10 @@ export class CalendarView {
 	}
 
 	private renderHeader(): void {
-		const header = this.el.createDiv({ cls: 'task-bujo-calendar-header' });
+		const header = this.el.createDiv({ cls: 'friday-calendar-header' });
 
 		const prevBtn = header.createEl('button', {
-			cls: 'task-bujo-calendar-nav',
+			cls: 'friday-calendar-nav',
 			text: '‹',
 		});
 		prevBtn.addEventListener('click', () => {
@@ -54,11 +54,11 @@ export class CalendarView {
 			this.render();
 		});
 
-		const title = header.createSpan({ cls: 'task-bujo-calendar-title' });
+		const title = header.createSpan({ cls: 'friday-calendar-title' });
 		title.textContent = `${MONTH_NAMES[this.selectedMonth.getMonth()]} ${this.selectedMonth.getFullYear()}`;
 
 		const nextBtn = header.createEl('button', {
-			cls: 'task-bujo-calendar-nav',
+			cls: 'friday-calendar-nav',
 			text: '›',
 		});
 		nextBtn.addEventListener('click', () => {
@@ -72,7 +72,7 @@ export class CalendarView {
 
 		// Today button
 		const todayBtn = header.createEl('button', {
-			cls: 'task-bujo-calendar-nav task-bujo-calendar-today-btn',
+			cls: 'friday-calendar-nav friday-calendar-today-btn',
 			text: 'Today',
 		});
 		todayBtn.addEventListener('click', () => {
@@ -84,19 +84,19 @@ export class CalendarView {
 	}
 
 	private renderDayLabels(): void {
-		const labels = this.el.createDiv({ cls: 'task-bujo-calendar-day-labels' });
+		const labels = this.el.createDiv({ cls: 'friday-calendar-day-labels' });
 		const weekStart = this.settings.weekStartDay;
 		for (let i = 0; i < 7; i++) {
 			const dayIndex = (weekStart + i) % 7;
 			labels.createDiv({
-				cls: 'task-bujo-calendar-day-label',
+				cls: 'friday-calendar-day-label',
 				text: DAY_LABELS_SUNDAY[dayIndex],
 			});
 		}
 	}
 
 	private renderGrid(): void {
-		const grid = this.el.createDiv({ cls: 'task-bujo-calendar-grid' });
+		const grid = this.el.createDiv({ cls: 'friday-calendar-grid' });
 
 		const year = this.selectedMonth.getFullYear();
 		const month = this.selectedMonth.getMonth();
@@ -134,18 +134,18 @@ export class CalendarView {
 			const cellDate = new Date(rangeStart);
 			cellDate.setDate(cellDate.getDate() + i);
 
-			const cell = grid.createDiv({ cls: 'task-bujo-calendar-cell' });
+			const cell = grid.createDiv({ cls: 'friday-calendar-cell' });
 			const isCurrentMonth = cellDate.getMonth() === month;
 			const isTodayCell = isToday(cellDate, today);
 			const isSelected = this.selectedDay && isSameDay(cellDate, this.selectedDay);
 
-			if (!isCurrentMonth) cell.addClass('task-bujo-calendar-other-month');
-			if (isTodayCell) cell.addClass('task-bujo-calendar-today');
-			if (isSelected) cell.addClass('task-bujo-calendar-selected');
+			if (!isCurrentMonth) cell.addClass('friday-calendar-other-month');
+			if (isTodayCell) cell.addClass('friday-calendar-today');
+			if (isSelected) cell.addClass('friday-calendar-selected');
 
 			// Day number
 			cell.createDiv({
-				cls: 'task-bujo-calendar-day-number',
+				cls: 'friday-calendar-day-number',
 				text: String(cellDate.getDate()),
 			});
 
@@ -154,19 +154,19 @@ export class CalendarView {
 			const dayTasks = tasksByDay.get(key) || [];
 
 			if (dayTasks.length > 0) {
-				const dots = cell.createDiv({ cls: 'task-bujo-calendar-task-dots' });
+				const dots = cell.createDiv({ cls: 'friday-calendar-task-dots' });
 				const maxDots = 4;
 				const shown = dayTasks.slice(0, maxDots);
 				for (const t of shown) {
-					const dot = dots.createSpan({ cls: 'task-bujo-calendar-dot' });
-					if (t.priority === Priority.High) dot.addClass('task-bujo-priority-high');
-					else if (t.priority === Priority.Medium) dot.addClass('task-bujo-priority-medium');
-					else if (t.priority === Priority.Low) dot.addClass('task-bujo-priority-low');
-					else dot.addClass('task-bujo-calendar-dot-default');
+					const dot = dots.createSpan({ cls: 'friday-calendar-dot' });
+					if (t.priority === Priority.High) dot.addClass('friday-priority-high');
+					else if (t.priority === Priority.Medium) dot.addClass('friday-priority-medium');
+					else if (t.priority === Priority.Low) dot.addClass('friday-priority-low');
+					else dot.addClass('friday-calendar-dot-default');
 				}
 				if (dayTasks.length > maxDots) {
 					dots.createSpan({
-						cls: 'task-bujo-calendar-dot-more',
+						cls: 'friday-calendar-dot-more',
 						text: `+${dayTasks.length - maxDots}`,
 					});
 				}
@@ -182,9 +182,9 @@ export class CalendarView {
 	}
 
 	private renderDayDetail(date: Date): void {
-		const detail = this.el.createDiv({ cls: 'task-bujo-calendar-detail' });
+		const detail = this.el.createDiv({ cls: 'friday-calendar-detail' });
 
-		const dayLabel = detail.createDiv({ cls: 'task-bujo-calendar-detail-header' });
+		const dayLabel = detail.createDiv({ cls: 'friday-calendar-detail-header' });
 		const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 		dayLabel.textContent = `${days[date.getDay()]}, ${MONTH_NAMES[date.getMonth()]} ${date.getDate()}`;
 
@@ -197,13 +197,13 @@ export class CalendarView {
 
 		if (dayTasks.length === 0) {
 			detail.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: 'No tasks due on this day.',
 			});
 			return;
 		}
 
-		const list = detail.createDiv({ cls: 'task-bujo-calendar-detail-list' });
+		const list = detail.createDiv({ cls: 'friday-calendar-detail-list' });
 		for (const task of dayTasks) {
 			new TaskItemRow(list, task, this.callbacks);
 		}

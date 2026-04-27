@@ -16,7 +16,7 @@ export class WeeklyView {
 		private callbacks: TaskItemRowCallbacks,
 		private searchQuery: string = ''
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-weekly-view' });
+		this.el = container.createDiv({ cls: 'friday-weekly-view' });
 		this.hierarchyCallbacks = {
 			...callbacks,
 			getTaskById: (id: string) => store.getTaskById(id),
@@ -37,7 +37,7 @@ export class WeeklyView {
 		const now = new Date();
 
 		// Header
-		const header = this.el.createDiv({ cls: 'task-bujo-view-header' });
+		const header = this.el.createDiv({ cls: 'friday-view-header' });
 		header.createSpan({ text: `Weekly Log — Week of ${formatDateDisplay(days[0])}` });
 
 		// Fetch all tasks for the week range once, then bucket by day
@@ -60,19 +60,19 @@ export class WeeklyView {
 		}
 
 		for (const day of days) {
-			const daySection = this.el.createDiv({ cls: 'task-bujo-week-day' });
+			const daySection = this.el.createDiv({ cls: 'friday-week-day' });
 
 			// Day header
-			const dayHeader = daySection.createDiv({ cls: 'task-bujo-day-header' });
+			const dayHeader = daySection.createDiv({ cls: 'friday-day-header' });
 			dayHeader.createSpan({ text: formatDateDisplay(day) });
 			if (isToday(day, now)) {
-				dayHeader.createSpan({ cls: 'task-bujo-today-badge', text: '(Today)' });
+				dayHeader.createSpan({ cls: 'friday-today-badge', text: '(Today)' });
 			}
 
 			const dayTasks = byDay.get(day.toDateString()) ?? [];
 
 			if (dayTasks.length === 0) {
-				daySection.createDiv({ cls: 'task-bujo-muted', text: 'No tasks' });
+				daySection.createDiv({ cls: 'friday-muted', text: 'No tasks' });
 				continue;
 			}
 
@@ -81,14 +81,14 @@ export class WeeklyView {
 			const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
 
 			// Count + progress bar
-			const progressRow = daySection.createDiv({ cls: 'task-bujo-progress-row' });
-			progressRow.createSpan({ cls: 'task-bujo-day-count', text: `${doneCount}/${total} done` });
-			const barOuter = progressRow.createDiv({ cls: 'task-bujo-progress-bar' });
-			const barInner = barOuter.createDiv({ cls: 'task-bujo-progress-fill' });
+			const progressRow = daySection.createDiv({ cls: 'friday-progress-row' });
+			progressRow.createSpan({ cls: 'friday-day-count', text: `${doneCount}/${total} done` });
+			const barOuter = progressRow.createDiv({ cls: 'friday-progress-bar' });
+			const barInner = barOuter.createDiv({ cls: 'friday-progress-fill' });
 			barInner.style.width = `${pct}%`;
 
 			// Task rows (tree-aware)
-			const taskContainer = daySection.createDiv({ cls: 'task-bujo-day-tasks' });
+			const taskContainer = daySection.createDiv({ cls: 'friday-day-tasks' });
 			for (const task of dayTasks) {
 				this.renderTaskTree(taskContainer, task);
 			}

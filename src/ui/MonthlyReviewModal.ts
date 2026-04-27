@@ -24,13 +24,13 @@ export class MonthlyReviewModal extends Modal {
 
 	async onOpen(): Promise<void> {
 		const { contentEl } = this;
-		this.modalEl.addClass('task-bujo-weekly-review-modal');
+		this.modalEl.addClass('friday-weekly-review-modal');
 
 		const now = new Date();
 		contentEl.createEl('h2', { text: `Monthly Review — ${formatMonthDisplay(now)}` });
 
 		// Summary stats
-		const summarySection = contentEl.createDiv({ cls: 'task-bujo-review-summary' });
+		const summarySection = contentEl.createDiv({ cls: 'friday-review-summary' });
 
 		const summaryItems: { label: string; value: string }[] = [
 			{ label: 'Tasks Planned', value: String(this.stats.totalPlanned) },
@@ -41,9 +41,9 @@ export class MonthlyReviewModal extends Modal {
 		];
 
 		for (const item of summaryItems) {
-			const row = summarySection.createDiv({ cls: 'task-bujo-review-stat' });
-			row.createSpan({ cls: 'task-bujo-review-stat-label', text: item.label });
-			row.createSpan({ cls: 'task-bujo-review-stat-value', text: item.value });
+			const row = summarySection.createDiv({ cls: 'friday-review-stat' });
+			row.createSpan({ cls: 'friday-review-stat-label', text: item.label });
+			row.createSpan({ cls: 'friday-review-stat-value', text: item.value });
 		}
 
 		// Reflections textarea
@@ -55,7 +55,7 @@ export class MonthlyReviewModal extends Modal {
 		}
 
 		// Actions
-		const actions = contentEl.createDiv({ cls: 'task-bujo-review-actions' });
+		const actions = contentEl.createDiv({ cls: 'friday-review-actions' });
 
 		const saveBtn = actions.createEl('button', {
 			cls: 'mod-cta',
@@ -73,17 +73,17 @@ export class MonthlyReviewModal extends Modal {
 	}
 
 	private async renderReflections(container: HTMLElement): Promise<void> {
-		const section = container.createDiv({ cls: 'task-bujo-monthly-reflections-section' });
+		const section = container.createDiv({ cls: 'friday-monthly-reflections-section' });
 		section.createEl('h3', { text: 'Reflections' });
 		section.createEl('p', {
 			text: 'What went well? What could be improved? What to focus on next month?',
-			cls: 'task-bujo-text-muted',
+			cls: 'friday-text-muted',
 		});
 
 		this.reflectionsText = await this.monthlyNotes.readReflections(new Date());
 
 		const textarea = section.createEl('textarea', {
-			cls: 'task-bujo-monthly-reflections-textarea',
+			cls: 'friday-monthly-reflections-textarea',
 			placeholder: 'Write your reflections here...',
 		});
 		textarea.value = this.reflectionsText;
@@ -94,7 +94,7 @@ export class MonthlyReviewModal extends Modal {
 	}
 
 	private renderComparison(container: HTMLElement): void {
-		const section = container.createDiv({ cls: 'task-bujo-review-comparison' });
+		const section = container.createDiv({ cls: 'friday-review-comparison' });
 		section.createEl('h3', { text: 'Recent Months' });
 
 		const recent = this.monthlyHistory.slice(-4);
@@ -102,7 +102,7 @@ export class MonthlyReviewModal extends Modal {
 			const rate = snap.totalPlanned > 0
 				? ((snap.totalCompleted / snap.totalPlanned) * 100).toFixed(0)
 				: '0';
-			const row = section.createDiv({ cls: 'task-bujo-review-comparison-row' });
+			const row = section.createDiv({ cls: 'friday-review-comparison-row' });
 			row.createSpan({ text: formatMonthIdDisplay(snap.monthId) });
 			row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%)` });
 		}

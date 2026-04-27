@@ -59,21 +59,21 @@ export class TopicsOverviewView {
 		private searchQuery: string = '',
 		private jiraService: JiraService | null = null,
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-topics-overview' });
+		this.el = container.createDiv({ cls: 'friday-topics-overview' });
 	}
 
 	render(): void {
 		this.el.empty();
 
 		// Header toolbar: sub-mode toggle + scope filter + new topic
-		const header = this.el.createDiv({ cls: 'task-bujo-topics-header' });
+		const header = this.el.createDiv({ cls: 'friday-topics-header' });
 
-		const modeGroup = header.createDiv({ cls: 'task-bujo-topics-modeswitch' });
+		const modeGroup = header.createDiv({ cls: 'friday-topics-modeswitch' });
 		this.renderModeButton(modeGroup, 'list', 'List');
 		this.renderModeButton(modeGroup, 'impactEffort', 'Impact / Effort');
 		this.renderModeButton(modeGroup, 'eisenhower', 'Eisenhower');
 
-		const scopeGroup = header.createDiv({ cls: 'task-bujo-topics-scope' });
+		const scopeGroup = header.createDiv({ cls: 'friday-topics-scope' });
 		this.renderScopeButton(scopeGroup, 'all', 'All');
 		this.renderScopeButton(scopeGroup, 'active', 'Active sprint');
 		this.renderScopeButton(scopeGroup, 'backlog', 'Backlog');
@@ -81,7 +81,7 @@ export class TopicsOverviewView {
 
 		this.renderAssigneeFilter(header);
 
-		const newBtn = header.createEl('button', { cls: 'task-bujo-btn', text: '+ Topic' });
+		const newBtn = header.createEl('button', { cls: 'friday-btn', text: '+ Topic' });
 		newBtn.addEventListener('click', () => this.onNewTopic());
 
 		// Apply filters
@@ -92,9 +92,9 @@ export class TopicsOverviewView {
 		this.prefetchJiraKeys(filtered);
 
 		// Render sub-mode body
-		const body = this.el.createDiv({ cls: 'task-bujo-topics-body' });
+		const body = this.el.createDiv({ cls: 'friday-topics-body' });
 		if (filtered.length === 0) {
-			body.createDiv({ cls: 'task-bujo-empty', text: 'No topics match the current filter.' });
+			body.createDiv({ cls: 'friday-empty', text: 'No topics match the current filter.' });
 			return;
 		}
 
@@ -113,10 +113,10 @@ export class TopicsOverviewView {
 
 	private renderModeButton(parent: HTMLElement, mode: SubMode, label: string): void {
 		const btn = parent.createEl('button', {
-			cls: 'task-bujo-topics-modebtn',
+			cls: 'friday-topics-modebtn',
 			text: label,
 		});
-		if (mode === this.subMode) btn.addClass('task-bujo-topics-modebtn-active');
+		if (mode === this.subMode) btn.addClass('friday-topics-modebtn-active');
 		btn.addEventListener('click', () => {
 			this.subMode = mode;
 			this.render();
@@ -125,10 +125,10 @@ export class TopicsOverviewView {
 
 	private renderScopeButton(parent: HTMLElement, scope: ScopeFilter, label: string): void {
 		const btn = parent.createEl('button', {
-			cls: 'task-bujo-topics-scopebtn',
+			cls: 'friday-topics-scopebtn',
 			text: label,
 		});
-		if (scope === this.scope) btn.addClass('task-bujo-topics-scopebtn-active');
+		if (scope === this.scope) btn.addClass('friday-topics-scopebtn-active');
 		btn.addEventListener('click', () => {
 			this.scope = scope;
 			this.render();
@@ -143,8 +143,8 @@ export class TopicsOverviewView {
 		const active = (this.settings.teamMembers ?? []).filter(m => m.active);
 		if (active.length === 0) return;
 
-		const wrapper = parent.createDiv({ cls: 'task-bujo-topics-assigneefilter' });
-		const select = wrapper.createEl('select', { cls: 'task-bujo-topics-assignee-select' });
+		const wrapper = parent.createDiv({ cls: 'friday-topics-assigneefilter' });
+		const select = wrapper.createEl('select', { cls: 'friday-topics-assignee-select' });
 		const addOpt = (value: string, label: string, disabled = false) => {
 			const opt = select.createEl('option', { text: label });
 			opt.value = value;
@@ -236,7 +236,7 @@ export class TopicsOverviewView {
 		const assigned = topics.filter(t => !!t.sprintId);
 
 		const sections: { label: string; cls: string; topics: SprintTopic[]; dropAction: SectionDropAction }[] = [
-			{ label: 'Backlog', cls: 'task-bujo-topics-list-backlog', topics: backlog, dropAction: { kind: 'moveToBacklog' } },
+			{ label: 'Backlog', cls: 'friday-topics-list-backlog', topics: backlog, dropAction: { kind: 'moveToBacklog' } },
 			{ label: 'Open', cls: '', topics: assigned.filter(t => t.status === 'open'), dropAction: { kind: 'setStatus', status: 'open' } },
 			{ label: 'In Progress', cls: '', topics: assigned.filter(t => t.status === 'in-progress'), dropAction: { kind: 'setStatus', status: 'in-progress' } },
 			{ label: 'Done', cls: '', topics: assigned.filter(t => t.status === 'done'), dropAction: { kind: 'setStatus', status: 'done' } },
@@ -248,20 +248,20 @@ export class TopicsOverviewView {
 			if (group.length === 0 && label === 'Backlog' && this.scope === 'active') continue;
 
 			const sectionCls = cls
-				? `task-bujo-topics-list-section ${cls}`
-				: 'task-bujo-topics-list-section';
+				? `friday-topics-list-section ${cls}`
+				: 'friday-topics-list-section';
 			const section = parent.createDiv({ cls: sectionCls });
 
-			const headerEl = section.createDiv({ cls: 'task-bujo-topics-list-header' });
+			const headerEl = section.createDiv({ cls: 'friday-topics-list-header' });
 			headerEl.createSpan({ text: label });
-			headerEl.createSpan({ cls: 'task-bujo-topics-list-count', text: `${group.length}` });
+			headerEl.createSpan({ cls: 'friday-topics-list-count', text: `${group.length}` });
 
 			// Card grid is the drop zone — every section accepts drops
-			const cardGrid = section.createDiv({ cls: 'task-bujo-topics-list-grid' });
+			const cardGrid = section.createDiv({ cls: 'friday-topics-list-grid' });
 			this.wireDropZone(cardGrid, dropAction);
 
 			if (group.length === 0) {
-				section.createDiv({ cls: 'task-bujo-empty', text: 'No topics' });
+				section.createDiv({ cls: 'friday-empty', text: 'No topics' });
 				continue;
 			}
 
@@ -278,14 +278,14 @@ export class TopicsOverviewView {
 		zone.addEventListener('dragover', (e) => {
 			e.preventDefault();
 			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-			zone.addClass('task-bujo-topics-list-dropzone-active');
+			zone.addClass('friday-topics-list-dropzone-active');
 		});
 		zone.addEventListener('dragleave', () => {
-			zone.removeClass('task-bujo-topics-list-dropzone-active');
+			zone.removeClass('friday-topics-list-dropzone-active');
 		});
 		zone.addEventListener('drop', async (e) => {
 			e.preventDefault();
-			zone.removeClass('task-bujo-topics-list-dropzone-active');
+			zone.removeClass('friday-topics-list-dropzone-active');
 			const filePath = e.dataTransfer?.getData('text/plain');
 			if (!filePath) return;
 
@@ -349,18 +349,18 @@ export class TopicsOverviewView {
 		}
 
 		const quadrants: Quadrant[] = [
-			{ key: 'quickwins', title: '\u{1F3AF} Quick Wins', subtitle: 'High Impact + Small Effort — Do these first', cls: 'task-bujo-topicmx-quickwins', topics: quickWins },
-			{ key: 'bigbets', title: '\u{1F680} Big Bets', subtitle: 'High Impact + Med/Large Effort — Block deep work', cls: 'task-bujo-topicmx-bigbets', topics: bigBets },
-			{ key: 'fillins', title: '\u{1F4CB} Fill-ins', subtitle: 'Low Impact + Small Effort — Between meetings', cls: 'task-bujo-topicmx-fillins', topics: fillIns },
-			{ key: 'timesinks', title: '\u26A0\uFE0F Time Sinks', subtitle: 'Low Impact + Med/Large Effort — Rethink', cls: 'task-bujo-topicmx-timesinks', topics: timeSinks },
+			{ key: 'quickwins', title: '\u{1F3AF} Quick Wins', subtitle: 'High Impact + Small Effort — Do these first', cls: 'friday-topicmx-quickwins', topics: quickWins },
+			{ key: 'bigbets', title: '\u{1F680} Big Bets', subtitle: 'High Impact + Med/Large Effort — Block deep work', cls: 'friday-topicmx-bigbets', topics: bigBets },
+			{ key: 'fillins', title: '\u{1F4CB} Fill-ins', subtitle: 'Low Impact + Small Effort — Between meetings', cls: 'friday-topicmx-fillins', topics: fillIns },
+			{ key: 'timesinks', title: '\u26A0\uFE0F Time Sinks', subtitle: 'Low Impact + Med/Large Effort — Rethink', cls: 'friday-topicmx-timesinks', topics: timeSinks },
 		];
 
-		const axisRow = parent.createDiv({ cls: 'task-bujo-topicmx-axis-labels' });
+		const axisRow = parent.createDiv({ cls: 'friday-topicmx-axis-labels' });
 		axisRow.createDiv();
-		axisRow.createDiv({ cls: 'task-bujo-topicmx-axis-label', text: 'Small Effort (xs, s)' });
-		axisRow.createDiv({ cls: 'task-bujo-topicmx-axis-label', text: 'Medium / Large Effort (m, l, xl)' });
+		axisRow.createDiv({ cls: 'friday-topicmx-axis-label', text: 'Small Effort (xs, s)' });
+		axisRow.createDiv({ cls: 'friday-topicmx-axis-label', text: 'Medium / Large Effort (m, l, xl)' });
 
-		const grid = parent.createDiv({ cls: 'task-bujo-topicmx-grid' });
+		const grid = parent.createDiv({ cls: 'friday-topicmx-grid' });
 		for (const q of quadrants) {
 			this.renderQuadrant(grid, q);
 		}
@@ -369,7 +369,7 @@ export class TopicsOverviewView {
 			key: 'inbox',
 			title: '\u{1F4E5} Inbox',
 			subtitle: 'Missing impact or effort — needs sizing',
-			cls: 'task-bujo-topicmx-inbox',
+			cls: 'friday-topicmx-inbox',
 			topics: inbox,
 		});
 	}
@@ -397,18 +397,18 @@ export class TopicsOverviewView {
 		}
 
 		const quadrants: Quadrant[] = [
-			{ key: 'q1', title: '\u{1F525} Do Now', subtitle: 'Urgent & Important', cls: 'task-bujo-topicmx-q1', topics: q1 },
-			{ key: 'q2', title: '\u{1F3AF} Plan Deep Work', subtitle: 'Important, Not Urgent', cls: 'task-bujo-topicmx-q2', topics: q2 },
-			{ key: 'q3', title: '\u{1F91D} Coordinate', subtitle: 'Urgent, Not Important', cls: 'task-bujo-topicmx-q3', topics: q3 },
-			{ key: 'q4', title: '\u{1F4E6} Batch Later', subtitle: 'Not Urgent, Not Important', cls: 'task-bujo-topicmx-q4', topics: q4 },
+			{ key: 'q1', title: '\u{1F525} Do Now', subtitle: 'Urgent & Important', cls: 'friday-topicmx-q1', topics: q1 },
+			{ key: 'q2', title: '\u{1F3AF} Plan Deep Work', subtitle: 'Important, Not Urgent', cls: 'friday-topicmx-q2', topics: q2 },
+			{ key: 'q3', title: '\u{1F91D} Coordinate', subtitle: 'Urgent, Not Important', cls: 'friday-topicmx-q3', topics: q3 },
+			{ key: 'q4', title: '\u{1F4E6} Batch Later', subtitle: 'Not Urgent, Not Important', cls: 'friday-topicmx-q4', topics: q4 },
 		];
 
-		const axisRow = parent.createDiv({ cls: 'task-bujo-topicmx-axis-labels' });
+		const axisRow = parent.createDiv({ cls: 'friday-topicmx-axis-labels' });
 		axisRow.createDiv();
-		axisRow.createDiv({ cls: 'task-bujo-topicmx-axis-label', text: 'Urgent' });
-		axisRow.createDiv({ cls: 'task-bujo-topicmx-axis-label', text: 'Not Urgent' });
+		axisRow.createDiv({ cls: 'friday-topicmx-axis-label', text: 'Urgent' });
+		axisRow.createDiv({ cls: 'friday-topicmx-axis-label', text: 'Not Urgent' });
 
-		const grid = parent.createDiv({ cls: 'task-bujo-topicmx-grid' });
+		const grid = parent.createDiv({ cls: 'friday-topicmx-grid' });
 		for (const q of quadrants) {
 			this.renderQuadrant(grid, q);
 		}
@@ -417,7 +417,7 @@ export class TopicsOverviewView {
 			key: 'unscheduled',
 			title: 'Unscheduled',
 			subtitle: 'No due date — needs scheduling',
-			cls: 'task-bujo-topicmx-inbox',
+			cls: 'friday-topicmx-inbox',
 			topics: unscheduled,
 		});
 	}
@@ -441,17 +441,17 @@ export class TopicsOverviewView {
 	// ── Shared helpers ────────────────────────────────────────────
 
 	private renderQuadrant(parent: HTMLElement, quadrant: Quadrant): void {
-		const el = parent.createDiv({ cls: `task-bujo-topicmx-quadrant ${quadrant.cls}` });
+		const el = parent.createDiv({ cls: `friday-topicmx-quadrant ${quadrant.cls}` });
 
-		const header = el.createDiv({ cls: 'task-bujo-topicmx-quadrant-header' });
+		const header = el.createDiv({ cls: 'friday-topicmx-quadrant-header' });
 		const titleArea = header.createDiv();
-		titleArea.createDiv({ cls: 'task-bujo-topicmx-quadrant-title', text: quadrant.title });
-		titleArea.createDiv({ cls: 'task-bujo-topicmx-quadrant-subtitle', text: quadrant.subtitle });
-		header.createDiv({ cls: 'task-bujo-topicmx-quadrant-count', text: String(quadrant.topics.length) });
+		titleArea.createDiv({ cls: 'friday-topicmx-quadrant-title', text: quadrant.title });
+		titleArea.createDiv({ cls: 'friday-topicmx-quadrant-subtitle', text: quadrant.subtitle });
+		header.createDiv({ cls: 'friday-topicmx-quadrant-count', text: String(quadrant.topics.length) });
 
-		const list = el.createDiv({ cls: 'task-bujo-topicmx-quadrant-list' });
+		const list = el.createDiv({ cls: 'friday-topicmx-quadrant-list' });
 		if (quadrant.topics.length === 0) {
-			list.createDiv({ cls: 'task-bujo-empty', text: 'No topics' });
+			list.createDiv({ cls: 'friday-empty', text: 'No topics' });
 			return;
 		}
 		for (const topic of quadrant.topics) {
@@ -483,8 +483,8 @@ export class TopicsOverviewView {
 		// button opens the modal so users can tweak impact/effort/due without leaving the matrix.
 		const lastCard = parent.lastElementChild as HTMLElement | null;
 		if (lastCard) {
-			const actions = lastCard.querySelector('.task-bujo-kanban-card-actions')
-				|| lastCard.createDiv({ cls: 'task-bujo-kanban-card-actions' });
+			const actions = lastCard.querySelector('.friday-kanban-card-actions')
+				|| lastCard.createDiv({ cls: 'friday-kanban-card-actions' });
 			const editBtn = (actions as HTMLElement).createEl('button', { text: 'Edit' });
 			editBtn.setAttribute('title', 'Edit topic details');
 			editBtn.addEventListener('click', (e) => {

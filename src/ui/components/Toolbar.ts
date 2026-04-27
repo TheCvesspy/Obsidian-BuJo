@@ -1,4 +1,4 @@
-import { GroupMode, BuJoViewMode } from '../../types';
+import { GroupMode, FridayViewMode } from '../../types';
 import { SEARCH_DEBOUNCE_MS } from '../../constants';
 
 export interface ToolbarCallbacks {
@@ -14,10 +14,10 @@ export class Toolbar {
 	constructor(
 		container: HTMLElement,
 		private currentGroupMode: GroupMode,
-		private viewMode: BuJoViewMode,
+		private viewMode: FridayViewMode,
 		private callbacks: ToolbarCallbacks
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-toolbar' });
+		this.el = container.createDiv({ cls: 'friday-toolbar' });
 		this.render();
 	}
 
@@ -25,11 +25,11 @@ export class Toolbar {
 		this.el.empty();
 
 		// Search input — always shown
-		const searchContainer = this.el.createDiv({ cls: 'task-bujo-search' });
+		const searchContainer = this.el.createDiv({ cls: 'friday-search' });
 		const searchInput = searchContainer.createEl('input', {
 			type: 'text',
 			placeholder: 'Search tasks...',
-			cls: 'task-bujo-search-input'
+			cls: 'friday-search-input'
 		});
 		searchInput.value = this.searchValue;
 		searchInput.addEventListener('input', () => {
@@ -41,13 +41,13 @@ export class Toolbar {
 		});
 
 		// Grouping — only for Sprint and Overdue views
-		const showGrouping = this.viewMode === BuJoViewMode.Sprint ||
-			this.viewMode === BuJoViewMode.Overdue ||
-			this.viewMode === BuJoViewMode.Overview;
+		const showGrouping = this.viewMode === FridayViewMode.Sprint ||
+			this.viewMode === FridayViewMode.Overdue ||
+			this.viewMode === FridayViewMode.Overview;
 
 		if (showGrouping) {
-			const groupContainer = this.el.createDiv({ cls: 'task-bujo-group-selector' });
-			groupContainer.createSpan({ text: 'Group:', cls: 'task-bujo-label' });
+			const groupContainer = this.el.createDiv({ cls: 'friday-group-selector' });
+			groupContainer.createSpan({ text: 'Group:', cls: 'friday-label' });
 
 			const groupModes: { mode: GroupMode; label: string }[] = [
 				{ mode: GroupMode.ByPage, label: 'Page' },
@@ -58,10 +58,10 @@ export class Toolbar {
 			for (const { mode, label } of groupModes) {
 				const btn = groupContainer.createEl('button', {
 					text: label,
-					cls: 'task-bujo-group-btn'
+					cls: 'friday-group-btn'
 				});
 				if (mode === this.currentGroupMode) {
-					btn.addClass('task-bujo-active');
+					btn.addClass('friday-active');
 				}
 				btn.addEventListener('click', () => {
 					this.currentGroupMode = mode;
@@ -73,7 +73,7 @@ export class Toolbar {
 	}
 
 	/** Update for a new view mode without full re-create */
-	setViewMode(viewMode: BuJoViewMode): void {
+	setViewMode(viewMode: FridayViewMode): void {
 		this.viewMode = viewMode;
 		this.render();
 	}

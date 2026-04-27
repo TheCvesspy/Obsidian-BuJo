@@ -1,7 +1,7 @@
-import { BuJoViewMode } from '../../types';
+import { FridayViewMode } from '../../types';
 
 export interface ViewSwitcherCallbacks {
-	onViewChange: (mode: BuJoViewMode) => void;
+	onViewChange: (mode: FridayViewMode) => void;
 }
 
 export class ViewSwitcher {
@@ -9,37 +9,37 @@ export class ViewSwitcher {
 
 	constructor(
 		container: HTMLElement,
-		private currentMode: BuJoViewMode,
+		private currentMode: FridayViewMode,
 		private callbacks: ViewSwitcherCallbacks
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-view-switcher' });
+		this.el = container.createDiv({ cls: 'friday-view-switcher' });
 		this.render();
 	}
 
 	private render(): void {
 		this.el.empty();
 
-		const tabs: { mode: BuJoViewMode; label: string }[] = [
-			{ mode: BuJoViewMode.Daily, label: 'Daily' },
-			{ mode: BuJoViewMode.Weekly, label: 'Weekly' },
-			{ mode: BuJoViewMode.Monthly, label: 'Monthly' },
-			{ mode: BuJoViewMode.Calendar, label: 'Calendar' },
-			{ mode: BuJoViewMode.Sprint, label: 'Sprint' },
-			{ mode: BuJoViewMode.Topics, label: 'Topics' },
-			{ mode: BuJoViewMode.Inbox, label: '\u{1F4E5} Inbox' },
-			{ mode: BuJoViewMode.Overdue, label: 'Overdue' },
-			{ mode: BuJoViewMode.Overview, label: 'Overview' },
-			{ mode: BuJoViewMode.Analytics, label: 'Analytics' },
+		const tabs: { mode: FridayViewMode; label: string }[] = [
+			{ mode: FridayViewMode.Daily, label: 'Daily' },
+			{ mode: FridayViewMode.Weekly, label: 'Weekly' },
+			{ mode: FridayViewMode.Monthly, label: 'Monthly' },
+			{ mode: FridayViewMode.Calendar, label: 'Calendar' },
+			{ mode: FridayViewMode.Sprint, label: 'Sprint' },
+			{ mode: FridayViewMode.Topics, label: 'Topics' },
+			{ mode: FridayViewMode.Inbox, label: '\u{1F4E5} Inbox' },
+			{ mode: FridayViewMode.Overdue, label: 'Overdue' },
+			{ mode: FridayViewMode.Overview, label: 'Overview' },
+			{ mode: FridayViewMode.Analytics, label: 'Analytics' },
 		];
 
 		for (const { mode, label } of tabs) {
 			const tab = this.el.createEl('button', {
-				cls: 'task-bujo-view-tab'
+				cls: 'friday-view-tab'
 			});
 			tab.createSpan({ text: label });
 
 			if (mode === this.currentMode) {
-				tab.addClass('task-bujo-view-tab-active');
+				tab.addClass('friday-view-tab-active');
 			}
 
 			tab.addEventListener('click', () => {
@@ -50,7 +50,7 @@ export class ViewSwitcher {
 		}
 	}
 
-	setMode(mode: BuJoViewMode): void {
+	setMode(mode: FridayViewMode): void {
 		this.currentMode = mode;
 		this.render();
 	}

@@ -13,11 +13,11 @@ export class QuickCaptureModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		this.modalEl.addClass('task-bujo-quick-capture-modal');
+		this.modalEl.addClass('friday-quick-capture-modal');
 		contentEl.createEl('h3', { text: 'Capture to Inbox' });
 
 		const textarea = contentEl.createEl('textarea', {
-			cls: 'task-bujo-quick-capture-textarea',
+			cls: 'friday-quick-capture-textarea',
 			attr: {
 				placeholder: 'e.g. follow up with architect about API versioning — details, links, whatever…',
 				rows: '6',
@@ -37,10 +37,10 @@ export class QuickCaptureModal extends Modal {
 		});
 		setTimeout(() => textarea.focus(), 50);
 
-		const hint = contentEl.createDiv({ cls: 'task-bujo-quick-capture-hint' });
+		const hint = contentEl.createDiv({ cls: 'friday-quick-capture-hint' });
 		hint.setText('Ctrl+Enter to capture · Esc to cancel');
 
-		const actions = contentEl.createDiv({ cls: 'task-bujo-quick-capture-actions' });
+		const actions = contentEl.createDiv({ cls: 'friday-quick-capture-actions' });
 		const saveBtn = actions.createEl('button', { text: 'Capture', cls: 'mod-cta' });
 		saveBtn.addEventListener('click', () => this.submit());
 		const cancelBtn = actions.createEl('button', { text: 'Cancel' });

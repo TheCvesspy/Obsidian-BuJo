@@ -20,12 +20,12 @@ export class WeeklyReviewModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		this.modalEl.addClass('task-bujo-weekly-review-modal');
+		this.modalEl.addClass('friday-weekly-review-modal');
 
 		contentEl.createEl('h2', { text: `Weekly Review — ${formatWeekId(this.stats.weekId)}` });
 
 		// Summary section
-		const summarySection = contentEl.createDiv({ cls: 'task-bujo-review-summary' });
+		const summarySection = contentEl.createDiv({ cls: 'friday-review-summary' });
 
 		const summaryItems: { label: string; value: string }[] = [
 			{ label: 'Tasks Planned', value: String(this.stats.totalPlanned) },
@@ -36,9 +36,9 @@ export class WeeklyReviewModal extends Modal {
 		];
 
 		for (const item of summaryItems) {
-			const row = summarySection.createDiv({ cls: 'task-bujo-review-stat' });
-			row.createSpan({ cls: 'task-bujo-review-stat-label', text: item.label });
-			row.createSpan({ cls: 'task-bujo-review-stat-value', text: item.value });
+			const row = summarySection.createDiv({ cls: 'friday-review-stat' });
+			row.createSpan({ cls: 'friday-review-stat-label', text: item.label });
+			row.createSpan({ cls: 'friday-review-stat-value', text: item.value });
 		}
 
 		// Work type breakdown
@@ -57,7 +57,7 @@ export class WeeklyReviewModal extends Modal {
 		}
 
 		// Actions
-		const actions = contentEl.createDiv({ cls: 'task-bujo-review-actions' });
+		const actions = contentEl.createDiv({ cls: 'friday-review-actions' });
 
 		const saveBtn = actions.createEl('button', {
 			cls: 'mod-cta',
@@ -78,24 +78,24 @@ export class WeeklyReviewModal extends Modal {
 		title: string,
 		data: Map<string, { planned: number; completed: number }>,
 	): void {
-		const section = container.createDiv({ cls: 'task-bujo-review-breakdown' });
+		const section = container.createDiv({ cls: 'friday-review-breakdown' });
 		section.createEl('h3', { text: title });
 
 		for (const [name, { planned, completed }] of data) {
-			const row = section.createDiv({ cls: 'task-bujo-review-breakdown-row' });
-			row.createSpan({ cls: 'task-bujo-review-breakdown-name', text: name });
+			const row = section.createDiv({ cls: 'friday-review-breakdown-row' });
+			row.createSpan({ cls: 'friday-review-breakdown-name', text: name });
 
-			const barWrap = row.createDiv({ cls: 'task-bujo-review-breakdown-bar-wrap' });
+			const barWrap = row.createDiv({ cls: 'friday-review-breakdown-bar-wrap' });
 			const pct = planned > 0 ? (completed / planned) * 100 : 0;
-			const bar = barWrap.createDiv({ cls: 'task-bujo-review-breakdown-bar' });
+			const bar = barWrap.createDiv({ cls: 'friday-review-breakdown-bar' });
 			bar.style.width = `${pct}%`;
 
-			row.createSpan({ cls: 'task-bujo-review-breakdown-value', text: `${completed}/${planned}` });
+			row.createSpan({ cls: 'friday-review-breakdown-value', text: `${completed}/${planned}` });
 		}
 	}
 
 	private renderComparison(container: HTMLElement): void {
-		const section = container.createDiv({ cls: 'task-bujo-review-comparison' });
+		const section = container.createDiv({ cls: 'friday-review-comparison' });
 		section.createEl('h3', { text: 'Recent Weeks' });
 
 		const recent = this.weeklyHistory.slice(-4);
@@ -103,7 +103,7 @@ export class WeeklyReviewModal extends Modal {
 			const rate = snap.totalPlanned > 0
 				? ((snap.totalCompleted / snap.totalPlanned) * 100).toFixed(0)
 				: '0';
-			const row = section.createDiv({ cls: 'task-bujo-review-comparison-row' });
+			const row = section.createDiv({ cls: 'friday-review-comparison-row' });
 			row.createSpan({ text: formatWeekId(snap.weekId) });
 			row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%)` });
 		}

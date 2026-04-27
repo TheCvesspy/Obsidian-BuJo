@@ -1,8 +1,8 @@
-# BuJo — Obsidian Task Manager Plugin
+# Friday — Obsidian Plugin
 
 ## Developer Documentation
 
-> **Plugin ID**: `obsidian-task-bujo` · **Name**: BuJo · **Version**: 1.0.0  
+> **Plugin ID**: `obsidian-task-bujo` *(unchanged from BuJo era — preserves user data)* · **Name**: Friday · **Version**: 2.1.0  
 > **Min Obsidian**: 1.0.0 · **License**: MIT · **Desktop Only**: No  
 > **Entry Point**: `main.js` (built from `src/main.ts`)  
 > **Dependencies**: `obsidian`, `typescript ^5.3`, `esbuild ^0.19`, `@types/node ^20.11`
@@ -17,7 +17,7 @@
 4. [Plugin Settings](#4-plugin-settings)
 5. [Commands & Interactions](#5-commands--interactions)
 6. [View Modes](#6-view-modes)
-7. [BuJo Markdown Syntax](#7-bujo-markdown-syntax)
+7. [Friday Markdown Syntax](#7-friday-markdown-syntax)
 8. [Migration & Forwarding Flow](#8-migration--forwarding-flow)
 9. [Analytics](#9-analytics)
 10. [Task Archiving](#10-task-archiving)
@@ -40,7 +40,7 @@
 ├─────────────┬──────────────┬─────────────┬──────────────────┤
 │   Parser    │   Services   │     UI      │     Utils        │
 ├─────────────┼──────────────┼─────────────┼──────────────────┤
-│ taskParser  │ vaultScanner │ BuJoView    │ dateUtils        │
+│ taskParser  │ vaultScanner │ FridayView    │ dateUtils        │
 │ headingCls  │ taskStore    │ Modals (5)  │ pathUtils        │
 │ dateParser  │ taskWriter   │ Views  (10) │                  │
 │             │ migration    │ Components  │                  │
@@ -69,7 +69,7 @@
 ### Core Files
 
 #### `src/main.ts` (~312 lines) — Plugin Entry Point
-- **Class**: `TaskBuJoPlugin extends Plugin`
+- **Class**: `FridayPlugin extends Plugin`
 - **Responsibilities**: Bootstraps all services, registers commands/views/events, manages lifecycle
 - **Key fields**: `data: PluginData`, `settings: PluginSettings`, 7 private service instances
 - **Lifecycle**:
@@ -77,7 +77,7 @@
   - `onunload()`: detaches views, destroys scanner
 
 #### `src/types.ts` (~210 lines) — Type Definitions & Defaults
-- **Enums**: `TaskStatus`, `ItemCategory`, `Priority`, `GroupMode`, `BuJoViewMode` (includes `Calendar`, `Topics`). The old task-level `Eisenhower` / `ImpactEffort` modes were removed — those matrices now apply to Topics.
+- **Enums**: `TaskStatus`, `ItemCategory`, `Priority`, `GroupMode`, `FridayViewMode` (includes `Calendar`, `Topics`). The old task-level `Eisenhower` / `ImpactEffort` modes were removed — those matrices now apply to Topics.
 - **Interfaces**: `TaskItem` (includes `description`), `Sprint`, `SprintTopic` (includes `impact`, `effort`, `dueDate`, `sprintHistory[]`), `TagCategory`, `PluginSettings` (includes archive settings, `urgencyThresholdDays` — now used by the Topic Eisenhower sub-mode), `WeeklySnapshot`, `PluginData`
 - **Type aliases**: `TopicImpact = 'critical' | 'high' | 'medium' | 'low'`, `TopicEffort = 'xs' | 's' | 'm' | 'l' | 'xl'`
 - **Type aliases**: `FolderState`, `StoreEventType`, `StoreEventCallback`
@@ -87,7 +87,7 @@
 All regex patterns for parsing and timing constants for debouncing. See [§13](#13-constants-reference).
 
 #### `src/settings.ts` (~439 lines) — Settings Tab UI
-- **Class**: `TaskBuJoSettingTab extends PluginSettingTab`
+- **Class**: `FridaySettingTab extends PluginSettingTab`
 - Interactive settings page with folder tree (recursive, collapsible, tri-state include/exclude/inherit cycle), dropdowns, toggles, and text inputs with debounced saves
 
 ### Parser Layer (`src/parser/`)
@@ -143,20 +143,21 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
   - `findTaskLine()`: tries recorded `lineNumber` first (O(1)), falls back to `indexOf` scan
   - `resolveWikiLink()`: resolves by exact path, then basename
 
-#### `migrationService.ts` (~238 lines) — Daily Migration & Morning Review
+#### `migrationService.ts` (~240 lines) — Daily Migration & Morning Review
 - **Class**: `MigrationService`
 - **Types**: `MigrationAction`, `MigrationDecision`, `MigrationResult`, `MorningReviewData`
 - **Key methods**:
   - `needsMigration()`: true if `lastMigrationDate ≠ today` AND there are actionable tasks
-  - `getMorningReviewData()`: buckets all open tasks into yesterdayTasks, overdueTasks, todayTasks, availableTasks, availableOpenPoints. Deduplicates across daily notes
+  - `getMorningReviewData()`: buckets all open tasks into yesterdayTasks (sourced from the **most recent prior daily note**, not literal `today − 1`), overdueTasks, todayTasks, availableTasks, availableOpenPoints. Deduplicates across daily notes. Also returns `yesterdayDate: string | null` (ISO date of the prior note, used by `MigrationModal` to label the section)
   - `executeMigrations(decisions[])`: forward/reschedule/done/cancel
   - `deduplicateDailyTasks()`: groups by normalized text, keeps most recent daily note copy
   - `markMigrationDone()`: persists today's date
 
-#### `dailyNoteService.ts` (~106 lines) — Daily Note CRUD
+#### `dailyNoteService.ts` (~135 lines) — Daily Note CRUD
 - **Class**: `DailyNoteService`
 - **Methods**:
   - `getDailyNotePath(date)`: returns `{dailyNotePath}/{YYYY-MM-DD}.md`
+  - `getMostRecentPriorDailyNotePath(today)`: scans the configured daily-notes folder for `YYYY-MM-DD.md` files, returns the path of the newest one strictly before `today`, or `null` if none exists. Resilient to weekends/vacations/skipped days. Powers the Morning Review's "yesterday's incomplete" lookup
   - `getOrCreateDailyNote(date)`: creates folders + file with template
   - `addTaskToDaily()`: inserts under `## Tasks`
   - `addMigratedTask()`: inserts under `## Migrated Tasks` (preserves multi-hop `migratedFrom`)
@@ -196,16 +197,17 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 
 ### UI Layer (`src/ui/`)
 
-#### `TaskBuJoView.ts` (~244 lines) — Main Plugin View
-- **Class**: `TaskBuJoView extends ItemView`
-- View type: `task-bujo-view`, icon: `check-square`, display: "BuJo"
+#### `FridayView.ts` (~244 lines) — Main Plugin View
+- **Class**: `FridayView extends ItemView`
+- View type: `friday-view`, icon: `check-square`, display: "Friday"
 - **State**: `currentMode`, `currentGroupMode`, `searchQuery`, `collapsedGroups`, `lastStoreVersion`, `lastViewFingerprint`
 - **Fingerprinting**: `refresh()` computes `"${mode}|${groupMode}|${searchQuery}|${storeVersion}"` — skips DOM rebuild if unchanged
 - **Layout**: ViewSwitcher → Toolbar → Content (mode-specific) → AddTaskBar → Syntax Reference button
 - **Tab reuse**: `onClickSource` iterates all leaves to find existing tab with the target file
 
-#### `MigrationModal.ts` (~398 lines) — Morning Review Modal
-- 3 sections: Yesterday's Incomplete (actionable), Overdue (actionable), Due Today (preview)
+#### `MigrationModal.ts` (~410 lines) — Morning Review Modal
+- On open: proactively calls `dailyNotes.getOrCreateDailyNote(today)` so today's daily note exists even if the user takes no action in the dialog
+- 3 sections: Incomplete from {prior date} (actionable; label built from `reviewData.yesterdayDate` via `formatDateDisplay`, falls back to "Yesterday's Incomplete" only when no prior note exists), Overdue (actionable), Due Today (preview)
 - Each actionable task: Forward / Reschedule / Done / Cancel buttons (default: Forward)
 - Task/Open Point pickers with debounced search (max 50 visible)
 - Quick-add form to create new tasks for today
@@ -234,7 +236,7 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 #### `SprintModal.ts` (~120 lines) — Create/Edit Sprint Modal
 
 #### `icons.ts` (~64 lines) — UI Helper Factory Functions
-- `setTaskBuJoIcon()`, `createPriorityDot()`, `createDueBadge()`, `createSourceLink()`, `createStatusMarker()`
+- `setFridayIcon()`, `createPriorityDot()`, `createDueBadge()`, `createSourceLink()`, `createStatusMarker()`
 - Status display: `x→✓`, `>→→`, `<→←`, `-→—`
 
 ### UI Components (`src/ui/components/`)
@@ -293,7 +295,7 @@ Markdown Files in Vault
            │ Store events trigger UI refresh (debounced 100ms)
            ▼
 ┌─────────────────────────┐
-│    TaskBuJoView          │    Renders mode-specific view components
+│    FridayView          │    Renders mode-specific view components
 │    (fingerprinting)      │    Coalesces rapid events, skips unchanged rebuilds
 └──────────┬──────────────┘
            │ User actions (checkbox toggle, set due date, etc.)
@@ -321,7 +323,7 @@ Markdown Files in Vault
 | `folderStates` | `Record<string, FolderState>` | `{}` | Per-folder include/exclude/inherit for scanning |
 | `showCompletedTasks` | `boolean` | `true` | Whether done tasks appear in views |
 | `defaultGroupMode` | `GroupMode` | `ByPage` | Default grouping mode |
-| `defaultViewMode` | `BuJoViewMode` | `Daily` | View shown on plugin open |
+| `defaultViewMode` | `FridayViewMode` | `Daily` | View shown on plugin open |
 | `dailyNotePath` | `string` | `'BuJo/Daily'` | Folder for daily note files |
 | `defaultSprintLength` | `number` | `14` | Sprint duration in days |
 | `autoStartNextSprint` | `boolean` | `true` | Auto-create next sprint on completion |
@@ -370,18 +372,18 @@ Markdown Files in Vault
 
 | Command ID | Display Name | Type | Description |
 |-----------|-------------|------|-------------|
-| `open-bujo` | BuJo: Open | callback | Opens/reveals the BuJo view |
-| `open-bujo-new-tab` | BuJo: Open in New Tab | callback | Opens BuJo in a new tab |
-| `run-daily-migration` | BuJo: Run Daily Migration | callback | Opens Morning Review modal |
-| `weekly-review` | BuJo: Weekly Review | callback | Opens Weekly Review modal |
-| `syntax-reference` | BuJo: Syntax Reference | callback | Opens syntax reference modal |
-| `archive-completed` | BuJo: Archive Completed Tasks | callback | Archives all Done/Cancelled tasks to archive folder |
-| `insert-task-with-details` | BuJo: Quick Create Task | editorCallback | Opens InsertTaskModal (with effort, description fields), inserts at cursor. Default hotkey: `Ctrl+Shift+T` |
+| `open-bujo` | Friday: Open | callback | Opens/reveals the Friday view |
+| `open-bujo-new-tab` | Friday: Open in New Tab | callback | Opens Friday in a new tab |
+| `run-daily-migration` | Friday: Run Daily Migration | callback | Opens Morning Review modal |
+| `weekly-review` | Friday: Weekly Review | callback | Opens Weekly Review modal |
+| `syntax-reference` | Friday: Syntax Reference | callback | Opens syntax reference modal |
+| `archive-completed` | Friday: Archive Completed Tasks | callback | Archives all Done/Cancelled tasks to archive folder |
+| `insert-task-with-details` | Friday: Quick Create Task | editorCallback | Opens InsertTaskModal (with effort, description fields), inserts at cursor. Default hotkey: `Ctrl+Shift+T` |
 
 ### Ribbon & Context Menu
 
-- **Ribbon icon**: `check-square` → opens BuJo view
-- **Editor context menu** (always): "BuJo: Quick create task"
+- **Ribbon icon**: `check-square` → opens Friday view
+- **Editor context menu** (always): "Friday: Quick create task"
 - **Editor context menu** (on checkbox lines): "Mark as done/open", "High/Medium/Low Priority", "Remove priority", "Set due date"
 
 ---
@@ -390,21 +392,21 @@ Markdown Files in Vault
 
 | Mode | Enum | Description |
 |------|------|-------------|
-| **Daily** | `BuJoViewMode.Daily` | 4 sections: Overdue → Carried Over → Due Today → Unscheduled. Shows pending count header. |
-| **Weekly** | `BuJoViewMode.Weekly` | 7-day calendar (Mon–Sun) with per-day task lists and progress bars (done/total %). |
-| **Monthly** | `BuJoViewMode.Monthly` | Goals progress, stats cards, month navigation, trends table, save snapshot. |
-| **Calendar** | `BuJoViewMode.Calendar` | Month grid with priority-colored task dots per day. Click a day to expand task detail below. Today highlighting. Month navigation + "Today" button. Respects `weekStartDay` setting. |
-| **Sprint** | `BuJoViewMode.Sprint` | Active sprint header (name, dates, days remaining), Kanban board (Open/In Progress/Done), drag-and-drop. Cards rendered via shared `TopicCard`. |
-| **Topics** | `BuJoViewMode.Topics` | Top-level Topic browser across **all** sprints and backlog. Scope chips: All / Active sprint / Backlog / Archived. Three sub-modes: **List** (grouped by Backlog + Open/In Progress/Done, drag-and-drop between sections), **Impact/Effort** (Quick Wins / Big Bets / Fill-ins / Time Sinks + Inbox), **Eisenhower** (Do Now / Plan Deep Work / Coordinate / Batch Later + Unscheduled). See §15. |
-| **Overdue** | `BuJoViewMode.Overdue` | Open tasks with past due dates. Supports all group modes. |
-| **Overview** | `BuJoViewMode.Overview` | All Tasks + Open Points sub-tabs, grouped by mode. |
-| **Analytics** | `BuJoViewMode.Analytics` | Summary cards, work type/purpose bar charts, 8-week trend table + chart. |
+| **Daily** | `FridayViewMode.Daily` | 4 sections: Overdue → Carried Over → Due Today → Unscheduled. Shows pending count header. |
+| **Weekly** | `FridayViewMode.Weekly` | 7-day calendar (Mon–Sun) with per-day task lists and progress bars (done/total %). |
+| **Monthly** | `FridayViewMode.Monthly` | Goals progress, stats cards, month navigation, trends table, save snapshot. |
+| **Calendar** | `FridayViewMode.Calendar` | Month grid with priority-colored task dots per day. Click a day to expand task detail below. Today highlighting. Month navigation + "Today" button. Respects `weekStartDay` setting. |
+| **Sprint** | `FridayViewMode.Sprint` | Active sprint header (name, dates, days remaining), Kanban board (Open/In Progress/Done), drag-and-drop. Cards rendered via shared `TopicCard`. |
+| **Topics** | `FridayViewMode.Topics` | Top-level Topic browser across **all** sprints and backlog. Scope chips: All / Active sprint / Backlog / Archived. Three sub-modes: **List** (grouped by Backlog + Open/In Progress/Done, drag-and-drop between sections), **Impact/Effort** (Quick Wins / Big Bets / Fill-ins / Time Sinks + Inbox), **Eisenhower** (Do Now / Plan Deep Work / Coordinate / Batch Later + Unscheduled). See §15. |
+| **Overdue** | `FridayViewMode.Overdue` | Open tasks with past due dates. Supports all group modes. |
+| **Overview** | `FridayViewMode.Overview` | All Tasks + Open Points sub-tabs, grouped by mode. |
+| **Analytics** | `FridayViewMode.Analytics` | Summary cards, work type/purpose bar charts, 8-week trend table + chart. |
 
 **Grouping** (Sprint, Overdue & Overview views only): By Page / By Priority / By Due Date
 
 ---
 
-## 7. BuJo Markdown Syntax
+## 7. Friday Markdown Syntax
 
 ### Checkbox Statuses
 
@@ -459,7 +461,7 @@ Indented non-checkbox lines immediately following a task are collected as that t
 - [ ] Write tests
 ```
 
-The two indented lines become the description of "Implement login flow". Descriptions are shown in the BuJo view via an expandable `…` toggle on the task row.
+The two indented lines become the description of "Implement login flow". Descriptions are shown in the Friday view via an expandable `…` toggle on the task row.
 
 ### Heading Classification
 
@@ -479,12 +481,12 @@ Work type and purpose values are resolved against configured `TagCategory[]`: ma
 
 ### Trigger Conditions
 - **Auto on startup**: if `migrationPromptOnStartup=true` AND `lastMigrationDate ≠ today` AND there are actionable tasks
-- **Manual**: via command `BuJo: Run Daily Migration`
+- **Manual**: via command `Friday: Run Daily Migration`
 
 ### Morning Review Data Collection (`getMorningReviewData()`)
 
-1. **Yesterday's tasks**: Open tasks from `{dailyNotePath}/{yesterday}.md`
-2. **Overdue tasks**: Open tasks with past due dates (excluding yesterday's)
+1. **Prior-day tasks (`yesterdayTasks`)**: Open tasks from the **most recent daily note dated strictly before today**, resolved via `DailyNoteService.getMostRecentPriorDailyNotePath(today)` — not literal `today − 1`. Handles weekends, vacations, and any skipped days. The resolved ISO date is also returned as `yesterdayDate` so `MigrationModal` can label the section dynamically (e.g. "Incomplete from Thu, Mar 26"). When no prior daily note exists at all, `yesterdayTasks` is empty and `yesterdayDate` is `null`.
+2. **Overdue tasks**: Open tasks with past due dates (excluding the prior-day set above)
 3. **Today's tasks**: Open tasks due today (preview only)
 4. **Available tasks**: All other open tasks (pickable for adding to today)
 5. **Available open points**: All open points (pickable)
@@ -556,7 +558,7 @@ Tasks are included if:
 Over months of use, completed tasks accumulate in daily notes and project pages. Archiving moves them to dedicated archive files, keeping the vault clean and scan performance fast.
 
 ### Trigger
-- **Manual command**: `BuJo: Archive Completed Tasks` — archives all Done and Cancelled tasks vault-wide
+- **Manual command**: `Friday: Archive Completed Tasks` — archives all Done and Cancelled tasks vault-wide
 
 ### Archive Flow (`ArchiveService.archiveCompleted()`)
 1. Collects all Done/Cancelled tasks from every category (tasks, open points, goals, uncategorized)
@@ -657,7 +659,7 @@ On every incremental file scan:
 
 | Constant | Value | Usage |
 |----------|-------|-------|
-| `VIEW_TYPE_TASK_BUJO` | `'task-bujo-view'` | View registration identifier |
+| `VIEW_TYPE_FRIDAY` | `'friday-view'` | View registration identifier |
 | `CHECKBOX_REGEX` | `/^(\s*)-\s*\[([ x><!-])\]\s+(.*)$/i` | Matches checkbox lines |
 | `HEADING_REGEX` | `/^(#{1,6})\s+(.+)$/` | Matches markdown headings |
 | `PRIORITY_TAG_REGEX` | `/#priority\/(high\|medium\|low)/i` | Priority tags |
@@ -704,7 +706,7 @@ node release.mjs [major|minor|patch]
 - Copies `main.js`, `styles.css`, `manifest.json` to `_release/`
 
 ### Styles
-`styles.css` (~1,700 lines) uses Obsidian CSS variables (`var(--text-muted)`, `var(--background-modifier-border)`, etc.) for full theme compatibility. All components are styled with `.task-bujo-*` class prefix. Includes dedicated sections for Calendar grid, Topic matrices (`.task-bujo-topicmx-*` — both Impact/Effort and Eisenhower share the quadrant layout), Topics list view with drop-zone highlighting (`.task-bujo-topics-list-*`), sprint-history chips (`.task-bujo-topic-sprint-history-*`), and task description toggles.
+`styles.css` (~1,700 lines) uses Obsidian CSS variables (`var(--text-muted)`, `var(--background-modifier-border)`, etc.) for full theme compatibility. All components are styled with `.friday-*` class prefix. Includes dedicated sections for Calendar grid, Topic matrices (`.friday-topicmx-*` — both Impact/Effort and Eisenhower share the quadrant layout), Topics list view with drop-zone highlighting (`.friday-topics-list-*`), sprint-history chips (`.friday-topic-sprint-history-*`), and task description toggles.
 
 ---
 
@@ -782,7 +784,7 @@ This means moving a topic Backlog → Sprint A → Backlog → Sprint B produces
 
 ### Settings migration
 
-`main.ts` rewrites any persisted `defaultViewMode` of `'eisenhower'` or `'impactEffort'` (the pre-refactor task-level modes) to `BuJoViewMode.Topics` on load, so users who had those pinned land on the replacement view instead of hitting a missing switch case.
+`main.ts` rewrites any persisted `defaultViewMode` of `'eisenhower'` or `'impactEffort'` (the pre-refactor task-level modes) to `FridayViewMode.Topics` on load, so users who had those pinned land on the replacement view instead of hitting a missing switch case.
 
 ---
 
@@ -823,7 +825,7 @@ An optional module that enriches topics with live status and assignee data from 
 - `prefetchJiraKeys(topics)` — called once per render, no-op when disabled.
 - `jiraOptsFor(topic)` — returns `{ jiraInfo, jiraLoading, jiraError }` spread into `TopicCard` options.
 
-`TaskBuJoView.refresh()` folds `jiraService.version` into the render fingerprint, so JIRA-only cache mutations (fresh fetches, TTL expiry, clears on settings save) actually trigger a rebuild. The view subscribes to `JiraService.on()` in `onOpen()` and unsubscribes in `onClose()` — both are debounced through the same `scheduleRefresh` path the task store uses.
+`FridayView.refresh()` folds `jiraService.version` into the render fingerprint, so JIRA-only cache mutations (fresh fetches, TTL expiry, clears on settings save) actually trigger a rebuild. The view subscribes to `JiraService.on()` in `onOpen()` and unsubscribes in `onClose()` — both are debounced through the same `scheduleRefresh` path the task store uses.
 
 ### TopicCard rendering
 
@@ -866,7 +868,7 @@ The topic's `jira:` frontmatter value itself is **never touched** — disabling 
 
 ## 17. JIRA Dashboard (read-only personal dashboard)
 
-A separate workspace view — distinct from the BuJo tab — that surfaces the user's active JIRA work without leaving Obsidian. Read-only: clicking a row opens the issue in the default browser; clicking a topic chip opens the topic file in the current leaf. Never writes to JIRA, never writes the dashboard result to disk.
+A separate workspace view — distinct from the Friday tab — that surfaces the user's active JIRA work without leaving Obsidian. Read-only: clicking a row opens the issue in the default browser; clicking a topic chip opens the topic file in the current leaf. Never writes to JIRA, never writes the dashboard result to disk.
 
 ### Module boundary
 

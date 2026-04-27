@@ -11,6 +11,32 @@ export class DailyNoteService {
 		return `${settings.dailyNotePath}/${formatDateISO(date)}.md`;
 	}
 
+	/** Find the path of the most recent daily note dated strictly before `today`.
+	 *  Returns null if no prior daily note exists. Walks the configured
+	 *  daily-notes folder and matches files named `YYYY-MM-DD.md`. */
+	getMostRecentPriorDailyNotePath(today: Date): string | null {
+		const settings = this.getSettings();
+		const folder = this.vault.getAbstractFileByPath(settings.dailyNotePath);
+		if (!(folder instanceof TFolder)) return null;
+
+		const todayIso = formatDateISO(today);
+		let bestIso: string | null = null;
+		let bestPath: string | null = null;
+
+		for (const child of folder.children) {
+			if (!(child instanceof TFile)) continue;
+			const m = child.name.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
+			if (!m) continue;
+			const iso = m[1];
+			if (iso >= todayIso) continue;
+			if (!bestIso || iso > bestIso) {
+				bestIso = iso;
+				bestPath = child.path;
+			}
+		}
+		return bestPath;
+	}
+
 	/** Get or create today's daily note file. Creates folders if needed. */
 	async getOrCreateDailyNote(date: Date): Promise<TFile> {
 		const path = this.getDailyNotePath(date);

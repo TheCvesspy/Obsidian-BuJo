@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-task-bujo",
-	"version": "2.0.0",
-	"description": "Obsidian plugin for task aggregation with Bullet Journal planning",
+	"name": "obsidian-friday",
+	"version": "2.1.0",
+	"description": "Obsidian plugin: a personal ops console for knowledge workers — task aggregation, daily/weekly planning, sprints, JIRA dashboard, and team tracking.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

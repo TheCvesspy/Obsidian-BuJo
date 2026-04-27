@@ -14,7 +14,7 @@ export class AnalyticsView {
 		private weeklyHistory: WeeklySnapshot[],
 		private onSaveSnapshot: (snapshot: WeeklySnapshot) => void,
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-analytics' });
+		this.el = container.createDiv({ cls: 'friday-analytics' });
 	}
 
 	render(): void {
@@ -23,11 +23,11 @@ export class AnalyticsView {
 		const stats = this.analyticsService.getCurrentWeekStats();
 
 		// Header
-		const header = this.el.createDiv({ cls: 'task-bujo-analytics-header' });
+		const header = this.el.createDiv({ cls: 'friday-analytics-header' });
 		header.createEl('h3', { text: `Analytics — ${formatWeekId(stats.weekId)}` });
 
 		const saveBtn = header.createEl('button', {
-			cls: 'task-bujo-analytics-save-btn',
+			cls: 'friday-analytics-save-btn',
 			text: 'Save Week Snapshot',
 		});
 		saveBtn.addEventListener('click', () => {
@@ -57,7 +57,7 @@ export class AnalyticsView {
 	}
 
 	private renderSummary(stats: WeeklyStats): void {
-		const section = this.el.createDiv({ cls: 'task-bujo-analytics-summary' });
+		const section = this.el.createDiv({ cls: 'friday-analytics-summary' });
 
 		const cards: { label: string; value: string; cls?: string }[] = [
 			{ label: 'Planned', value: String(stats.totalPlanned) },
@@ -68,49 +68,49 @@ export class AnalyticsView {
 		];
 
 		for (const card of cards) {
-			const cardEl = section.createDiv({ cls: `task-bujo-analytics-card ${card.cls || ''}` });
-			cardEl.createDiv({ cls: 'task-bujo-analytics-card-value', text: card.value });
-			cardEl.createDiv({ cls: 'task-bujo-analytics-card-label', text: card.label });
+			const cardEl = section.createDiv({ cls: `friday-analytics-card ${card.cls || ''}` });
+			cardEl.createDiv({ cls: 'friday-analytics-card-value', text: card.value });
+			cardEl.createDiv({ cls: 'friday-analytics-card-label', text: card.label });
 		}
 	}
 
 	private renderBreakdown(title: string, data: Map<string, { planned: number; completed: number }>): void {
 		if (data.size === 0) return;
 
-		const section = this.el.createDiv({ cls: 'task-bujo-analytics-breakdown' });
+		const section = this.el.createDiv({ cls: 'friday-analytics-breakdown' });
 		section.createEl('h4', { text: title });
 
 		const maxPlanned = Math.max(...Array.from(data.values()).map(v => v.planned), 1);
 
 		for (const [name, { planned, completed }] of data) {
-			const row = section.createDiv({ cls: 'task-bujo-analytics-bar-row' });
-			row.createDiv({ cls: 'task-bujo-analytics-bar-label', text: name });
+			const row = section.createDiv({ cls: 'friday-analytics-bar-row' });
+			row.createDiv({ cls: 'friday-analytics-bar-label', text: name });
 
-			const barContainer = row.createDiv({ cls: 'task-bujo-analytics-bar-container' });
+			const barContainer = row.createDiv({ cls: 'friday-analytics-bar-container' });
 			const plannedWidth = (planned / maxPlanned) * 100;
 			const completedWidth = planned > 0 ? (completed / planned) * plannedWidth : 0;
 
-			const plannedBar = barContainer.createDiv({ cls: 'task-bujo-analytics-bar planned' });
+			const plannedBar = barContainer.createDiv({ cls: 'friday-analytics-bar planned' });
 			plannedBar.style.width = `${plannedWidth}%`;
 
-			const completedBar = barContainer.createDiv({ cls: 'task-bujo-analytics-bar completed' });
+			const completedBar = barContainer.createDiv({ cls: 'friday-analytics-bar completed' });
 			completedBar.style.width = `${completedWidth}%`;
 
 			row.createDiv({
-				cls: 'task-bujo-analytics-bar-value',
+				cls: 'friday-analytics-bar-value',
 				text: `${completed}/${planned}`,
 			});
 		}
 	}
 
 	private renderTrends(): void {
-		const section = this.el.createDiv({ cls: 'task-bujo-analytics-trends' });
+		const section = this.el.createDiv({ cls: 'friday-analytics-trends' });
 		section.createEl('h4', { text: 'Week-over-Week Trends' });
 
 		// Show last 8 weeks max
 		const recent = this.weeklyHistory.slice(-8);
 
-		const table = section.createEl('table', { cls: 'task-bujo-analytics-trend-table' });
+		const table = section.createEl('table', { cls: 'friday-analytics-trend-table' });
 		const thead = table.createEl('thead');
 		const headerRow = thead.createEl('tr');
 		for (const h of ['Week', 'Planned', 'Done', 'Migrated', 'Rate']) {
@@ -131,17 +131,17 @@ export class AnalyticsView {
 		}
 
 		// Visual trend: completion rate bar for each week
-		const chartSection = section.createDiv({ cls: 'task-bujo-analytics-trend-chart' });
+		const chartSection = section.createDiv({ cls: 'friday-analytics-trend-chart' });
 		for (const snapshot of recent) {
 			const rate = snapshot.totalPlanned > 0
 				? (snapshot.totalCompleted / snapshot.totalPlanned) * 100
 				: 0;
 
-			const col = chartSection.createDiv({ cls: 'task-bujo-analytics-trend-col' });
-			const barWrap = col.createDiv({ cls: 'task-bujo-analytics-trend-bar-wrap' });
-			const bar = barWrap.createDiv({ cls: 'task-bujo-analytics-trend-bar' });
+			const col = chartSection.createDiv({ cls: 'friday-analytics-trend-col' });
+			const barWrap = col.createDiv({ cls: 'friday-analytics-trend-bar-wrap' });
+			const bar = barWrap.createDiv({ cls: 'friday-analytics-trend-bar' });
 			bar.style.height = `${rate}%`;
-			col.createDiv({ cls: 'task-bujo-analytics-trend-label', text: formatWeekId(snapshot.weekId) });
+			col.createDiv({ cls: 'friday-analytics-trend-label', text: formatWeekId(snapshot.weekId) });
 		}
 	}
 }

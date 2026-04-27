@@ -32,7 +32,7 @@ export class InsertTaskModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		this.modalEl.addClass('task-bujo-insert-modal');
+		this.modalEl.addClass('friday-insert-modal');
 		contentEl.createEl('h2', { text: 'Quick Create Task' });
 
 		new Setting(contentEl)
@@ -108,7 +108,7 @@ export class InsertTaskModal extends Modal {
 			.setName('Description')
 			.setDesc('Optional: additional details (will be indented below the task)');
 		const descArea = descSetting.controlEl.createEl('textarea', {
-			cls: 'task-bujo-insert-description',
+			cls: 'friday-insert-description',
 			attr: { rows: '3', placeholder: 'Additional context, notes, links...' },
 		});
 		descArea.addEventListener('input', () => { this.description = descArea.value; });

@@ -159,12 +159,12 @@ export class JiraDashboardView extends ItemView {
 	async onOpen(): Promise<void> {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.addClass('task-bujo-container');
-		containerEl.addClass('task-bujo-jira-dashboard-container');
+		containerEl.addClass('friday-container');
+		containerEl.addClass('friday-jira-dashboard-container');
 
 		this.renderHeader(containerEl as HTMLElement);
 
-		this.contentContainer = (containerEl as HTMLElement).createDiv({ cls: 'task-bujo-content task-bujo-jira-dashboard-content' });
+		this.contentContainer = (containerEl as HTMLElement).createDiv({ cls: 'friday-content friday-jira-dashboard-content' });
 
 		// Subscribe to service events — re-render whenever the cache changes
 		this.listenerHandle = () => this.renderContent();
@@ -216,17 +216,17 @@ export class JiraDashboardView extends ItemView {
 	// ── Rendering ─────────────────────────────────────────────────
 
 	private renderHeader(containerEl: HTMLElement): void {
-		const header = containerEl.createDiv({ cls: 'task-bujo-jira-dashboard-header' });
+		const header = containerEl.createDiv({ cls: 'friday-jira-dashboard-header' });
 
-		const titleRow = header.createDiv({ cls: 'task-bujo-jira-dashboard-title-row' });
-		titleRow.createEl('h3', { text: 'JIRA Dashboard', cls: 'task-bujo-jira-dashboard-title' });
+		const titleRow = header.createDiv({ cls: 'friday-jira-dashboard-title-row' });
+		titleRow.createEl('h3', { text: 'JIRA Dashboard', cls: 'friday-jira-dashboard-title' });
 
-		this.headerMetaEl = titleRow.createSpan({ cls: 'task-bujo-jira-dashboard-meta' });
+		this.headerMetaEl = titleRow.createSpan({ cls: 'friday-jira-dashboard-meta' });
 
-		const actions = titleRow.createDiv({ cls: 'task-bujo-jira-dashboard-actions' });
+		const actions = titleRow.createDiv({ cls: 'friday-jira-dashboard-actions' });
 
 		this.refreshBtnEl = actions.createEl('button', {
-			cls: 'task-bujo-btn task-bujo-jira-dashboard-refresh',
+			cls: 'friday-btn friday-jira-dashboard-refresh',
 			text: 'Refresh',
 		});
 		this.refreshBtnEl.addEventListener('click', () => {
@@ -237,12 +237,12 @@ export class JiraDashboardView extends ItemView {
 		// Tab bar — lets the user switch between personal dashboard and team view
 		// without losing either one's cache. Hidden entirely when team tracking is off
 		// (single-tab case), so the user never sees a vestigial switcher.
-		this.tabBarEl = header.createDiv({ cls: 'task-bujo-jira-dashboard-tabs' });
+		this.tabBarEl = header.createDiv({ cls: 'friday-jira-dashboard-tabs' });
 		this.renderTabs();
 
-		const searchRow = header.createDiv({ cls: 'task-bujo-jira-dashboard-search-row' });
+		const searchRow = header.createDiv({ cls: 'friday-jira-dashboard-search-row' });
 		const searchInput = searchRow.createEl('input', {
-			cls: 'task-bujo-jira-dashboard-search',
+			cls: 'friday-jira-dashboard-search',
 			type: 'text',
 			placeholder: 'Filter by key, summary, assignee, label…',
 		});
@@ -268,7 +268,7 @@ export class JiraDashboardView extends ItemView {
 		this.tabBarEl.removeClass('is-hidden');
 
 		const mkTab = (id: 'mine' | 'team', label: string) => {
-			const tab = this.tabBarEl!.createDiv({ cls: 'task-bujo-jira-dashboard-tab' });
+			const tab = this.tabBarEl!.createDiv({ cls: 'friday-jira-dashboard-tab' });
 			tab.setText(label);
 			if (id === active) tab.addClass('is-active');
 			tab.addEventListener('click', () => this.switchTab(id));
@@ -315,7 +315,7 @@ export class JiraDashboardView extends ItemView {
 
 		if (!this.dashboardService.isEnabled()) {
 			this.contentContainer.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: 'JIRA integration is disabled. Enable it in plugin settings.',
 			});
 			return;
@@ -336,7 +336,7 @@ export class JiraDashboardView extends ItemView {
 	private renderMineTab(container: HTMLElement, topicIndex: Map<string, SprintTopic[]>): void {
 		const err = this.dashboardService.getError();
 		if (err) {
-			const errEl = container.createDiv({ cls: 'task-bujo-jira-dashboard-error' });
+			const errEl = container.createDiv({ cls: 'friday-jira-dashboard-error' });
 			errEl.createSpan({ text: `Failed to load dashboard: ${err}` });
 			return;
 		}
@@ -344,7 +344,7 @@ export class JiraDashboardView extends ItemView {
 		const issues = this.dashboardService.getIssues();
 		if (issues === null) {
 			container.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: this.dashboardService.isLoading() ? 'Loading JIRA issues…' : 'No data yet. Click Refresh.',
 			});
 			return;
@@ -370,7 +370,7 @@ export class JiraDashboardView extends ItemView {
 			// Redundant — the tab bar hides "Team" when team tracking is off — but
 			// covers the edge case where teamEnabled flips between render passes.
 			container.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: 'Team tracking is off. Enable it under Settings → JIRA Integration → Team Members.',
 			});
 			return;
@@ -378,7 +378,7 @@ export class JiraDashboardView extends ItemView {
 
 		const err = this.teamService.getError();
 		if (err) {
-			const errEl = container.createDiv({ cls: 'task-bujo-jira-dashboard-error' });
+			const errEl = container.createDiv({ cls: 'friday-jira-dashboard-error' });
 			errEl.createSpan({ text: `Failed to load team issues: ${err}` });
 			return;
 		}
@@ -386,7 +386,7 @@ export class JiraDashboardView extends ItemView {
 		const issues = this.teamService.getIssues();
 		if (issues === null) {
 			container.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: this.teamService.isLoading() ? 'Loading team issues…' : 'No team data yet. Click Refresh.',
 			});
 			return;
@@ -527,13 +527,13 @@ export class JiraDashboardView extends ItemView {
 		const stickyState = settings.jiraDashboardCollapsedSections[section.id];
 		const collapsed = stickyState ?? !!section.defaultCollapsed;
 
-		const sectionEl = container.createDiv({ cls: 'task-bujo-jira-dashboard-section' });
+		const sectionEl = container.createDiv({ cls: 'friday-jira-dashboard-section' });
 		if (collapsed) sectionEl.addClass('is-collapsed');
 
-		const header = sectionEl.createDiv({ cls: 'task-bujo-jira-dashboard-section-header' });
-		const chevron = header.createSpan({ cls: 'task-bujo-jira-dashboard-section-chevron', text: collapsed ? '▶' : '▼' });
-		header.createSpan({ cls: 'task-bujo-jira-dashboard-section-label', text: section.label });
-		header.createSpan({ cls: 'task-bujo-jira-dashboard-section-count', text: `${issues.length}` });
+		const header = sectionEl.createDiv({ cls: 'friday-jira-dashboard-section-header' });
+		const chevron = header.createSpan({ cls: 'friday-jira-dashboard-section-chevron', text: collapsed ? '▶' : '▼' });
+		header.createSpan({ cls: 'friday-jira-dashboard-section-label', text: section.label });
+		header.createSpan({ cls: 'friday-jira-dashboard-section-count', text: `${issues.length}` });
 
 		header.addEventListener('click', async () => {
 			const cur = sectionEl.hasClass('is-collapsed');
@@ -545,10 +545,10 @@ export class JiraDashboardView extends ItemView {
 			await this.saveSettings();
 		});
 
-		const body = sectionEl.createDiv({ cls: 'task-bujo-jira-dashboard-section-body' });
+		const body = sectionEl.createDiv({ cls: 'friday-jira-dashboard-section-body' });
 
 		if (issues.length === 0) {
-			body.createDiv({ cls: 'task-bujo-empty task-bujo-jira-dashboard-section-empty', text: 'No issues.' });
+			body.createDiv({ cls: 'friday-empty friday-jira-dashboard-section-empty', text: 'No issues.' });
 			return;
 		}
 
@@ -558,8 +558,8 @@ export class JiraDashboardView extends ItemView {
 	}
 
 	private renderIssueRow(container: HTMLElement, issue: JiraDashboardIssue, topicIndex: Map<string, SprintTopic[]>): void {
-		const row = container.createDiv({ cls: 'task-bujo-jira-dashboard-row' });
-		row.addClass(`task-bujo-jira-row-status-${issue.statusCategory}`);
+		const row = container.createDiv({ cls: 'friday-jira-dashboard-row' });
+		row.addClass(`friday-jira-row-status-${issue.statusCategory}`);
 		if (issue.flagged) row.addClass('is-flagged');
 
 		// Right-click context menu — lets the user create a topic seeded by this
@@ -570,17 +570,17 @@ export class JiraDashboardView extends ItemView {
 		});
 
 		// Left — issue type icon + key
-		const leftEl = row.createDiv({ cls: 'task-bujo-jira-dashboard-row-left' });
+		const leftEl = row.createDiv({ cls: 'friday-jira-dashboard-row-left' });
 		if (issue.issueTypeIconUrl) {
 			const img = leftEl.createEl('img', {
-				cls: 'task-bujo-jira-dashboard-icon',
+				cls: 'friday-jira-dashboard-icon',
 				attr: { src: issue.issueTypeIconUrl, alt: issue.issueType, title: issue.issueType },
 			});
 			img.setAttribute('width', '16');
 			img.setAttribute('height', '16');
 		}
 		const keyEl = leftEl.createEl('a', {
-			cls: 'task-bujo-jira-dashboard-key',
+			cls: 'friday-jira-dashboard-key',
 			text: issue.key,
 			attr: { href: issue.issueUrl, target: '_blank', rel: 'noopener' },
 		});
@@ -590,9 +590,9 @@ export class JiraDashboardView extends ItemView {
 		});
 
 		// Summary (clickable, opens in browser)
-		const summaryEl = row.createDiv({ cls: 'task-bujo-jira-dashboard-summary' });
+		const summaryEl = row.createDiv({ cls: 'friday-jira-dashboard-summary' });
 		const summaryLink = summaryEl.createEl('a', {
-			cls: 'task-bujo-jira-dashboard-summary-link',
+			cls: 'friday-jira-dashboard-summary-link',
 			text: issue.summary,
 			attr: { href: issue.issueUrl, target: '_blank', rel: 'noopener' },
 		});
@@ -602,28 +602,28 @@ export class JiraDashboardView extends ItemView {
 		});
 		// Parent (compact)
 		if (issue.parentKey) {
-			const parentEl = summaryEl.createDiv({ cls: 'task-bujo-jira-dashboard-parent' });
+			const parentEl = summaryEl.createDiv({ cls: 'friday-jira-dashboard-parent' });
 			parentEl.createSpan({ text: '↑ ' });
-			parentEl.createSpan({ cls: 'task-bujo-jira-dashboard-parent-key', text: issue.parentKey });
+			parentEl.createSpan({ cls: 'friday-jira-dashboard-parent-key', text: issue.parentKey });
 			if (issue.parentSummary) {
-				parentEl.createSpan({ cls: 'task-bujo-jira-dashboard-parent-summary', text: ` — ${issue.parentSummary}` });
+				parentEl.createSpan({ cls: 'friday-jira-dashboard-parent-summary', text: ` — ${issue.parentSummary}` });
 			}
 		}
 
 		// Meta chips — status, priority, assignee, due date, sprint, time, labels
-		const metaEl = row.createDiv({ cls: 'task-bujo-jira-dashboard-meta-row' });
+		const metaEl = row.createDiv({ cls: 'friday-jira-dashboard-meta-row' });
 
 		// Status
-		const statusChip = metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-status' });
-		statusChip.addClass(`task-bujo-jira-dashboard-status-${issue.statusCategory}`);
+		const statusChip = metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-status' });
+		statusChip.addClass(`friday-jira-dashboard-status-${issue.statusCategory}`);
 		statusChip.setText(issue.status);
 
 		// Priority
 		if (issue.priority) {
-			const priChip = metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-priority' });
+			const priChip = metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-priority' });
 			if (issue.priorityIconUrl) {
 				const img = priChip.createEl('img', {
-					cls: 'task-bujo-jira-dashboard-priority-icon',
+					cls: 'friday-jira-dashboard-priority-icon',
 					attr: { src: issue.priorityIconUrl, alt: issue.priority },
 				});
 				img.setAttribute('width', '12');
@@ -634,48 +634,48 @@ export class JiraDashboardView extends ItemView {
 
 		// Flagged
 		if (issue.flagged) {
-			metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-flagged', text: '⚑ Flagged' });
+			metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-flagged', text: '⚑ Flagged' });
 		}
 
 		// Assignee
 		if (issue.assignee) {
-			metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-assignee', text: `👤 ${issue.assignee}` });
+			metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-assignee', text: `👤 ${issue.assignee}` });
 		} else {
-			metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-assignee is-unassigned', text: 'Unassigned' });
+			metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-assignee is-unassigned', text: 'Unassigned' });
 		}
 
 		// Due date
 		if (issue.dueDate) {
 			const overdue = this.isOverdue(issue.dueDate);
-			const chip = metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-due', text: `📅 ${issue.dueDate}` });
+			const chip = metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-due', text: `📅 ${issue.dueDate}` });
 			if (overdue) chip.addClass('is-overdue');
 		}
 
 		// Sprint
 		if (issue.sprintName) {
-			const chip = metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-sprint', text: `🏃 ${issue.sprintName}` });
+			const chip = metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-sprint', text: `🏃 ${issue.sprintName}` });
 			if (issue.sprintActive) chip.addClass('is-active');
 		}
 
 		// Time spent / remaining
 		const timeLabel = this.formatTime(issue.timeSpentSeconds, issue.timeRemainingSeconds);
 		if (timeLabel) {
-			metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-time', text: timeLabel });
+			metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-time', text: timeLabel });
 		}
 
 		// Labels
 		for (const label of issue.labels.slice(0, 5)) {
-			metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-label', text: `#${label}` });
+			metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-label', text: `#${label}` });
 		}
 		if (issue.labels.length > 5) {
-			metaEl.createSpan({ cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-label is-more', text: `+${issue.labels.length - 5}` });
+			metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-label is-more', text: `+${issue.labels.length - 5}` });
 		}
 
 		// Linked topic(s) — one chip per topic this issue appears in. Clicking opens the topic file.
 		const linkedTopics = topicIndex.get(issue.key) ?? [];
 		for (const topic of linkedTopics) {
 			const chip = metaEl.createSpan({
-				cls: 'task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-topic',
+				cls: 'friday-jira-dashboard-chip friday-jira-dashboard-topic',
 				text: `↔ ${topic.title}`,
 			});
 			chip.setAttribute('aria-label', `Open topic: ${topic.filePath}`);
@@ -790,11 +790,11 @@ export class JiraDashboardView extends ItemView {
 	private renderTeamBlock(container: HTMLElement, topicIndex: Map<string, SprintTopic[]>): void {
 		if (!this.teamService.isEnabled()) return;
 
-		const wrap = container.createDiv({ cls: 'task-bujo-jira-dashboard-team-block' });
-		const header = wrap.createDiv({ cls: 'task-bujo-jira-dashboard-team-header' });
-		header.createSpan({ cls: 'task-bujo-jira-dashboard-team-title', text: 'Team' });
+		const wrap = container.createDiv({ cls: 'friday-jira-dashboard-team-block' });
+		const header = wrap.createDiv({ cls: 'friday-jira-dashboard-team-header' });
+		header.createSpan({ cls: 'friday-jira-dashboard-team-title', text: 'Team' });
 
-		const teamMeta = header.createSpan({ cls: 'task-bujo-jira-dashboard-team-meta' });
+		const teamMeta = header.createSpan({ cls: 'friday-jira-dashboard-team-meta' });
 		const teamErr = this.teamService.getError();
 		if (this.teamService.isLoading()) {
 			teamMeta.setText('Loading team…');
@@ -813,7 +813,7 @@ export class JiraDashboardView extends ItemView {
 		if (teamIssues === null) {
 			if (!teamErr) {
 				wrap.createDiv({
-					cls: 'task-bujo-empty',
+					cls: 'friday-empty',
 					text: this.teamService.isLoading() ? 'Loading team issues…' : 'No team data yet.',
 				});
 			}
@@ -822,7 +822,7 @@ export class JiraDashboardView extends ItemView {
 
 		const members = this.getSettings().teamMembers.filter(m => m.active);
 		if (members.length === 0) {
-			wrap.createDiv({ cls: 'task-bujo-empty', text: 'No active team members configured.' });
+			wrap.createDiv({ cls: 'friday-empty', text: 'No active team members configured.' });
 			return;
 		}
 
@@ -877,8 +877,8 @@ export class JiraDashboardView extends ItemView {
 	}
 
 	private renderHeatmap(container: HTMLElement, members: TeamMember[], byMember: Map<string, JiraDashboardIssue[]>): void {
-		const wrap = container.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap' });
-		const title = wrap.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-title' });
+		const wrap = container.createDiv({ cls: 'friday-jira-dashboard-heatmap' });
+		const title = wrap.createDiv({ cls: 'friday-jira-dashboard-heatmap-title' });
 		title.setText('Workload');
 
 		// Max total across all members — drives bar scaling so the busiest member's
@@ -897,22 +897,22 @@ export class JiraDashboardView extends ItemView {
 		rows.sort((a, b) => b.total - a.total);
 
 		for (const r of rows) {
-			const rowEl = wrap.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-row' });
+			const rowEl = wrap.createDiv({ cls: 'friday-jira-dashboard-heatmap-row' });
 			rowEl.createSpan({
-				cls: 'task-bujo-jira-dashboard-heatmap-nick',
+				cls: 'friday-jira-dashboard-heatmap-nick',
 				text: r.member.nickname || r.member.fullName || r.member.email,
 				attr: { title: r.member.fullName || r.member.email },
 			});
 
 			// Track with four segments: blocked (red), in-progress (blue), open (grey),
 			// done (green, faded). Segment widths are proportional to r.total / maxTotal.
-			const track = rowEl.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-track' });
-			const fill = track.createDiv({ cls: 'task-bujo-jira-dashboard-heatmap-fill' });
+			const track = rowEl.createDiv({ cls: 'friday-jira-dashboard-heatmap-track' });
+			const fill = track.createDiv({ cls: 'friday-jira-dashboard-heatmap-fill' });
 			fill.style.width = `${(r.total / maxTotal) * 100}%`;
 
 			const addSeg = (count: number, cls: string, label: string) => {
 				if (count === 0) return;
-				const seg = fill.createDiv({ cls: `task-bujo-jira-dashboard-heatmap-seg ${cls}` });
+				const seg = fill.createDiv({ cls: `friday-jira-dashboard-heatmap-seg ${cls}` });
 				seg.style.flex = `${count} ${count} 0`;
 				seg.setAttribute('title', `${count} ${label}`);
 			};
@@ -922,7 +922,7 @@ export class JiraDashboardView extends ItemView {
 			addSeg(r.done, 'is-done', 'done');
 
 			// Compact count summary to the right.
-			const counts = rowEl.createSpan({ cls: 'task-bujo-jira-dashboard-heatmap-counts' });
+			const counts = rowEl.createSpan({ cls: 'friday-jira-dashboard-heatmap-counts' });
 			const parts: string[] = [];
 			if (r.blocked) parts.push(`${r.blocked} blocked`);
 			if (r.inProgress) parts.push(`${r.inProgress} in progress`);
@@ -939,15 +939,15 @@ export class JiraDashboardView extends ItemView {
 		const stickyKey = `team:${member.email}`;
 		const collapsed = settings.jiraDashboardCollapsedSections[stickyKey] ?? true;
 
-		const sectionEl = container.createDiv({ cls: 'task-bujo-jira-dashboard-section task-bujo-jira-dashboard-team-section' });
+		const sectionEl = container.createDiv({ cls: 'friday-jira-dashboard-section friday-jira-dashboard-team-section' });
 		if (collapsed) sectionEl.addClass('is-collapsed');
 
-		const header = sectionEl.createDiv({ cls: 'task-bujo-jira-dashboard-section-header' });
-		const chevron = header.createSpan({ cls: 'task-bujo-jira-dashboard-section-chevron', text: collapsed ? '▶' : '▼' });
+		const header = sectionEl.createDiv({ cls: 'friday-jira-dashboard-section-header' });
+		const chevron = header.createSpan({ cls: 'friday-jira-dashboard-section-chevron', text: collapsed ? '▶' : '▼' });
 		const label = member.fullName || member.nickname || member.email;
 		const suffix = member.nickname && member.nickname !== member.fullName ? ` (${member.nickname})` : '';
-		header.createSpan({ cls: 'task-bujo-jira-dashboard-section-label', text: `${label}${suffix}` });
-		header.createSpan({ cls: 'task-bujo-jira-dashboard-section-count', text: `${issues.length}` });
+		header.createSpan({ cls: 'friday-jira-dashboard-section-label', text: `${label}${suffix}` });
+		header.createSpan({ cls: 'friday-jira-dashboard-section-count', text: `${issues.length}` });
 
 		header.addEventListener('click', async () => {
 			const cur = sectionEl.hasClass('is-collapsed');
@@ -958,9 +958,9 @@ export class JiraDashboardView extends ItemView {
 			await this.saveSettings();
 		});
 
-		const body = sectionEl.createDiv({ cls: 'task-bujo-jira-dashboard-section-body' });
+		const body = sectionEl.createDiv({ cls: 'friday-jira-dashboard-section-body' });
 		if (issues.length === 0) {
-			body.createDiv({ cls: 'task-bujo-empty task-bujo-jira-dashboard-section-empty', text: 'No issues in scope.' });
+			body.createDiv({ cls: 'friday-empty friday-jira-dashboard-section-empty', text: 'No issues in scope.' });
 			return;
 		}
 		for (const issue of issues) {

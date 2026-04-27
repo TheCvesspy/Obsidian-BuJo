@@ -1,18 +1,18 @@
-/* Task BuJo Plugin Styles — Uses Obsidian CSS variables for theme compatibility */
+/* Friday Plugin Styles — Uses Obsidian CSS variables for theme compatibility */
 
 /* ─── Syntax Reference ─── */
 
-.task-bujo-syntax-modal {
+.friday-syntax-modal {
     max-width: 480px;
 }
 
-.task-bujo-syntax-modal h3 {
+.friday-syntax-modal h3 {
     font-size: 13px;
     margin: 12px 0 4px 0;
     color: var(--text-muted);
 }
 
-.task-bujo-syntax-toggle {
+.friday-syntax-toggle {
     background: none;
     border: none;
     color: var(--text-muted);
@@ -27,27 +27,27 @@
     border-top: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-syntax-toggle:hover {
+.friday-syntax-toggle:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
 }
 
-.task-bujo-syntax-table {
+.friday-syntax-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 12px;
 }
 
-.task-bujo-syntax-table tr:hover {
+.friday-syntax-table tr:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-syntax-table td {
+.friday-syntax-table td {
     padding: 3px 8px;
     vertical-align: top;
 }
 
-.task-bujo-syntax-code code {
+.friday-syntax-code code {
     background: var(--background-secondary);
     padding: 1px 4px;
     border-radius: 3px;
@@ -55,35 +55,35 @@
     color: var(--text-accent);
 }
 
-.task-bujo-syntax-desc {
+.friday-syntax-desc {
     color: var(--text-muted);
 }
 
-.task-bujo-syntax-separator td {
+.friday-syntax-separator td {
     padding: 4px 0;
     border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-syntax-row-clickable {
+.friday-syntax-row-clickable {
     cursor: pointer;
     transition: background 0.1s;
 }
 
-.task-bujo-syntax-row-clickable:hover {
+.friday-syntax-row-clickable:hover {
     background: var(--interactive-accent) !important;
     color: var(--text-on-accent);
 }
 
-.task-bujo-syntax-row-clickable:hover .task-bujo-syntax-desc {
+.friday-syntax-row-clickable:hover .friday-syntax-desc {
     color: var(--text-on-accent);
 }
 
-.task-bujo-syntax-row-clickable:hover code {
+.friday-syntax-row-clickable:hover code {
     background: rgba(255, 255, 255, 0.15);
     color: var(--text-on-accent);
 }
 
-.task-bujo-syntax-hint {
+.friday-syntax-hint {
     font-size: 12px;
     color: var(--text-muted);
     font-style: italic;
@@ -92,7 +92,7 @@
 
 /* ─── Sticky Footer ─── */
 
-.task-bujo-footer {
+.friday-footer {
     flex-shrink: 0;
     background: var(--background-primary);
     padding-top: 4px;
@@ -100,20 +100,20 @@
 
 /* ─── Add Task Bar ─── */
 
-.task-bujo-add-bar {
+.friday-add-bar {
     border-top: 1px solid var(--background-modifier-border);
     padding: 8px 0;
     margin-top: 12px;
 }
 
-.task-bujo-add-form {
+.friday-add-form {
     display: flex;
     gap: 6px;
     align-items: center;
     flex-wrap: wrap;
 }
 
-.task-bujo-add-input {
+.friday-add-input {
     flex: 1;
     min-width: 120px;
     padding: 6px 10px;
@@ -124,12 +124,12 @@
     font-size: 13px;
 }
 
-.task-bujo-add-input:focus {
+.friday-add-input:focus {
     border-color: var(--interactive-accent);
     outline: none;
 }
 
-.task-bujo-add-priority {
+.friday-add-priority {
     padding: 5px 8px;
     border: 1px solid var(--background-modifier-border);
     border-radius: 6px;
@@ -139,7 +139,7 @@
     cursor: pointer;
 }
 
-.task-bujo-add-date {
+.friday-add-date {
     width: 100px;
     padding: 6px 8px;
     border: 1px solid var(--background-modifier-border);
@@ -149,12 +149,12 @@
     font-size: 12px;
 }
 
-.task-bujo-add-date:focus {
+.friday-add-date:focus {
     border-color: var(--interactive-accent);
     outline: none;
 }
 
-.task-bujo-add-btn {
+.friday-add-btn {
     padding: 6px 14px;
     border-radius: 6px;
     border: none;
@@ -167,18 +167,18 @@
     white-space: nowrap;
 }
 
-.task-bujo-add-btn:hover {
+.friday-add-btn:hover {
     opacity: 0.9;
 }
 
 /* ─── Insert Task Modal ─── */
 
-.task-bujo-insert-modal .modal-content,
-.task-bujo-due-modal .modal-content {
+.friday-insert-modal .modal-content,
+.friday-due-modal .modal-content {
     max-width: 500px;
 }
 
-.task-bujo-insert-description {
+.friday-insert-description {
     width: 100%;
     min-height: 60px;
     resize: vertical;
@@ -193,7 +193,7 @@
 
 /* ─── Folder Tree (Settings) ─── */
 
-.task-bujo-folder-tree {
+.friday-folder-tree {
     border: 1px solid var(--background-modifier-border);
     border-radius: 6px;
     padding: 8px;
@@ -203,7 +203,7 @@
     background: var(--background-primary);
 }
 
-.task-bujo-folder-row {
+.friday-folder-row {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -212,11 +212,11 @@
     transition: background 0.1s;
 }
 
-.task-bujo-folder-row:hover {
+.friday-folder-row:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-folder-chevron {
+.friday-folder-chevron {
     width: 14px;
     text-align: center;
     font-size: 10px;
@@ -225,11 +225,11 @@
     user-select: none;
 }
 
-.task-bujo-folder-chevron.task-bujo-clickable {
+.friday-folder-chevron.friday-clickable {
     cursor: pointer;
 }
 
-.task-bujo-folder-state-btn {
+.friday-folder-state-btn {
     background: none;
     border: none;
     cursor: pointer;
@@ -241,33 +241,33 @@
     transition: background 0.1s;
 }
 
-.task-bujo-folder-state-btn:hover {
+.friday-folder-state-btn:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-folder-name {
+.friday-folder-name {
     font-size: 13px;
     color: var(--text-normal);
 }
 
-.task-bujo-folder-excluded .task-bujo-folder-name {
+.friday-folder-excluded .friday-folder-name {
     color: var(--text-muted);
     text-decoration: line-through;
     opacity: 0.7;
 }
 
-.task-bujo-folder-inherit .task-bujo-folder-name {
+.friday-folder-inherit .friday-folder-name {
     color: var(--text-muted);
     font-style: italic;
 }
 
-.task-bujo-folder-children {
+.friday-folder-children {
     /* no extra styles needed, indentation via padding-left on rows */
 }
 
 /* ─── Container & Layout ─── */
 
-.task-bujo-container {
+.friday-container {
     padding: 12px 16px;
     height: 100%;
     display: flex;
@@ -277,7 +277,7 @@
 
 /* ─── View Switcher (Tabs) ─── */
 
-.task-bujo-view-switcher {
+.friday-view-switcher {
     display: flex;
     flex-direction: row;
     gap: 4px;
@@ -286,7 +286,7 @@
     margin-bottom: 12px;
 }
 
-.task-bujo-view-tab {
+.friday-view-tab {
     border: none;
     background: transparent;
     padding: 6px 16px;
@@ -297,11 +297,11 @@
     transition: background 0.15s ease, color 0.15s ease;
 }
 
-.task-bujo-view-tab:hover {
+.friday-view-tab:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-view-tab-active {
+.friday-view-tab-active {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     font-weight: 600;
@@ -309,7 +309,7 @@
 
 /* ─── Toolbar ─── */
 
-.task-bujo-toolbar {
+.friday-toolbar {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
@@ -319,12 +319,12 @@
     margin-bottom: 12px;
 }
 
-.task-bujo-search {
+.friday-search {
     flex: 1;
     min-width: 150px;
 }
 
-.task-bujo-search-input {
+.friday-search-input {
     width: 100%;
     padding: 6px 10px;
     border: 1px solid var(--background-modifier-border);
@@ -334,25 +334,25 @@
     font-size: 13px;
 }
 
-.task-bujo-search-input:focus {
+.friday-search-input:focus {
     border-color: var(--interactive-accent);
     outline: none;
 }
 
-.task-bujo-label {
+.friday-label {
     color: var(--text-muted);
     font-size: 12px;
     margin-right: 6px;
 }
 
-.task-bujo-group-selector {
+.friday-group-selector {
     display: flex;
     flex-direction: row;
     gap: 4px;
     align-items: center;
 }
 
-.task-bujo-group-btn {
+.friday-group-btn {
     padding: 4px 10px;
     border-radius: 4px;
     border: 1px solid var(--background-modifier-border);
@@ -363,11 +363,11 @@
     transition: all 0.15s ease;
 }
 
-.task-bujo-group-btn:hover {
+.friday-group-btn:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-active {
+.friday-active {
     background: var(--interactive-accent) !important;
     color: var(--text-on-accent) !important;
     border-color: var(--interactive-accent) !important;
@@ -375,11 +375,11 @@
 
 /* ─── Group Headers ─── */
 
-.task-bujo-group-header {
+.friday-group-header {
     margin-top: 12px;
 }
 
-.task-bujo-group-header-row {
+.friday-group-header-row {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -389,15 +389,15 @@
     background: var(--background-secondary);
 }
 
-.task-bujo-clickable {
+.friday-clickable {
     cursor: pointer;
 }
 
-.task-bujo-clickable:hover {
+.friday-clickable:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-chevron {
+.friday-chevron {
     font-size: 10px;
     color: var(--text-muted);
     width: 14px;
@@ -405,29 +405,29 @@
     transition: transform 0.2s ease;
 }
 
-.task-bujo-group-label {
+.friday-group-label {
     font-weight: 600;
     color: var(--text-normal);
     font-size: 14px;
 }
 
-.task-bujo-group-count {
+.friday-group-count {
     color: var(--text-muted);
     font-size: 12px;
 }
 
-.task-bujo-group-content {
+.friday-group-content {
     padding-left: 8px;
     transition: max-height 0.2s ease;
 }
 
-.task-bujo-collapsed {
+.friday-collapsed {
     display: none;
 }
 
 /* ─── Task Rows ─── */
 
-.task-bujo-task-row {
+.friday-task-row {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -438,16 +438,16 @@
     transition: background 0.15s ease;
 }
 
-.task-bujo-task-row:hover {
+.friday-task-row:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-checkbox {
+.friday-checkbox {
     cursor: pointer;
     flex-shrink: 0;
 }
 
-.task-bujo-task-text {
+.friday-task-text {
     flex: 1;
     color: var(--text-normal);
     font-size: 14px;
@@ -457,19 +457,19 @@
     white-space: nowrap;
 }
 
-.task-bujo-task-done {
+.friday-task-done {
     text-decoration: line-through;
     color: var(--text-muted);
 }
 
-.task-bujo-task-migrated {
+.friday-task-migrated {
     color: var(--text-muted);
     font-style: italic;
 }
 
 /* ─── Task Descriptions ─── */
 
-.task-bujo-desc-toggle {
+.friday-desc-toggle {
     cursor: pointer;
     color: var(--text-muted);
     font-size: 11px;
@@ -479,12 +479,12 @@
     flex-shrink: 0;
 }
 
-.task-bujo-desc-toggle:hover {
+.friday-desc-toggle:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
 }
 
-.task-bujo-task-description {
+.friday-task-description {
     padding: 4px 8px 4px 32px;
     font-size: 12px;
     color: var(--text-muted);
@@ -495,13 +495,13 @@
     width: 100%;
 }
 
-.task-bujo-task-description-hidden {
+.friday-task-description-hidden {
     display: none;
 }
 
 /* ─── Priority Dots ─── */
 
-.task-bujo-priority-dot {
+.friday-priority-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
@@ -509,42 +509,42 @@
     flex-shrink: 0;
 }
 
-.task-bujo-priority-high {
+.friday-priority-high {
     background: var(--color-red, #e03e3e);
 }
 
-.task-bujo-priority-medium {
+.friday-priority-medium {
     background: var(--color-yellow, #d9a200);
 }
 
-.task-bujo-priority-low {
+.friday-priority-low {
     background: var(--color-green, #08b94e);
 }
 
 /* ─── Status Markers ─── */
 
-.task-bujo-status-marker {
+.friday-status-marker {
     font-size: 14px;
     flex-shrink: 0;
     width: 18px;
     text-align: center;
 }
 
-.task-bujo-status-migrated {
+.friday-status-migrated {
     color: var(--text-accent);
 }
 
-.task-bujo-status-scheduled {
+.friday-status-scheduled {
     color: var(--color-blue, #2e80f2);
 }
 
-.task-bujo-status-cancelled {
+.friday-status-cancelled {
     color: var(--text-muted);
 }
 
 /* ─── Due Date Badges ─── */
 
-.task-bujo-due-badge {
+.friday-due-badge {
     font-size: 11px;
     padding: 1px 6px;
     border-radius: 4px;
@@ -554,14 +554,14 @@
     white-space: nowrap;
 }
 
-.task-bujo-due-overdue {
+.friday-due-overdue {
     background: var(--background-modifier-error, rgba(224, 62, 62, 0.15));
     color: var(--text-error, var(--color-red, #e03e3e));
 }
 
 /* ─── Source Links ─── */
 
-.task-bujo-source-link {
+.friday-source-link {
     font-size: 11px;
     color: var(--text-accent);
     cursor: pointer;
@@ -571,14 +571,14 @@
     text-decoration: none;
 }
 
-.task-bujo-source-link:hover {
+.friday-source-link:hover {
     opacity: 1;
     text-decoration: underline;
 }
 
 /* ─── Empty States ─── */
 
-.task-bujo-empty {
+.friday-empty {
     text-align: center;
     color: var(--text-muted);
     padding: 24px;
@@ -587,13 +587,13 @@
 
 /* ─── Weekly View ─── */
 
-.task-bujo-week-day {
+.friday-week-day {
     margin-bottom: 16px;
     border-left: 3px solid var(--background-modifier-border);
     padding-left: 12px;
 }
 
-.task-bujo-today-badge {
+.friday-today-badge {
     font-size: 11px;
     padding: 1px 6px;
     border-radius: 4px;
@@ -603,7 +603,7 @@
 
 /* ─── Sprint View ─── */
 
-.task-bujo-progress-bar {
+.friday-progress-bar {
     height: 8px;
     border-radius: 4px;
     background: var(--background-modifier-border);
@@ -611,19 +611,19 @@
     margin-bottom: 4px;
 }
 
-.task-bujo-progress-fill {
+.friday-progress-fill {
     height: 100%;
     border-radius: 4px;
     background: var(--interactive-accent);
     transition: width 0.3s ease;
 }
 
-.task-bujo-progress-text {
+.friday-progress-text {
     font-size: 12px;
     color: var(--text-muted);
 }
 
-.task-bujo-sprint-actions {
+.friday-sprint-actions {
     display: flex;
     flex-direction: row;
     gap: 8px;
@@ -634,11 +634,11 @@
 
 /* ─── Migration Modal ─── */
 
-.task-bujo-migration-modal {
+.friday-migration-modal {
     max-width: 700px;
 }
 
-.task-bujo-migration-item {
+.friday-migration-item {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -650,47 +650,47 @@
     flex-wrap: wrap;
 }
 
-.task-bujo-preview-item {
+.friday-preview-item {
     opacity: 0.8;
 }
 
-.task-bujo-migration-item-info {
+.friday-migration-item-info {
     flex: 1;
     min-width: 0;
 }
 
-.task-bujo-migration-item-text {
+.friday-migration-item-text {
     display: flex;
     align-items: center;
     gap: 6px;
     color: var(--text-normal);
 }
 
-.task-bujo-migration-item-meta {
+.friday-migration-item-meta {
     font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
 }
 
-.task-bujo-migration-item-source {
+.friday-migration-item-source {
     color: var(--text-muted);
 }
 
-.task-bujo-migration-item-date {
+.friday-migration-item-date {
     color: var(--text-muted);
 }
 
-.task-bujo-migration-item-actions {
+.friday-migration-item-actions {
     display: flex;
     flex-direction: row;
     gap: 4px;
     flex-shrink: 0;
 }
 
-.task-bujo-btn-forward,
-.task-bujo-btn-reschedule,
-.task-bujo-btn-cancel,
-.task-bujo-btn-done {
+.friday-btn-forward,
+.friday-btn-reschedule,
+.friday-btn-cancel,
+.friday-btn-done {
     padding: 4px 10px;
     border-radius: 4px;
     border: 1px solid var(--background-modifier-border);
@@ -701,18 +701,18 @@
     transition: all 0.15s ease;
 }
 
-.task-bujo-btn-forward.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
-.task-bujo-btn-done.is-active { background: var(--color-green, #4caf50); color: #fff; }
-.task-bujo-btn-reschedule.is-active { background: var(--color-yellow, #ff9800); color: #fff; }
-.task-bujo-btn-cancel.is-active { background: var(--color-red, #f44336); color: #fff; }
+.friday-btn-forward.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.friday-btn-done.is-active { background: var(--color-green, #4caf50); color: #fff; }
+.friday-btn-reschedule.is-active { background: var(--color-yellow, #ff9800); color: #fff; }
+.friday-btn-cancel.is-active { background: var(--color-red, #f44336); color: #fff; }
 .is-dimmed { opacity: 0.5; }
 
-.task-bujo-migration-date-input {
+.friday-migration-date-input {
     width: 100%;
     padding: 4px 12px;
 }
 
-.task-bujo-migration-date-input input {
+.friday-migration-date-input input {
     width: 150px;
     padding: 4px 8px;
     border: 1px solid var(--background-modifier-border);
@@ -721,7 +721,7 @@
     color: var(--text-normal);
 }
 
-.task-bujo-migration-summary {
+.friday-migration-summary {
     padding: 12px;
     margin-top: 12px;
     background: var(--background-secondary);
@@ -731,18 +731,18 @@
     font-size: 13px;
 }
 
-.task-bujo-migration-actions {
+.friday-migration-actions {
     display: flex;
     gap: 8px;
     justify-content: flex-end;
     margin-top: 16px;
 }
 
-.task-bujo-review-section {
+.friday-review-section {
     margin-bottom: 20px;
 }
 
-.task-bujo-review-section-header {
+.friday-review-section-header {
     display: flex;
     align-items: baseline;
     gap: 4px;
@@ -751,36 +751,36 @@
     border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-review-section-title {
+.friday-review-section-title {
     font-weight: 600;
     font-size: 14px;
     color: var(--text-normal);
 }
 
-.task-bujo-review-section-count {
+.friday-review-section-count {
     font-size: 12px;
     color: var(--text-muted);
 }
 
-.task-bujo-review-quickadd {
+.friday-review-quickadd {
     margin-top: 20px;
     padding-top: 16px;
     border-top: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-review-quickadd h3 {
+.friday-review-quickadd h3 {
     font-size: 14px;
     margin-bottom: 8px;
 }
 
-.task-bujo-add-form {
+.friday-add-form {
     display: flex;
     gap: 6px;
     align-items: center;
     flex-wrap: wrap;
 }
 
-.task-bujo-add-input {
+.friday-add-input {
     flex: 1;
     min-width: 150px;
     padding: 6px 10px;
@@ -790,7 +790,7 @@
     color: var(--text-normal);
 }
 
-.task-bujo-add-priority {
+.friday-add-priority {
     padding: 6px 8px;
     border: 1px solid var(--background-modifier-border);
     border-radius: 4px;
@@ -798,7 +798,7 @@
     color: var(--text-normal);
 }
 
-.task-bujo-add-date {
+.friday-add-date {
     width: 110px;
     padding: 6px 8px;
     border: 1px solid var(--background-modifier-border);
@@ -807,17 +807,17 @@
     color: var(--text-normal);
 }
 
-.task-bujo-add-btn {
+.friday-add-btn {
     padding: 6px 14px;
     border-radius: 4px;
     cursor: pointer;
 }
 
-.task-bujo-review-added {
+.friday-review-added {
     margin-top: 8px;
 }
 
-.task-bujo-empty {
+.friday-empty {
     padding: 20px 0;
     text-align: center;
     color: var(--text-muted);
@@ -826,20 +826,20 @@
 
 /* ─── Picker Sections ─── */
 
-.task-bujo-picker-section {
+.friday-picker-section {
     margin-top: 20px;
     padding-top: 16px;
     border-top: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-picker-header {
+.friday-picker-header {
     display: flex;
     align-items: baseline;
     gap: 4px;
     margin-bottom: 8px;
 }
 
-.task-bujo-picker-search {
+.friday-picker-search {
     width: 100%;
     padding: 6px 10px;
     margin-bottom: 8px;
@@ -849,7 +849,7 @@
     color: var(--text-normal);
 }
 
-.task-bujo-picker-list {
+.friday-picker-list {
     max-height: 200px;
     overflow-y: auto;
     border: 1px solid var(--background-modifier-border);
@@ -857,7 +857,7 @@
     background: var(--background-primary);
 }
 
-.task-bujo-picker-item {
+.friday-picker-item {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -865,19 +865,19 @@
     border-bottom: 1px solid var(--background-modifier-border-hover, rgba(0,0,0,0.05));
 }
 
-.task-bujo-picker-item:last-child {
+.friday-picker-item:last-child {
     border-bottom: none;
 }
 
-.task-bujo-picker-item:hover {
+.friday-picker-item:hover {
     background: var(--background-secondary);
 }
 
-.task-bujo-picker-item input[type="checkbox"] {
+.friday-picker-item input[type="checkbox"] {
     flex-shrink: 0;
 }
 
-.task-bujo-picker-item-text {
+.friday-picker-item-text {
     flex: 1;
     min-width: 0;
     display: flex;
@@ -889,7 +889,7 @@
     white-space: nowrap;
 }
 
-.task-bujo-picker-item-source {
+.friday-picker-item-source {
     flex-shrink: 0;
     font-size: 11px;
     color: var(--text-muted);
@@ -899,14 +899,14 @@
     white-space: nowrap;
 }
 
-.task-bujo-picker-actions {
+.friday-picker-actions {
     display: flex;
     align-items: center;
     gap: 12px;
     margin-top: 12px;
 }
 
-.task-bujo-picker-feedback {
+.friday-picker-feedback {
     font-size: 13px;
     color: var(--text-muted);
     font-style: italic;
@@ -914,13 +914,13 @@
 
 /* ─── Responsive (Tab View) ─── */
 
-.workspace-leaf-content[data-type="task-bujo-view"] .task-bujo-toolbar {
+.workspace-leaf-content[data-type="friday-view"] .friday-toolbar {
     flex-direction: column;
     align-items: stretch;
 }
 
 @media (min-width: 500px) {
-    .workspace-leaf-content[data-type="task-bujo-view"] .task-bujo-toolbar {
+    .workspace-leaf-content[data-type="friday-view"] .friday-toolbar {
         flex-direction: row;
         align-items: center;
     }
@@ -928,7 +928,7 @@
 
 /* ─── Content Area ─── */
 
-.task-bujo-content {
+.friday-content {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -936,7 +936,7 @@
 
 /* ─── View Headers ─── */
 
-.task-bujo-view-header {
+.friday-view-header {
     display: flex;
     align-items: baseline;
     gap: 8px;
@@ -946,20 +946,20 @@
     color: var(--text-normal);
 }
 
-.task-bujo-pending-count {
+.friday-pending-count {
     font-size: 13px;
     font-weight: 400;
     color: var(--text-muted);
 }
 
-.task-bujo-view-subheader {
+.friday-view-subheader {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-normal);
     margin-bottom: 8px;
 }
 
-.task-bujo-separator {
+.friday-separator {
     border: none;
     border-top: 1px solid var(--background-modifier-border);
     margin: 16px 0;
@@ -967,13 +967,13 @@
 
 /* ─── Daily View ─── */
 
-.task-bujo-daily-view {
+.friday-daily-view {
     /* container for daily log sections */
 }
 
 /* ─── Weekly View ─── */
 
-.task-bujo-day-header {
+.friday-day-header {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -983,55 +983,55 @@
     color: var(--text-normal);
 }
 
-.task-bujo-muted {
+.friday-muted {
     color: var(--text-muted);
     font-size: 13px;
     font-style: italic;
     padding: 4px 0;
 }
 
-.task-bujo-progress-row {
+.friday-progress-row {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 6px;
 }
 
-.task-bujo-day-count {
+.friday-day-count {
     font-size: 12px;
     color: var(--text-muted);
     white-space: nowrap;
 }
 
-.task-bujo-day-tasks {
+.friday-day-tasks {
     padding-left: 4px;
 }
 
 /* ─── Open Points View ─── */
 
-.task-bujo-openpoints-view {
+.friday-openpoints-view {
     /* container for open points */
 }
 
 /* ─── Overdue View ─── */
 
-.task-bujo-overdue-view {
+.friday-overdue-view {
     /* container for overdue tasks */
 }
 
 /* ─── Sprint View ─── */
 
-.task-bujo-sprint-view {
+.friday-sprint-view {
     /* container for sprint view */
 }
 
-.task-bujo-sprint-empty {
+.friday-sprint-empty {
     text-align: center;
     padding: 24px;
     color: var(--text-muted);
 }
 
-.task-bujo-sprint-header {
+.friday-sprint-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1039,55 +1039,55 @@
     gap: 8px;
 }
 
-.task-bujo-sprint-header-info {
+.friday-sprint-header-info {
     display: flex;
     align-items: baseline;
     gap: 4px;
     flex-wrap: wrap;
 }
 
-.task-bujo-sprint-name {
+.friday-sprint-name {
     font-weight: 600;
     font-size: 15px;
 }
 
-.task-bujo-sprint-name:hover {
+.friday-sprint-name:hover {
     text-decoration: underline;
     color: var(--text-accent);
 }
 
-.task-bujo-sprint-edit-btn {
+.friday-sprint-edit-btn {
     margin-left: 8px;
     padding: 2px 8px;
     font-size: 12px;
 }
 
-.task-bujo-sprint-dates {
+.friday-sprint-dates {
     font-size: 13px;
     font-weight: 400;
     color: var(--text-muted);
 }
 
-.task-bujo-sprint-remaining {
+.friday-sprint-remaining {
     font-size: 13px;
     font-weight: 400;
     color: var(--text-muted);
 }
 
-.task-bujo-sprint-progress {
+.friday-sprint-progress {
     margin-bottom: 16px;
 }
 
 /* ─── Kanban Board ─── */
 
-.task-bujo-kanban {
+.friday-kanban {
     display: flex;
     gap: 12px;
     min-height: 200px;
     margin-bottom: 16px;
 }
 
-.task-bujo-kanban-column {
+.friday-kanban-column {
     flex: 1;
     min-width: 180px;
     background: var(--background-secondary);
@@ -1097,7 +1097,7 @@
     flex-direction: column;
 }
 
-.task-bujo-kanban-column-header {
+.friday-kanban-column-header {
     font-weight: 600;
     font-size: 13px;
     padding: 6px 8px;
@@ -1108,13 +1108,13 @@
     align-items: center;
 }
 
-.task-bujo-kanban-column-count {
+.friday-kanban-column-count {
     font-weight: 400;
     color: var(--text-muted);
     font-size: 12px;
 }
 
-.task-bujo-kanban-column-body {
+.friday-kanban-column-body {
     flex: 1;
     min-height: 50px;
     display: flex;
@@ -1124,11 +1124,11 @@
     transition: background 0.15s;
 }
 
-.task-bujo-kanban-column-dragover {
+.friday-kanban-column-dragover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-kanban-empty {
+.friday-kanban-empty {
     text-align: center;
     font-size: 12px;
     color: var(--text-faint);
@@ -1137,7 +1137,7 @@
 
 /* ─── Kanban Cards ─── */
 
-.task-bujo-kanban-card {
+.friday-kanban-card {
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     border-radius: 6px;
@@ -1146,33 +1146,33 @@
     transition: box-shadow 0.15s, opacity 0.15s;
 }
 
-.task-bujo-kanban-card:hover {
+.friday-kanban-card:hover {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.task-bujo-kanban-card-dragging {
+.friday-kanban-card-dragging {
     opacity: 0.4;
 }
 
-.task-bujo-kanban-card-header {
+.friday-kanban-card-header {
     display: flex;
     align-items: center;
     gap: 6px;
     margin-bottom: 4px;
 }
 
-.task-bujo-kanban-card-title {
+.friday-kanban-card-title {
     font-weight: 600;
     font-size: 13px;
     flex: 1;
     cursor: pointer;
 }
 
-.task-bujo-kanban-card-title:hover {
+.friday-kanban-card-title:hover {
     color: var(--text-accent);
 }
 
-.task-bujo-kanban-card-blocked {
+.friday-kanban-card-blocked {
     font-size: 10px;
     padding: 1px 6px;
     border-radius: 4px;
@@ -1182,7 +1182,7 @@
     white-space: nowrap;
 }
 
-.task-bujo-kanban-card-jira-row {
+.friday-kanban-card-jira-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1190,21 +1190,21 @@
     margin-bottom: 2px;
 }
 
-.task-bujo-kanban-card-jira {
+.friday-kanban-card-jira {
     font-size: 11px;
     color: var(--text-accent);
     font-weight: 600;
 }
 
-.task-bujo-kanban-card-jira.task-bujo-clickable {
+.friday-kanban-card-jira.friday-clickable {
     cursor: pointer;
     text-decoration: none;
 }
-.task-bujo-kanban-card-jira.task-bujo-clickable:hover {
+.friday-kanban-card-jira.friday-clickable:hover {
     text-decoration: underline;
 }
 
-.task-bujo-kanban-card-jira-summary {
+.friday-kanban-card-jira-summary {
     font-size: 11px;
     color: var(--text-muted);
     margin-bottom: 2px;
@@ -1213,7 +1213,7 @@
     text-overflow: ellipsis;
 }
 
-.task-bujo-jira-chip {
+.friday-jira-chip {
     display: inline-block;
     font-size: 10px;
     padding: 1px 6px;
@@ -1225,16 +1225,16 @@
     color: var(--text-normal);
 }
 
-.task-bujo-jira-assignee {
+.friday-jira-assignee {
     color: var(--text-muted);
 }
 
-.task-bujo-jira-loading {
+.friday-jira-loading {
     color: var(--text-muted);
     font-style: italic;
 }
 
-.task-bujo-jira-error {
+.friday-jira-error {
     background-color: var(--color-red, #e55);
     color: #fff;
     border-color: transparent;
@@ -1242,53 +1242,53 @@
 }
 
 /* Status-category colors — match JIRA's coarse New / In Progress / Done */
-.task-bujo-jira-status-new {
+.friday-jira-status-new {
     background-color: rgba(128, 128, 128, 0.25);
     color: var(--text-normal);
     border-color: transparent;
 }
-.task-bujo-jira-status-indeterminate {
+.friday-jira-status-indeterminate {
     background-color: rgba(59, 130, 246, 0.25);
     color: var(--text-normal);
     border-color: transparent;
 }
-.task-bujo-jira-status-done {
+.friday-jira-status-done {
     background-color: rgba(34, 197, 94, 0.3);
     color: var(--text-normal);
     border-color: transparent;
 }
-.task-bujo-jira-status-unknown {
+.friday-jira-status-unknown {
     background-color: var(--background-secondary);
     color: var(--text-muted);
 }
 
-.task-bujo-kanban-card-links {
+.friday-kanban-card-links {
     font-size: 11px;
     color: var(--text-muted);
     margin-bottom: 4px;
     line-height: 1.4;
 }
 
-.task-bujo-kanban-card-progress {
+.friday-kanban-card-progress {
     margin-top: 4px;
 }
 
-.task-bujo-kanban-card-progress .task-bujo-progress-bar {
+.friday-kanban-card-progress .friday-progress-bar {
     height: 4px;
     margin-bottom: 2px;
 }
 
-.task-bujo-kanban-card-progress .task-bujo-progress-text {
+.friday-kanban-card-progress .friday-progress-text {
     font-size: 11px;
 }
 
-.task-bujo-kanban-card-actions {
+.friday-kanban-card-actions {
     display: flex;
     gap: 4px;
     margin-top: 6px;
 }
 
-.task-bujo-kanban-card-actions button {
+.friday-kanban-card-actions button {
     padding: 2px 8px;
     font-size: 12px;
     border-radius: 4px;
@@ -1298,11 +1298,11 @@
     transition: background 0.1s;
 }
 
-.task-bujo-kanban-card-actions button:hover {
+.friday-kanban-card-actions button:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-kanban-blocked-active {
+.friday-kanban-blocked-active {
     background: var(--color-red, #e03e3e) !important;
     color: #fff !important;
     border-color: var(--color-red, #e03e3e) !important;
@@ -1310,18 +1310,18 @@
 
 /* ─── Sprint Close Modal ─── */
 
-.task-bujo-sprint-close-modal .modal-content {
+.friday-sprint-close-modal .modal-content {
     max-width: 700px;
 }
 
-.task-bujo-sprint-close-item {
+.friday-sprint-close-item {
     border: 1px solid var(--background-modifier-border);
     border-radius: 6px;
     padding: 10px 12px;
     margin-bottom: 8px;
 }
 
-.task-bujo-sprint-close-item-header {
+.friday-sprint-close-item-header {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -1329,18 +1329,18 @@
     margin-bottom: 4px;
 }
 
-.task-bujo-sprint-close-item-progress {
+.friday-sprint-close-item-progress {
     font-size: 12px;
     color: var(--text-muted);
     margin-bottom: 6px;
 }
 
-.task-bujo-sprint-close-actions-row {
+.friday-sprint-close-actions-row {
     display: flex;
     gap: 4px;
 }
 
-.task-bujo-sprint-close-summary {
+.friday-sprint-close-summary {
     margin-top: 12px;
     padding: 8px 12px;
     border-radius: 6px;
@@ -1351,11 +1351,11 @@
 
 /* ─── Topic Modal ─── */
 
-.task-bujo-topic-modal .modal-content {
+.friday-topic-modal .modal-content {
     max-width: 500px;
 }
 
-.task-bujo-page-chips {
+.friday-page-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
@@ -1363,13 +1363,13 @@
     width: 100%;
 }
 
-.task-bujo-page-chips-empty {
+.friday-page-chips-empty {
     color: var(--text-faint);
     font-size: 12px;
     font-style: italic;
 }
 
-.task-bujo-page-chip {
+.friday-page-chip {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -1381,7 +1381,7 @@
     line-height: 1.4;
 }
 
-.task-bujo-page-chip-remove {
+.friday-page-chip-remove {
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
@@ -1389,12 +1389,12 @@
     line-height: 1;
 }
 
-.task-bujo-page-chip-remove:hover {
+.friday-page-chip-remove:hover {
     color: var(--text-error, var(--color-red, #e03e3e));
 }
 
 /* Sprint history list shown in topic edit modal */
-.task-bujo-topic-sprint-history {
+.friday-topic-sprint-history {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1402,7 +1402,7 @@
     width: 100%;
 }
 
-.task-bujo-topic-sprint-history-chip {
+.friday-topic-sprint-history-chip {
     font-size: 12px;
     padding: 4px 8px;
     background: var(--background-secondary);
@@ -1411,7 +1411,7 @@
     color: var(--text-muted);
 }
 
-.task-bujo-topic-sprint-history-current {
+.friday-topic-sprint-history-current {
     border-left-color: var(--interactive-accent);
     color: var(--text-normal);
     font-weight: 500;
@@ -1419,15 +1419,15 @@
 
 /* Responsive: stack kanban columns on narrow panes */
 @media (max-width: 600px) {
-    .task-bujo-kanban {
+    .friday-kanban {
         flex-direction: column;
     }
-    .task-bujo-kanban-column {
+    .friday-kanban-column {
         min-width: unset;
     }
 }
 
-.task-bujo-btn {
+.friday-btn {
     padding: 6px 14px;
     border-radius: 6px;
     border: 1px solid var(--background-modifier-border);
@@ -1438,32 +1438,32 @@
     transition: background 0.15s;
 }
 
-.task-bujo-btn:hover {
+.friday-btn:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-btn-warning {
+.friday-btn-warning {
     border-color: var(--text-error, var(--color-red, #e03e3e));
     color: var(--text-error, var(--color-red, #e03e3e));
 }
 
-.task-bujo-btn-warning:hover {
+.friday-btn-warning:hover {
     background: var(--background-modifier-error, rgba(224, 62, 62, 0.1));
 }
 
 /* ─── Task List ─── */
 
-.task-bujo-task-list {
+.friday-task-list {
     /* container for grouped task lists */
 }
 
 /* ─── Sprint Modal ─── */
 
-.task-bujo-sprint-modal .modal-content {
+.friday-sprint-modal .modal-content {
     max-width: 500px;
 }
 
-.task-bujo-modal-error {
+.friday-modal-error {
     color: var(--text-error, var(--color-red, #e03e3e));
     font-size: 13px;
     min-height: 1.2em;
@@ -1471,12 +1471,12 @@
 
 /* ─── Migration Modal Details ─── */
 
-.task-bujo-migration-item-info {
+.friday-migration-item-info {
     flex: 1;
     min-width: 200px;
 }
 
-.task-bujo-migration-item-text {
+.friday-migration-item-text {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -1484,30 +1484,30 @@
     color: var(--text-normal);
 }
 
-.task-bujo-migration-item-source {
+.friday-migration-item-source {
     font-size: 12px;
     color: var(--text-accent);
     margin-top: 2px;
 }
 
-.task-bujo-migration-item-date {
+.friday-migration-item-date {
     font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
 }
 
-.task-bujo-migration-item-actions {
+.friday-migration-item-actions {
     display: flex;
     gap: 4px;
     flex-shrink: 0;
 }
 
-.task-bujo-migration-date-input {
+.friday-migration-date-input {
     width: 100%;
     margin-top: 6px;
 }
 
-.task-bujo-migration-date-input input {
+.friday-migration-date-input input {
     width: 100%;
     padding: 6px 10px;
     border: 1px solid var(--background-modifier-border);
@@ -1517,32 +1517,32 @@
     font-size: 13px;
 }
 
-.task-bujo-migration-date-input input:focus {
+.friday-migration-date-input input:focus {
     border-color: var(--interactive-accent);
     outline: none;
 }
 
 /* ─── Button active/dimmed states (Migration) ─── */
 
-.task-bujo-btn-forward.is-active,
-.task-bujo-btn-reschedule.is-active,
-.task-bujo-btn-cancel.is-active {
+.friday-btn-forward.is-active,
+.friday-btn-reschedule.is-active,
+.friday-btn-cancel.is-active {
     font-weight: 600;
 }
 
-.task-bujo-btn-forward.is-active {
+.friday-btn-forward.is-active {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     border-color: var(--interactive-accent);
 }
 
-.task-bujo-btn-reschedule.is-active {
+.friday-btn-reschedule.is-active {
     background: var(--color-yellow, #d9a200);
     color: white;
     border-color: var(--color-yellow, #d9a200);
 }
 
-.task-bujo-btn-cancel.is-active {
+.friday-btn-cancel.is-active {
     background: var(--text-muted);
     color: var(--background-primary);
     border-color: var(--text-muted);
@@ -1554,22 +1554,22 @@
 
 /* ─── Analytics View ─── */
 
-.task-bujo-analytics {
+.friday-analytics {
     padding: 12px;
 }
 
-.task-bujo-analytics-header {
+.friday-analytics-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
 }
 
-.task-bujo-analytics-header h3 {
+.friday-analytics-header h3 {
     margin: 0;
 }
 
-.task-bujo-analytics-save-btn {
+.friday-analytics-save-btn {
     padding: 4px 12px;
     border-radius: 4px;
     background: var(--interactive-accent);
@@ -1579,23 +1579,23 @@
     font-size: 12px;
 }
 
-.task-bujo-analytics-save-btn:hover {
+.friday-analytics-save-btn:hover {
     opacity: 0.9;
 }
 
-.task-bujo-analytics-save-btn[disabled] {
+.friday-analytics-save-btn[disabled] {
     opacity: 0.6;
     cursor: default;
 }
 
-.task-bujo-analytics-summary {
+.friday-analytics-summary {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
     margin-bottom: 20px;
 }
 
-.task-bujo-analytics-card {
+.friday-analytics-card {
     flex: 1;
     min-width: 80px;
     padding: 12px;
@@ -1605,54 +1605,54 @@
     border: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-analytics-card-value {
+.friday-analytics-card-value {
     font-size: 24px;
     font-weight: 600;
     color: var(--text-normal);
 }
 
-.task-bujo-analytics-card.done .task-bujo-analytics-card-value {
+.friday-analytics-card.done .friday-analytics-card-value {
     color: var(--color-green, #4caf50);
 }
 
-.task-bujo-analytics-card.migrated .task-bujo-analytics-card-value {
+.friday-analytics-card.migrated .friday-analytics-card-value {
     color: var(--color-yellow, #ff9800);
 }
 
-.task-bujo-analytics-card.cancelled .task-bujo-analytics-card-value {
+.friday-analytics-card.cancelled .friday-analytics-card-value {
     color: var(--text-muted);
 }
 
-.task-bujo-analytics-card-label {
+.friday-analytics-card-label {
     font-size: 11px;
     color: var(--text-muted);
     margin-top: 4px;
 }
 
-.task-bujo-analytics-breakdown {
+.friday-analytics-breakdown {
     margin-bottom: 20px;
 }
 
-.task-bujo-analytics-breakdown h4 {
+.friday-analytics-breakdown h4 {
     margin: 0 0 8px 0;
     font-size: 14px;
 }
 
-.task-bujo-analytics-bar-row {
+.friday-analytics-bar-row {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 6px;
 }
 
-.task-bujo-analytics-bar-label {
+.friday-analytics-bar-label {
     min-width: 100px;
     font-size: 12px;
     color: var(--text-muted);
     text-align: right;
 }
 
-.task-bujo-analytics-bar-container {
+.friday-analytics-bar-container {
     flex: 1;
     height: 16px;
     background: var(--background-secondary);
@@ -1661,7 +1661,7 @@
     overflow: hidden;
 }
 
-.task-bujo-analytics-bar {
+.friday-analytics-bar {
     position: absolute;
     top: 0;
     left: 0;
@@ -1670,15 +1670,15 @@
     transition: width 0.3s ease;
 }
 
-.task-bujo-analytics-bar.planned {
+.friday-analytics-bar.planned {
     background: var(--background-modifier-border);
 }
 
-.task-bujo-analytics-bar.completed {
+.friday-analytics-bar.completed {
     background: var(--interactive-accent);
 }
 
-.task-bujo-analytics-bar-value {
+.friday-analytics-bar-value {
     font-size: 11px;
     color: var(--text-muted);
     min-width: 40px;
@@ -1686,23 +1686,23 @@
 
 /* Trends */
 
-.task-bujo-analytics-trends {
+.friday-analytics-trends {
     margin-bottom: 20px;
 }
 
-.task-bujo-analytics-trends h4 {
+.friday-analytics-trends h4 {
     margin: 0 0 8px 0;
     font-size: 14px;
 }
 
-.task-bujo-analytics-trend-table {
+.friday-analytics-trend-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 12px;
     margin-bottom: 16px;
 }
 
-.task-bujo-analytics-trend-table th {
+.friday-analytics-trend-table th {
     text-align: left;
     padding: 4px 8px;
     border-bottom: 1px solid var(--background-modifier-border);
@@ -1710,15 +1710,15 @@
     font-weight: 500;
 }
 
-.task-bujo-analytics-trend-table td {
+.friday-analytics-trend-table td {
     padding: 4px 8px;
 }
 
-.task-bujo-analytics-trend-table tr:hover {
+.friday-analytics-trend-table tr:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-analytics-trend-chart {
+.friday-analytics-trend-chart {
     display: flex;
     align-items: flex-end;
     gap: 8px;
@@ -1726,7 +1726,7 @@
     padding: 8px 0;
 }
 
-.task-bujo-analytics-trend-col {
+.friday-analytics-trend-col {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -1734,7 +1734,7 @@
     height: 100%;
 }
 
-.task-bujo-analytics-trend-bar-wrap {
+.friday-analytics-trend-bar-wrap {
     flex: 1;
     width: 100%;
     display: flex;
@@ -1742,7 +1742,7 @@
     justify-content: center;
 }
 
-.task-bujo-analytics-trend-bar {
+.friday-analytics-trend-bar {
     width: 60%;
     background: var(--interactive-accent);
     border-radius: 3px 3px 0 0;
@@ -1750,7 +1750,7 @@
     transition: height 0.3s ease;
 }
 
-.task-bujo-analytics-trend-label {
+.friday-analytics-trend-label {
     font-size: 10px;
     color: var(--text-muted);
     margin-top: 4px;
@@ -1759,54 +1759,54 @@
 
 /* ─── Weekly Review Modal ─── */
 
-.task-bujo-weekly-review-modal {
+.friday-weekly-review-modal {
     max-width: 500px;
 }
 
-.task-bujo-review-summary {
+.friday-review-summary {
     margin-bottom: 16px;
 }
 
-.task-bujo-review-stat {
+.friday-review-stat {
     display: flex;
     justify-content: space-between;
     padding: 6px 0;
     border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-review-stat-label {
+.friday-review-stat-label {
     color: var(--text-muted);
     font-size: 13px;
 }
 
-.task-bujo-review-stat-value {
+.friday-review-stat-value {
     font-weight: 600;
     font-size: 13px;
 }
 
-.task-bujo-review-breakdown {
+.friday-review-breakdown {
     margin-bottom: 16px;
 }
 
-.task-bujo-review-breakdown h3 {
+.friday-review-breakdown h3 {
     font-size: 14px;
     margin: 0 0 8px 0;
 }
 
-.task-bujo-review-breakdown-row {
+.friday-review-breakdown-row {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 4px;
 }
 
-.task-bujo-review-breakdown-name {
+.friday-review-breakdown-name {
     min-width: 100px;
     font-size: 12px;
     color: var(--text-muted);
 }
 
-.task-bujo-review-breakdown-bar-wrap {
+.friday-review-breakdown-bar-wrap {
     flex: 1;
     height: 12px;
     background: var(--background-secondary);
@@ -1814,29 +1814,29 @@
     overflow: hidden;
 }
 
-.task-bujo-review-breakdown-bar {
+.friday-review-breakdown-bar {
     height: 100%;
     background: var(--interactive-accent);
     border-radius: 3px;
     transition: width 0.3s ease;
 }
 
-.task-bujo-review-breakdown-value {
+.friday-review-breakdown-value {
     font-size: 11px;
     color: var(--text-muted);
     min-width: 35px;
 }
 
-.task-bujo-review-comparison {
+.friday-review-comparison {
     margin-bottom: 16px;
 }
 
-.task-bujo-review-comparison h3 {
+.friday-review-comparison h3 {
     font-size: 14px;
     margin: 0 0 8px 0;
 }
 
-.task-bujo-review-comparison-row {
+.friday-review-comparison-row {
     display: flex;
     justify-content: space-between;
     padding: 4px 0;
@@ -1844,7 +1844,7 @@
     color: var(--text-muted);
 }
 
-.task-bujo-review-actions {
+.friday-review-actions {
     display: flex;
     gap: 8px;
     justify-content: flex-end;
@@ -1855,12 +1855,12 @@
 
 /* ─── Structured Tasks / Subtasks ─── */
 
-.task-bujo-subtask-row {
+.friday-subtask-row {
     border-left: 2px solid var(--background-modifier-border);
     margin-left: 6px;
 }
 
-.task-bujo-subtask-toggle {
+.friday-subtask-toggle {
     cursor: pointer;
     font-size: 10px;
     color: var(--text-muted);
@@ -1872,11 +1872,11 @@
     flex-shrink: 0;
 }
 
-.task-bujo-subtask-toggle:hover {
+.friday-subtask-toggle:hover {
     color: var(--text-normal);
 }
 
-.task-bujo-subtask-progress {
+.friday-subtask-progress {
     font-size: 11px;
     color: var(--text-muted);
     margin-left: 6px;
@@ -1889,22 +1889,22 @@
 
 /* Confirm modal for subtask completion */
 
-.task-bujo-confirm-modal {
+.friday-confirm-modal {
     max-width: 400px;
 }
 
-.task-bujo-confirm-modal .task-bujo-confirm-message {
+.friday-confirm-modal .friday-confirm-message {
     margin-bottom: 16px;
     font-size: 14px;
     color: var(--text-normal);
 }
 
-.task-bujo-confirm-modal .task-bujo-confirm-task-name {
+.friday-confirm-modal .friday-confirm-task-name {
     font-weight: 600;
     margin-bottom: 8px;
 }
 
-.task-bujo-confirm-modal .task-bujo-confirm-actions {
+.friday-confirm-modal .friday-confirm-actions {
     display: flex;
     gap: 8px;
     justify-content: flex-end;
@@ -1913,21 +1913,21 @@
 
 /* Migration modal: subtask context under parent */
 
-.task-bujo-migration-subtask {
+.friday-migration-subtask {
     padding-left: 24px;
     font-size: 12px;
     color: var(--text-muted);
     margin: 2px 0;
 }
 
-.task-bujo-migration-subtask::before {
+.friday-migration-subtask::before {
     content: '└ ';
     color: var(--text-faint);
 }
 
 /* ─── Overview View Sub-Toggle ─── */
 
-.task-bujo-overview-toggle {
+.friday-overview-toggle {
     display: flex;
     gap: 0;
     margin-bottom: 12px;
@@ -1937,7 +1937,7 @@
     width: fit-content;
 }
 
-.task-bujo-overview-toggle-btn {
+.friday-overview-toggle-btn {
     padding: 5px 16px;
     border: none;
     background: transparent;
@@ -1948,46 +1948,46 @@
     transition: background 0.15s ease, color 0.15s ease;
 }
 
-.task-bujo-overview-toggle-btn:hover {
+.friday-overview-toggle-btn:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
 }
 
-.task-bujo-overview-toggle-btn.task-bujo-overview-toggle-active {
+.friday-overview-toggle-btn.friday-overview-toggle-active {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
 
-.task-bujo-overview-toggle-btn + .task-bujo-overview-toggle-btn {
+.friday-overview-toggle-btn + .friday-overview-toggle-btn {
     border-left: 1px solid var(--background-modifier-border);
 }
 
 /* ─── Monthly View ─── */
 
-.task-bujo-monthly {
+.friday-monthly {
     padding: 8px 0;
 }
 
-.task-bujo-monthly-header {
+.friday-monthly-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 12px;
 }
 
-.task-bujo-monthly-nav {
+.friday-monthly-nav {
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
-.task-bujo-monthly-nav h3 {
+.friday-monthly-nav h3 {
     margin: 0;
     min-width: 150px;
     text-align: center;
 }
 
-.task-bujo-monthly-nav-btn {
+.friday-monthly-nav-btn {
     padding: 2px 8px;
     font-size: 18px;
     line-height: 1;
@@ -1998,17 +1998,17 @@
     color: var(--text-normal);
 }
 
-.task-bujo-monthly-nav-btn:hover {
+.friday-monthly-nav-btn:hover {
     background: var(--background-modifier-hover);
 }
 
 /* Goals section */
 
-.task-bujo-monthly-goals {
+.friday-monthly-goals {
     margin: 12px 0;
 }
 
-.task-bujo-monthly-goals h4 {
+.friday-monthly-goals h4 {
     margin: 0 0 8px 0;
     color: var(--text-muted);
     font-size: 13px;
@@ -2016,7 +2016,7 @@
     letter-spacing: 0.5px;
 }
 
-.task-bujo-monthly-goals-progress {
+.friday-monthly-goals-progress {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -2025,11 +2025,11 @@
     color: var(--text-muted);
 }
 
-.task-bujo-monthly-goals-progress .task-bujo-progress-bar {
+.friday-monthly-goals-progress .friday-progress-bar {
     flex: 1;
 }
 
-.task-bujo-monthly-goal-row {
+.friday-monthly-goal-row {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2038,40 +2038,40 @@
     flex-wrap: wrap;
 }
 
-.task-bujo-monthly-goal-row:hover {
+.friday-monthly-goal-row:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-monthly-goal-progress {
+.friday-monthly-goal-progress {
     display: flex;
     align-items: center;
     gap: 4px;
     margin-left: auto;
 }
 
-.task-bujo-monthly-goal-progress-label {
+.friday-monthly-goal-progress-label {
     font-size: 11px;
     color: var(--text-muted);
     min-width: 28px;
 }
 
-.task-bujo-progress-bar-sm {
+.friday-progress-bar-sm {
     width: 60px;
     height: 4px;
 }
 
-.task-bujo-monthly-goal-children {
+.friday-monthly-goal-children {
     padding-left: 24px;
     margin-bottom: 4px;
 }
 
 /* Monthly Tasks section */
 
-.task-bujo-monthly-tasks {
+.friday-monthly-tasks {
     margin: 12px 0;
 }
 
-.task-bujo-monthly-tasks h4 {
+.friday-monthly-tasks h4 {
     margin: 0 0 8px 0;
     color: var(--text-muted);
     font-size: 13px;
@@ -2081,31 +2081,31 @@
 
 /* ─── Monthly Migration Modal ─── */
 
-.task-bujo-monthly-migration-item {
+.friday-monthly-migration-item {
     border: 1px solid var(--background-modifier-border);
     border-radius: 6px;
     padding: 10px 12px;
     margin-bottom: 8px;
 }
 
-.task-bujo-monthly-migration-goal-header {
+.friday-monthly-migration-goal-header {
     display: flex;
     align-items: center;
     gap: 6px;
     font-weight: 500;
 }
 
-.task-bujo-monthly-migration-subtasks {
+.friday-monthly-migration-subtasks {
     margin-top: 6px;
     padding-left: 4px;
 }
 
-.task-bujo-monthly-migration-subtask-list {
+.friday-monthly-migration-subtask-list {
     margin-top: 4px;
     padding-left: 8px;
 }
 
-.task-bujo-monthly-migration-subtask-row {
+.friday-monthly-migration-subtask-row {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2113,43 +2113,43 @@
     font-size: 13px;
 }
 
-.task-bujo-monthly-migration-subtask-status {
+.friday-monthly-migration-subtask-status {
     width: 16px;
     text-align: center;
     color: var(--text-muted);
 }
 
-.task-bujo-monthly-migration-subtask-text {
+.friday-monthly-migration-subtask-text {
     color: var(--text-normal);
 }
 
-.task-bujo-monthly-migration-actions-row {
+.friday-monthly-migration-actions-row {
     display: flex;
     gap: 4px;
     margin-top: 8px;
 }
 
-.task-bujo-monthly-migration-actions-row button {
+.friday-monthly-migration-actions-row button {
     font-size: 12px;
     padding: 3px 10px;
 }
 
-.task-bujo-monthly-migration-actions-row button.is-active {
+.friday-monthly-migration-actions-row button.is-active {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
 
 /* ─── Monthly Review / Reflections ─── */
 
-.task-bujo-monthly-reflections-section {
+.friday-monthly-reflections-section {
     margin: 16px 0;
 }
 
-.task-bujo-monthly-reflections-section h3 {
+.friday-monthly-reflections-section h3 {
     margin: 0 0 4px 0;
 }
 
-.task-bujo-monthly-reflections-textarea {
+.friday-monthly-reflections-textarea {
     width: 100%;
     min-height: 120px;
     padding: 8px;
@@ -2162,30 +2162,30 @@
     resize: vertical;
 }
 
-.task-bujo-monthly-reflections-textarea:focus {
+.friday-monthly-reflections-textarea:focus {
     border-color: var(--interactive-accent);
     outline: none;
 }
 
-.task-bujo-text-muted {
+.friday-text-muted {
     color: var(--text-muted);
     font-size: 13px;
 }
 
 /* ─── Calendar View ─── */
 
-.task-bujo-calendar {
+.friday-calendar {
     padding: 8px;
 }
 
-.task-bujo-calendar-header {
+.friday-calendar-header {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 8px 0;
 }
 
-.task-bujo-calendar-nav {
+.friday-calendar-nav {
     background: var(--background-modifier-hover);
     border: none;
     border-radius: 4px;
@@ -2195,31 +2195,31 @@
     color: var(--text-normal);
 }
 
-.task-bujo-calendar-nav:hover {
+.friday-calendar-nav:hover {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
 
-.task-bujo-calendar-today-btn {
+.friday-calendar-today-btn {
     font-size: 12px;
     margin-left: auto;
 }
 
-.task-bujo-calendar-title {
+.friday-calendar-title {
     font-weight: 600;
     font-size: 16px;
     flex: 1;
     text-align: center;
 }
 
-.task-bujo-calendar-day-labels {
+.friday-calendar-day-labels {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: 1px;
     margin-bottom: 1px;
 }
 
-.task-bujo-calendar-day-label {
+.friday-calendar-day-label {
     text-align: center;
     font-size: 11px;
     font-weight: 600;
@@ -2228,7 +2228,7 @@
     text-transform: uppercase;
 }
 
-.task-bujo-calendar-grid {
+.friday-calendar-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: 1px;
@@ -2237,7 +2237,7 @@
     overflow: hidden;
 }
 
-.task-bujo-calendar-cell {
+.friday-calendar-cell {
     background: var(--background-primary);
     min-height: 72px;
     padding: 4px 6px;
@@ -2245,53 +2245,53 @@
     transition: background 0.15s ease;
 }
 
-.task-bujo-calendar-cell:hover {
+.friday-calendar-cell:hover {
     background: var(--background-secondary);
 }
 
-.task-bujo-calendar-today {
+.friday-calendar-today {
     border: 2px solid var(--interactive-accent);
 }
 
-.task-bujo-calendar-selected {
+.friday-calendar-selected {
     background: var(--background-secondary-alt, var(--background-secondary));
 }
 
-.task-bujo-calendar-other-month {
+.friday-calendar-other-month {
     opacity: 0.4;
 }
 
-.task-bujo-calendar-day-number {
+.friday-calendar-day-number {
     font-weight: 600;
     font-size: 12px;
     margin-bottom: 2px;
 }
 
-.task-bujo-calendar-task-dots {
+.friday-calendar-task-dots {
     display: flex;
     flex-wrap: wrap;
     gap: 3px;
     margin-top: 2px;
 }
 
-.task-bujo-calendar-dot {
+.friday-calendar-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     display: inline-block;
 }
 
-.task-bujo-calendar-dot-default {
+.friday-calendar-dot-default {
     background: var(--text-muted);
 }
 
-.task-bujo-calendar-dot-more {
+.friday-calendar-dot-more {
     font-size: 9px;
     color: var(--text-muted);
     line-height: 6px;
 }
 
-.task-bujo-calendar-detail {
+.friday-calendar-detail {
     margin-top: 12px;
     padding: 12px;
     border: 1px solid var(--background-modifier-border);
@@ -2299,7 +2299,7 @@
     background: var(--background-secondary);
 }
 
-.task-bujo-calendar-detail-header {
+.friday-calendar-detail-header {
     font-weight: 600;
     font-size: 14px;
     margin-bottom: 8px;
@@ -2307,7 +2307,7 @@
     border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-calendar-detail-list {
+.friday-calendar-detail-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -2315,7 +2315,7 @@
 
 /* ─── Topics Overview ─────────────────────────────────────── */
 
-.task-bujo-topics-overview {
+.friday-topics-overview {
     padding: 8px;
     height: 100%;
     display: flex;
@@ -2323,7 +2323,7 @@
     gap: 8px;
 }
 
-.task-bujo-topics-header {
+.friday-topics-header {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -2332,8 +2332,8 @@
     border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-topics-modeswitch,
-.task-bujo-topics-scope {
+.friday-topics-modeswitch,
+.friday-topics-scope {
     display: inline-flex;
     gap: 2px;
     background: var(--background-secondary);
@@ -2341,8 +2341,8 @@
     border-radius: 6px;
 }
 
-.task-bujo-topics-modebtn,
-.task-bujo-topics-scopebtn {
+.friday-topics-modebtn,
+.friday-topics-scopebtn {
     background: transparent;
     border: none;
     padding: 4px 10px;
@@ -2352,20 +2352,20 @@
     border-radius: 4px;
 }
 
-.task-bujo-topics-modebtn:hover,
-.task-bujo-topics-scopebtn:hover {
+.friday-topics-modebtn:hover,
+.friday-topics-scopebtn:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-topics-modebtn-active,
-.task-bujo-topics-scopebtn-active {
+.friday-topics-modebtn-active,
+.friday-topics-scopebtn-active {
     background: var(--background-primary);
     color: var(--text-normal);
     font-weight: 600;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
-.task-bujo-topics-body {
+.friday-topics-body {
     flex: 1;
     overflow-y: auto;
     display: flex;
@@ -2373,7 +2373,7 @@
     gap: 8px;
 }
 
-.task-bujo-topics-list-section {
+.friday-topics-list-section {
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
     padding: 8px;
@@ -2382,11 +2382,11 @@
     gap: 6px;
 }
 
-.task-bujo-topics-list-backlog {
+.friday-topics-list-backlog {
     border-top: 3px solid var(--color-orange, #e68a00);
 }
 
-.task-bujo-topics-list-header {
+.friday-topics-list-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -2396,14 +2396,14 @@
     color: var(--text-muted);
 }
 
-.task-bujo-topics-list-count {
+.friday-topics-list-count {
     font-size: 11px;
     background: var(--background-modifier-hover);
     border-radius: 10px;
     padding: 1px 8px;
 }
 
-.task-bujo-topics-list-grid {
+.friday-topics-list-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 6px;
@@ -2414,21 +2414,21 @@
     transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.task-bujo-topics-list-dropzone-active {
+.friday-topics-list-dropzone-active {
     border-color: var(--interactive-accent);
     background-color: var(--background-modifier-hover);
 }
 
 /* ─── Topic Matrix (Impact/Effort + Eisenhower) ───────────── */
 
-.task-bujo-topicmx-axis-labels {
+.friday-topicmx-axis-labels {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
     margin-bottom: 4px;
 }
 
-.task-bujo-topicmx-axis-label {
+.friday-topicmx-axis-label {
     text-align: center;
     font-size: 11px;
     font-weight: 600;
@@ -2436,7 +2436,7 @@
     text-transform: uppercase;
 }
 
-.task-bujo-topicmx-grid {
+.friday-topicmx-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: 1fr 1fr;
@@ -2444,7 +2444,7 @@
     min-height: 400px;
 }
 
-.task-bujo-topicmx-quadrant {
+.friday-topicmx-quadrant {
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
     padding: 8px;
@@ -2454,18 +2454,18 @@
 }
 
 /* Impact/Effort quadrant accents */
-.task-bujo-topicmx-quickwins { border-top: 3px solid var(--color-green, #08b94e); }
-.task-bujo-topicmx-bigbets { border-top: 3px solid var(--interactive-accent, #4a8af4); }
-.task-bujo-topicmx-fillins { border-top: 3px solid var(--color-yellow, #d9a200); }
-.task-bujo-topicmx-timesinks { border-top: 3px solid var(--color-red, #e03e3e); }
+.friday-topicmx-quickwins { border-top: 3px solid var(--color-green, #08b94e); }
+.friday-topicmx-bigbets { border-top: 3px solid var(--interactive-accent, #4a8af4); }
+.friday-topicmx-fillins { border-top: 3px solid var(--color-yellow, #d9a200); }
+.friday-topicmx-timesinks { border-top: 3px solid var(--color-red, #e03e3e); }
 
 /* Eisenhower quadrant accents */
-.task-bujo-topicmx-q1 { border-top: 3px solid var(--color-red, #e03e3e); }
-.task-bujo-topicmx-q2 { border-top: 3px solid var(--interactive-accent, #4a8af4); }
-.task-bujo-topicmx-q3 { border-top: 3px solid var(--color-yellow, #d9a200); }
-.task-bujo-topicmx-q4 { border-top: 3px solid var(--text-muted, #999); }
+.friday-topicmx-q1 { border-top: 3px solid var(--color-red, #e03e3e); }
+.friday-topicmx-q2 { border-top: 3px solid var(--interactive-accent, #4a8af4); }
+.friday-topicmx-q3 { border-top: 3px solid var(--color-yellow, #d9a200); }
+.friday-topicmx-q4 { border-top: 3px solid var(--text-muted, #999); }
 
-.task-bujo-topicmx-inbox {
+.friday-topicmx-inbox {
     margin-top: 8px;
     border: 1px solid var(--background-modifier-border);
     border-top: 3px solid var(--color-orange, #e68a00);
@@ -2477,7 +2477,7 @@
     max-height: 300px;
 }
 
-.task-bujo-topicmx-quadrant-header {
+.friday-topicmx-quadrant-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -2486,13 +2486,13 @@
     border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-topicmx-quadrant-title {
+.friday-topicmx-quadrant-title {
     font-weight: 600;
     font-size: 12px;
     text-transform: uppercase;
 }
 
-.task-bujo-topicmx-quadrant-count {
+.friday-topicmx-quadrant-count {
     font-size: 11px;
     color: var(--text-muted);
     background: var(--background-modifier-hover);
@@ -2500,13 +2500,13 @@
     padding: 1px 8px;
 }
 
-.task-bujo-topicmx-quadrant-subtitle {
+.friday-topicmx-quadrant-subtitle {
     font-size: 10px;
     color: var(--text-muted);
     font-style: italic;
 }
 
-.task-bujo-topicmx-quadrant-list {
+.friday-topicmx-quadrant-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -2514,7 +2514,7 @@
 }
 
 /* Metadata chips row on topic cards (used in overview / matrix views) */
-.task-bujo-kanban-card-meta {
+.friday-kanban-card-meta {
     font-size: 10px;
     color: var(--text-muted);
     margin-top: 2px;
@@ -2523,7 +2523,7 @@
 }
 
 /* Assignee chip on topic cards */
-.task-bujo-kanban-card-assignee {
+.friday-kanban-card-assignee {
     display: inline-block;
     font-size: 10px;
     font-weight: 500;
@@ -2538,14 +2538,14 @@
     white-space: nowrap;
 }
 
-.task-bujo-kanban-card-assignee-stale {
+.friday-kanban-card-assignee-stale {
     color: var(--text-muted);
     background: var(--background-modifier-border);
     font-style: italic;
 }
 
 /* Waiting-on chip on topic cards */
-.task-bujo-kanban-card-waiting {
+.friday-kanban-card-waiting {
     display: inline-block;
     font-size: 10px;
     font-weight: 500;
@@ -2560,30 +2560,30 @@
     white-space: nowrap;
 }
 
-.task-bujo-kanban-card-waiting-stale {
+.friday-kanban-card-waiting-stale {
     background: var(--background-modifier-error, #e74c3c);
     color: var(--text-on-accent, #fff);
 }
 
 /* Waiting-on section in the morning migration modal */
-.task-bujo-review-waiting .task-bujo-waiting-topic {
+.friday-review-waiting .friday-waiting-topic {
     font-weight: 600;
 }
 
-.task-bujo-review-waiting .task-bujo-waiting-meta {
+.friday-review-waiting .friday-waiting-meta {
     color: var(--text-muted);
     font-size: 12px;
 }
 
 /* External reference chips on topic cards */
-.task-bujo-kanban-card-refs {
+.friday-kanban-card-refs {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
     margin-top: 4px;
 }
 
-.task-bujo-kanban-card-ref-chip {
+.friday-kanban-card-ref-chip {
     font-size: 10px;
     padding: 1px 6px;
     border-radius: 8px;
@@ -2593,13 +2593,13 @@
     white-space: nowrap;
 }
 
-.task-bujo-kanban-card-ref-chip:hover {
+.friday-kanban-card-ref-chip:hover {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
 
 /* References UI in SprintTopicModal */
-.task-bujo-refs-chips {
+.friday-refs-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
@@ -2607,7 +2607,7 @@
     width: 100%;
 }
 
-.task-bujo-refs-chip {
+.friday-refs-chip {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -2617,33 +2617,33 @@
     font-size: 12px;
 }
 
-.task-bujo-refs-add-form {
+.friday-refs-add-form {
     display: flex;
     gap: 6px;
     margin-top: 8px;
     width: 100%;
 }
 
-.task-bujo-refs-label-input {
+.friday-refs-label-input {
     flex: 0 0 30%;
     padding: 2px 6px;
 }
 
-.task-bujo-refs-url-input {
+.friday-refs-url-input {
     flex: 1 1 auto;
     padding: 2px 6px;
 }
 
-.task-bujo-refs-add-btn {
+.friday-refs-add-btn {
     flex: 0 0 auto;
 }
 
 /* Quick Capture to Inbox modal */
-.task-bujo-quick-capture-modal {
+.friday-quick-capture-modal {
     min-width: 500px;
 }
 
-.task-bujo-quick-capture-textarea {
+.friday-quick-capture-textarea {
     width: 100%;
     min-height: 150px;
     padding: 10px 12px;
@@ -2658,18 +2658,18 @@
     box-sizing: border-box;
 }
 
-.task-bujo-quick-capture-textarea:focus {
+.friday-quick-capture-textarea:focus {
     border-color: var(--interactive-accent);
     outline: none;
 }
 
-.task-bujo-quick-capture-hint {
+.friday-quick-capture-hint {
     font-size: 11px;
     color: var(--text-muted);
     margin-top: 6px;
 }
 
-.task-bujo-quick-capture-actions {
+.friday-quick-capture-actions {
     display: flex;
     gap: 8px;
     justify-content: flex-end;
@@ -2677,7 +2677,7 @@
 }
 
 /* Quick-add target toggle (Tasks / Inbox) */
-.task-bujo-add-target-toggle {
+.friday-add-target-toggle {
     background: var(--background-modifier-border);
     color: var(--text-normal);
     border: none;
@@ -2688,19 +2688,19 @@
     margin-right: 6px;
 }
 
-.task-bujo-add-target-toggle:hover {
+.friday-add-target-toggle:hover {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
 
 /* Assignee filter dropdown in the Topics overview header */
-.task-bujo-topics-assigneefilter {
+.friday-topics-assigneefilter {
     display: inline-flex;
     align-items: center;
     margin-left: 8px;
 }
 
-.task-bujo-topics-assignee-select {
+.friday-topics-assignee-select {
     font-size: 12px;
     padding: 2px 6px;
     background: var(--background-primary);
@@ -2712,11 +2712,11 @@
 
 /* ── JIRA Dashboard ──────────────────────────────────────────── */
 
-.task-bujo-jira-dashboard-container {
+.friday-jira-dashboard-container {
     padding: 0;
 }
 
-.task-bujo-jira-dashboard-header {
+.friday-jira-dashboard-header {
     padding: 12px 16px 8px;
     border-bottom: 1px solid var(--background-modifier-border);
     display: flex;
@@ -2727,37 +2727,37 @@
     flex-shrink: 0;
 }
 
-.task-bujo-jira-dashboard-title-row {
+.friday-jira-dashboard-title-row {
     display: flex;
     align-items: center;
     gap: 12px;
 }
 
-.task-bujo-jira-dashboard-title {
+.friday-jira-dashboard-title {
     margin: 0;
     font-size: 16px;
     font-weight: 600;
 }
 
-.task-bujo-jira-dashboard-meta {
+.friday-jira-dashboard-meta {
     font-size: 11px;
     color: var(--text-muted);
     flex: 1;
 }
 
-.task-bujo-jira-dashboard-actions {
+.friday-jira-dashboard-actions {
     display: flex;
     gap: 6px;
 }
 
-.task-bujo-jira-dashboard-refresh {
+.friday-jira-dashboard-refresh {
     font-size: 12px;
     padding: 4px 10px;
 }
 
 /* Tab bar — switches between "My Work" and "Team" views. Hidden via .is-hidden
    when team tracking is off, so the header collapses to title + search only. */
-.task-bujo-jira-dashboard-tabs {
+.friday-jira-dashboard-tabs {
     display: flex;
     gap: 2px;
     border-bottom: 1px solid var(--background-modifier-border);
@@ -2767,11 +2767,11 @@
     margin-bottom: -1px;
 }
 
-.task-bujo-jira-dashboard-tabs.is-hidden {
+.friday-jira-dashboard-tabs.is-hidden {
     display: none;
 }
 
-.task-bujo-jira-dashboard-tab {
+.friday-jira-dashboard-tab {
     padding: 6px 12px;
     font-size: 12px;
     color: var(--text-muted);
@@ -2781,21 +2781,21 @@
     transition: color 80ms ease, border-color 80ms ease;
 }
 
-.task-bujo-jira-dashboard-tab:hover {
+.friday-jira-dashboard-tab:hover {
     color: var(--text-normal);
 }
 
-.task-bujo-jira-dashboard-tab.is-active {
+.friday-jira-dashboard-tab.is-active {
     color: var(--text-normal);
     border-bottom-color: var(--interactive-accent);
     font-weight: 600;
 }
 
-.task-bujo-jira-dashboard-search-row {
+.friday-jira-dashboard-search-row {
     display: flex;
 }
 
-.task-bujo-jira-dashboard-search {
+.friday-jira-dashboard-search {
     flex: 1;
     padding: 5px 8px;
     font-size: 12px;
@@ -2805,7 +2805,7 @@
     color: var(--text-normal);
 }
 
-.task-bujo-jira-dashboard-content {
+.friday-jira-dashboard-content {
     padding: 8px 16px 16px;
     display: flex;
     flex-direction: column;
@@ -2813,7 +2813,7 @@
     overflow-y: auto;
 }
 
-.task-bujo-jira-dashboard-error {
+.friday-jira-dashboard-error {
     padding: 10px 12px;
     background: var(--background-modifier-error);
     color: var(--text-on-accent);
@@ -2822,7 +2822,7 @@
 }
 
 /* Section */
-.task-bujo-jira-dashboard-section {
+.friday-jira-dashboard-section {
     border: 1px solid var(--background-modifier-border);
     border-radius: 6px;
     overflow: hidden;
@@ -2834,7 +2834,7 @@
     flex-shrink: 0;
 }
 
-.task-bujo-jira-dashboard-section-header {
+.friday-jira-dashboard-section-header {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -2845,24 +2845,24 @@
     transition: background 120ms ease;
 }
 
-.task-bujo-jira-dashboard-section-header:hover {
+.friday-jira-dashboard-section-header:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-jira-dashboard-section-chevron {
+.friday-jira-dashboard-section-chevron {
     font-size: 10px;
     color: var(--text-muted);
     width: 12px;
     display: inline-block;
 }
 
-.task-bujo-jira-dashboard-section-label {
+.friday-jira-dashboard-section-label {
     font-weight: 600;
     font-size: 13px;
     flex: 1;
 }
 
-.task-bujo-jira-dashboard-section-count {
+.friday-jira-dashboard-section-count {
     font-size: 11px;
     color: var(--text-muted);
     background: var(--background-modifier-hover);
@@ -2870,23 +2870,23 @@
     padding: 1px 8px;
 }
 
-.task-bujo-jira-dashboard-section.is-collapsed .task-bujo-jira-dashboard-section-body {
+.friday-jira-dashboard-section.is-collapsed .friday-jira-dashboard-section-body {
     display: none;
 }
 
-.task-bujo-jira-dashboard-section-body {
+.friday-jira-dashboard-section-body {
     display: flex;
     flex-direction: column;
 }
 
-.task-bujo-jira-dashboard-section-empty {
+.friday-jira-dashboard-section-empty {
     padding: 10px 14px;
     font-size: 12px;
     color: var(--text-muted);
 }
 
 /* Row */
-.task-bujo-jira-dashboard-row {
+.friday-jira-dashboard-row {
     display: grid;
     grid-template-columns: auto 1fr;
     grid-template-rows: auto auto;
@@ -2896,20 +2896,20 @@
     transition: background 100ms ease;
 }
 
-.task-bujo-jira-dashboard-row:first-child {
+.friday-jira-dashboard-row:first-child {
     border-top: none;
 }
 
-.task-bujo-jira-dashboard-row:hover {
+.friday-jira-dashboard-row:hover {
     background: var(--background-modifier-hover);
 }
 
-.task-bujo-jira-dashboard-row.is-flagged {
+.friday-jira-dashboard-row.is-flagged {
     border-left: 3px solid var(--text-error);
     padding-left: 9px;
 }
 
-.task-bujo-jira-dashboard-row-left {
+.friday-jira-dashboard-row-left {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2917,12 +2917,12 @@
     min-width: 80px;
 }
 
-.task-bujo-jira-dashboard-icon {
+.friday-jira-dashboard-icon {
     flex-shrink: 0;
     vertical-align: middle;
 }
 
-.task-bujo-jira-dashboard-key {
+.friday-jira-dashboard-key {
     font-family: var(--font-monospace);
     font-size: 12px;
     font-weight: 600;
@@ -2931,15 +2931,15 @@
     white-space: nowrap;
 }
 
-.task-bujo-jira-dashboard-key:hover {
+.friday-jira-dashboard-key:hover {
     text-decoration: underline;
 }
 
-.task-bujo-jira-dashboard-summary {
+.friday-jira-dashboard-summary {
     min-width: 0;
 }
 
-.task-bujo-jira-dashboard-summary-link {
+.friday-jira-dashboard-summary-link {
     font-size: 13px;
     color: var(--text-normal);
     text-decoration: none;
@@ -2949,12 +2949,12 @@
     white-space: nowrap;
 }
 
-.task-bujo-jira-dashboard-summary-link:hover {
+.friday-jira-dashboard-summary-link:hover {
     color: var(--text-accent);
     text-decoration: underline;
 }
 
-.task-bujo-jira-dashboard-parent {
+.friday-jira-dashboard-parent {
     font-size: 10px;
     color: var(--text-muted);
     margin-top: 2px;
@@ -2963,19 +2963,19 @@
     white-space: nowrap;
 }
 
-.task-bujo-jira-dashboard-parent-key {
+.friday-jira-dashboard-parent-key {
     font-family: var(--font-monospace);
     font-weight: 600;
 }
 
-.task-bujo-jira-dashboard-meta-row {
+.friday-jira-dashboard-meta-row {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
     margin-top: 2px;
 }
 
-.task-bujo-jira-dashboard-chip {
+.friday-jira-dashboard-chip {
     display: inline-flex;
     align-items: center;
     gap: 3px;
@@ -2987,65 +2987,65 @@
     white-space: nowrap;
 }
 
-.task-bujo-jira-dashboard-status-new {
+.friday-jira-dashboard-status-new {
     background: var(--background-modifier-border);
     color: var(--text-normal);
 }
 
-.task-bujo-jira-dashboard-status-indeterminate {
+.friday-jira-dashboard-status-indeterminate {
     background: rgba(64, 128, 255, 0.2);
     color: var(--text-accent);
 }
 
-.task-bujo-jira-dashboard-status-done {
+.friday-jira-dashboard-status-done {
     background: rgba(64, 192, 96, 0.18);
     color: var(--text-success, var(--text-accent));
 }
 
-.task-bujo-jira-dashboard-flagged {
+.friday-jira-dashboard-flagged {
     background: rgba(255, 64, 64, 0.18);
     color: var(--text-error);
     font-weight: 600;
 }
 
-.task-bujo-jira-dashboard-priority-icon {
+.friday-jira-dashboard-priority-icon {
     vertical-align: middle;
 }
 
-.task-bujo-jira-dashboard-assignee.is-unassigned {
+.friday-jira-dashboard-assignee.is-unassigned {
     font-style: italic;
     opacity: 0.7;
 }
 
-.task-bujo-jira-dashboard-due.is-overdue {
+.friday-jira-dashboard-due.is-overdue {
     background: rgba(255, 64, 64, 0.18);
     color: var(--text-error);
     font-weight: 600;
 }
 
-.task-bujo-jira-dashboard-sprint.is-active {
+.friday-jira-dashboard-sprint.is-active {
     background: rgba(64, 160, 255, 0.18);
     color: var(--text-accent);
 }
 
-.task-bujo-jira-dashboard-topic {
+.friday-jira-dashboard-topic {
     background: rgba(160, 96, 255, 0.15);
     color: var(--text-accent);
     cursor: pointer;
 }
 
-.task-bujo-jira-dashboard-topic:hover {
+.friday-jira-dashboard-topic:hover {
     background: rgba(160, 96, 255, 0.28);
     text-decoration: underline;
 }
 
-.task-bujo-jira-dashboard-label.is-more {
+.friday-jira-dashboard-label.is-more {
     opacity: 0.6;
 }
 
 /* ── Team block (workload heatmap + per-person sections) ──────── */
 
-.task-bujo-jira-dashboard-team-block {
+.friday-jira-dashboard-team-block {
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -3057,14 +3057,14 @@
     flex-shrink: 0;
 }
 
-.task-bujo-jira-dashboard-team-header {
+.friday-jira-dashboard-team-header {
     display: flex;
     align-items: baseline;
     gap: 10px;
     padding: 0 2px;
 }
 
-.task-bujo-jira-dashboard-team-title {
+.friday-jira-dashboard-team-title {
     font-size: 14px;
     font-weight: 700;
     text-transform: uppercase;
@@ -3072,17 +3072,17 @@
     color: var(--text-muted);
 }
 
-.task-bujo-jira-dashboard-team-meta {
+.friday-jira-dashboard-team-meta {
     font-size: 11px;
     color: var(--text-muted);
 }
 
-.task-bujo-jira-dashboard-team-meta.is-error {
+.friday-jira-dashboard-team-meta.is-error {
     color: var(--text-error);
 }
 
 /* Heatmap */
-.task-bujo-jira-dashboard-heatmap {
+.friday-jira-dashboard-heatmap {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -3092,7 +3092,7 @@
     border-radius: 6px;
 }
 
-.task-bujo-jira-dashboard-heatmap-title {
+.friday-jira-dashboard-heatmap-title {
     font-size: 11px;
     font-weight: 600;
     color: var(--text-muted);
@@ -3101,14 +3101,14 @@
     margin-bottom: 2px;
 }
 
-.task-bujo-jira-dashboard-heatmap-row {
+.friday-jira-dashboard-heatmap-row {
     display: flex;
     align-items: center;
     gap: 8px;
     font-size: 12px;
 }
 
-.task-bujo-jira-dashboard-heatmap-nick {
+.friday-jira-dashboard-heatmap-nick {
     flex: 0 0 80px;
     font-weight: 500;
     color: var(--text-normal);
@@ -3117,7 +3117,7 @@
     white-space: nowrap;
 }
 
-.task-bujo-jira-dashboard-heatmap-track {
+.friday-jira-dashboard-heatmap-track {
     flex: 1 1 auto;
     height: 14px;
     background: var(--background-modifier-border);
@@ -3126,21 +3126,21 @@
     min-width: 0;
 }
 
-.task-bujo-jira-dashboard-heatmap-fill {
+.friday-jira-dashboard-heatmap-fill {
     display: flex;
     height: 100%;
 }
 
-.task-bujo-jira-dashboard-heatmap-seg {
+.friday-jira-dashboard-heatmap-seg {
     height: 100%;
     min-width: 2px;
 }
-.task-bujo-jira-dashboard-heatmap-seg.is-blocked    { background: var(--color-red,   #e06c75); }
-.task-bujo-jira-dashboard-heatmap-seg.is-in-progress{ background: var(--color-blue,  #61afef); }
-.task-bujo-jira-dashboard-heatmap-seg.is-open       { background: var(--text-muted); opacity: 0.5; }
-.task-bujo-jira-dashboard-heatmap-seg.is-done       { background: var(--color-green, #98c379); opacity: 0.6; }
+.friday-jira-dashboard-heatmap-seg.is-blocked    { background: var(--color-red,   #e06c75); }
+.friday-jira-dashboard-heatmap-seg.is-in-progress{ background: var(--color-blue,  #61afef); }
+.friday-jira-dashboard-heatmap-seg.is-open       { background: var(--text-muted); opacity: 0.5; }
+.friday-jira-dashboard-heatmap-seg.is-done       { background: var(--color-green, #98c379); opacity: 0.6; }
 
-.task-bujo-jira-dashboard-heatmap-counts {
+.friday-jira-dashboard-heatmap-counts {
     flex: 0 0 auto;
     font-size: 11px;
     color: var(--text-muted);
@@ -3150,13 +3150,13 @@
 
 /* Per-person sections reuse the existing section styles — only the outer team
    wrapper adds a subtle accent so they read as "different section family". */
-.task-bujo-jira-dashboard-team-section .task-bujo-jira-dashboard-section-header {
+.friday-jira-dashboard-team-section .friday-jira-dashboard-section-header {
     background: var(--background-secondary-alt);
 }
 
 /* ── Team Members settings list ───────────────────────────────── */
 
-.task-bujo-team-members-list {
+.friday-team-members-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -3164,7 +3164,7 @@
     margin-bottom: 8px;
 }
 
-.task-bujo-team-member-row {
+.friday-team-member-row {
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -3174,13 +3174,13 @@
     border-radius: 6px;
 }
 
-.task-bujo-team-member-inputs {
+.friday-team-member-inputs {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
 }
 
-.task-bujo-team-member-input {
+.friday-team-member-input {
     flex: 1 1 180px;
     min-width: 0;
     padding: 5px 8px;
@@ -3191,15 +3191,15 @@
     color: var(--text-normal);
 }
 
-.task-bujo-team-member-input-nick {
+.friday-team-member-input-nick {
     flex: 0 0 120px;
 }
 
-.task-bujo-team-member-input-email {
+.friday-team-member-input-email {
     flex: 2 1 240px;
 }
 
-.task-bujo-team-member-controls {
+.friday-team-member-controls {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -3207,14 +3207,14 @@
     color: var(--text-muted);
 }
 
-.task-bujo-team-member-active {
+.friday-team-member-active {
     display: flex;
     align-items: center;
     gap: 4px;
     cursor: pointer;
 }
 
-.task-bujo-team-member-remove {
+.friday-team-member-remove {
     margin-left: auto;
     padding: 4px 10px;
     font-size: 11px;
@@ -3225,18 +3225,18 @@
     cursor: pointer;
 }
 
-.task-bujo-team-member-remove:hover {
+.friday-team-member-remove:hover {
     background: var(--background-modifier-error-hover);
     color: var(--text-on-accent);
 }
 
 /* ── Team Overview view ────────────────────────────────────────── */
 
-.task-bujo-team-overview {
+.friday-team-overview {
     padding: 16px;
 }
 
-.task-bujo-team-header {
+.friday-team-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -3244,22 +3244,22 @@
     margin-bottom: 16px;
 }
 
-.task-bujo-team-title {
+.friday-team-title {
     margin: 0;
     font-size: 1.3em;
 }
 
-.task-bujo-team-start-1on1 {
+.friday-team-start-1on1 {
     padding: 6px 14px;
 }
 
-.task-bujo-team-grid {
+.friday-team-grid {
     display: flex;
     flex-direction: column;
     gap: 12px;
 }
 
-.task-bujo-team-card {
+.friday-team-card {
     padding: 14px 16px;
     background: var(--background-secondary);
     border: 1px solid var(--background-modifier-border);
@@ -3270,22 +3270,22 @@
     transition: border-color 100ms ease;
 }
 
-.task-bujo-team-card:hover {
+.friday-team-card:hover {
     border-color: var(--interactive-accent);
 }
 
-.task-bujo-team-card.is-on-leave {
+.friday-team-card.is-on-leave {
     opacity: 0.6;
     background: var(--background-primary);
 }
 
-.task-bujo-team-card-top {
+.friday-team-card-top {
     display: flex;
     align-items: center;
     gap: 12px;
 }
 
-.task-bujo-team-avatar {
+.friday-team-avatar {
     flex: 0 0 auto;
     width: 40px;
     height: 40px;
@@ -3300,12 +3300,12 @@
     letter-spacing: 0.5px;
 }
 
-.task-bujo-team-identity {
+.friday-team-identity {
     flex: 1 1 auto;
     min-width: 0;
 }
 
-.task-bujo-team-name {
+.friday-team-name {
     font-weight: 600;
     font-size: 15px;
     overflow: hidden;
@@ -3313,7 +3313,7 @@
     white-space: nowrap;
 }
 
-.task-bujo-team-role {
+.friday-team-role {
     font-size: 12px;
     color: var(--text-muted);
     overflow: hidden;
@@ -3321,19 +3321,19 @@
     white-space: nowrap;
 }
 
-.task-bujo-team-chips {
+.friday-team-chips {
     flex: 0 0 auto;
     display: flex;
     gap: 6px;
 }
 
-.task-bujo-team-actions {
+.friday-team-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
 }
 
-.task-bujo-team-action {
+.friday-team-action {
     padding: 5px 11px;
     font-size: 12px;
     border-radius: 6px;
@@ -3343,23 +3343,23 @@
     border: 1px solid var(--background-modifier-border);
 }
 
-.task-bujo-team-action:hover {
+.friday-team-action:hover {
     background: var(--interactive-hover);
 }
 
-.task-bujo-team-action.mod-warning {
+.friday-team-action.mod-warning {
     border-color: var(--text-error);
     color: var(--text-error);
 }
 
-.task-bujo-team-action.mod-warning:hover {
+.friday-team-action.mod-warning:hover {
     background: var(--background-modifier-error-hover);
     color: var(--text-on-accent);
 }
 
 /* ── Cadence chips ─────────────────────────────────────────────── */
 
-.task-bujo-cadence-chip {
+.friday-cadence-chip {
     display: inline-flex;
     align-items: center;
     padding: 3px 9px;
@@ -3369,28 +3369,28 @@
     line-height: 1.4;
 }
 
-.task-bujo-cadence-overdue {
+.friday-cadence-overdue {
     background: var(--background-modifier-error);
     color: var(--text-error);
 }
 
-.task-bujo-cadence-due-soon {
+.friday-cadence-due-soon {
     background: var(--background-modifier-hover);
     color: var(--color-orange, #d97706);
 }
 
-.task-bujo-cadence-on-track {
+.friday-cadence-on-track {
     background: var(--background-modifier-hover);
     color: var(--color-green, #16a34a);
 }
 
-.task-bujo-cadence-never {
+.friday-cadence-never {
     background: var(--background-modifier-hover);
     color: var(--text-muted);
     font-style: italic;
 }
 
-.task-bujo-cadence-suspended {
+.friday-cadence-suspended {
     background: repeating-linear-gradient(
         -45deg,
         var(--background-modifier-hover),
@@ -3403,34 +3403,34 @@
 
 /* ── Overdue 1:1 rows inside MigrationModal ───────────────────── */
 
-.task-bujo-review-oneonones {
+.friday-review-oneonones {
     border-left: 3px solid var(--text-error);
     padding-left: 10px;
     margin-bottom: 12px;
 }
 
-.task-bujo-oneonone-name {
+.friday-oneonone-name {
     font-weight: 600;
 }
 
-.task-bujo-oneonone-role {
+.friday-oneonone-role {
     color: var(--text-muted);
     font-size: 12px;
 }
 
-.task-bujo-oneonone-overdue {
+.friday-oneonone-overdue {
     color: var(--text-error);
     font-size: 12px;
     font-weight: 500;
 }
 
-.task-bujo-empty-hint {
+.friday-empty-hint {
     color: var(--text-muted);
     font-size: 13px;
     margin-top: 6px;
 }
 
-.task-bujo-empty-hint code {
+.friday-empty-hint code {
     padding: 1px 5px;
     background: var(--background-secondary);
     border-radius: 3px;

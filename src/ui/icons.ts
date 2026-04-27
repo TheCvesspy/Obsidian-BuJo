@@ -1,19 +1,19 @@
 import { setIcon } from 'obsidian';
 
-/** Set the BuJo ribbon/tab icon on an element */
-export function setTaskBuJoIcon(el: HTMLElement): void {
+/** Set the Friday ribbon/tab icon on an element */
+export function setFridayIcon(el: HTMLElement): void {
 	setIcon(el, 'check-square');
 }
 
 /** Priority indicator dot colors (CSS classes) */
 export const PRIORITY_CLASSES: Record<string, string> = {
-	high: 'task-bujo-priority-high',
-	medium: 'task-bujo-priority-medium',
-	low: 'task-bujo-priority-low',
+	high: 'friday-priority-high',
+	medium: 'friday-priority-medium',
+	low: 'friday-priority-low',
 	none: '',
 };
 
-/** BuJo status display characters */
+/** Friday status display characters */
 export const STATUS_DISPLAY: Record<string, string> = {
 	' ': '',
 	'x': '✓',
@@ -25,7 +25,7 @@ export const STATUS_DISPLAY: Record<string, string> = {
 /** Create a priority indicator dot element */
 export function createPriorityDot(priority: string): HTMLElement {
 	const dot = document.createElement('span');
-	dot.addClass('task-bujo-priority-dot');
+	dot.addClass('friday-priority-dot');
 	if (PRIORITY_CLASSES[priority]) {
 		dot.addClass(PRIORITY_CLASSES[priority]);
 	}
@@ -35,9 +35,9 @@ export function createPriorityDot(priority: string): HTMLElement {
 /** Create a due date badge element */
 export function createDueBadge(text: string, isOverdue: boolean): HTMLElement {
 	const badge = document.createElement('span');
-	badge.addClass('task-bujo-due-badge');
+	badge.addClass('friday-due-badge');
 	if (isOverdue) {
-		badge.addClass('task-bujo-due-overdue');
+		badge.addClass('friday-due-overdue');
 	}
 	badge.textContent = text;
 	return badge;
@@ -46,7 +46,7 @@ export function createDueBadge(text: string, isOverdue: boolean): HTMLElement {
 /** Create a source link element */
 export function createSourceLink(fileName: string): HTMLElement {
 	const link = document.createElement('span');
-	link.addClass('task-bujo-source-link');
+	link.addClass('friday-source-link');
 	link.textContent = fileName;
 	return link;
 }
@@ -54,11 +54,11 @@ export function createSourceLink(fileName: string): HTMLElement {
 /** Create a status marker element for migrated/scheduled/cancelled */
 export function createStatusMarker(statusChar: string): HTMLElement {
 	const marker = document.createElement('span');
-	marker.addClass('task-bujo-status-marker');
+	marker.addClass('friday-status-marker');
 	const display = STATUS_DISPLAY[statusChar] || '';
 	if (display) {
 		marker.textContent = display;
-		marker.addClass(`task-bujo-status-${statusChar === '>' ? 'migrated' : statusChar === '<' ? 'scheduled' : 'cancelled'}`);
+		marker.addClass(`friday-status-${statusChar === '>' ? 'migrated' : statusChar === '<' ? 'scheduled' : 'cancelled'}`);
 	}
 	return marker;
 }
@@ -68,8 +68,8 @@ export function createStatusMarker(statusChar: string): HTMLElement {
  *  never=muted, suspended=grey-striped. */
 export function createCadenceChip(state: string, label: string): HTMLElement {
 	const chip = document.createElement('span');
-	chip.addClass('task-bujo-cadence-chip');
-	chip.addClass(`task-bujo-cadence-${state}`);
+	chip.addClass('friday-cadence-chip');
+	chip.addClass(`friday-cadence-${state}`);
 	chip.textContent = label;
 	return chip;
 }

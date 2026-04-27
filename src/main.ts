@@ -1,7 +1,7 @@
 import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice } from 'obsidian';
-import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, BuJoViewMode } from './types';
-import { VIEW_TYPE_TASK_BUJO, VIEW_TYPE_JIRA_DASHBOARD, VIEW_TYPE_TEAM_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
-import { TaskBuJoSettingTab } from './settings';
+import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, FridayViewMode } from './types';
+import { VIEW_TYPE_FRIDAY, VIEW_TYPE_JIRA_DASHBOARD, VIEW_TYPE_TEAM_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
+import { FridaySettingTab } from './settings';
 import { VaultScanner } from './services/vaultScanner';
 import { TaskStore } from './services/taskStore';
 import { TaskWriter } from './services/taskWriter';
@@ -17,7 +17,7 @@ import { JiraService } from './services/jiraService';
 import { JiraDashboardService } from './services/jiraDashboardService';
 import { JiraTeamService } from './services/jiraTeamService';
 import { TeamMemberService } from './services/teamMemberService';
-import { TaskBuJoView } from './ui/TaskBuJoView';
+import { FridayView } from './ui/FridayView';
 import { JiraDashboardView } from './ui/JiraDashboardView';
 import { TeamDashboardView } from './ui/TeamDashboardView';
 import { MigrationModal } from './ui/MigrationModal';
@@ -30,7 +30,7 @@ import { DueDateModal } from './ui/DueDateModal';
 import { SyntaxReferenceModal } from './ui/components/SyntaxReference';
 import { getWeekId } from './utils/dateUtils';
 
-export default class TaskBuJoPlugin extends Plugin {
+export default class FridayPlugin extends Plugin {
 	data: PluginData;
 	settings: PluginSettings;
 
@@ -64,13 +64,13 @@ export default class TaskBuJoPlugin extends Plugin {
 		// for Topics. Rewrite stale defaultViewMode values so users don't land on a missing case.
 		const staleModes = ['eisenhower', 'impactEffort'];
 		if (staleModes.includes(this.data.settings.defaultViewMode as string)) {
-			this.data.settings.defaultViewMode = BuJoViewMode.Topics;
+			this.data.settings.defaultViewMode = FridayViewMode.Topics;
 		}
-		// `team` was briefly a tab in the BuJo view; now a standalone workspace view.
+		// `team` was briefly a tab in the Friday view; now a standalone workspace view.
 		// Redirect the default so users who had it pinned land on Daily instead of
 		// hitting a removed switch case.
 		if ((this.data.settings.defaultViewMode as string) === 'team') {
-			this.data.settings.defaultViewMode = BuJoViewMode.Daily;
+			this.data.settings.defaultViewMode = FridayViewMode.Daily;
 		}
 
 		this.settings = this.data.settings;
@@ -113,8 +113,8 @@ export default class TaskBuJoPlugin extends Plugin {
 			this.store.setTasks(this.scanner.getAllTasks());
 		});
 
-		this.registerView(VIEW_TYPE_TASK_BUJO, (leaf) =>
-			new TaskBuJoView(
+		this.registerView(VIEW_TYPE_FRIDAY, (leaf) =>
+			new FridayView(
 				leaf, this.store, this.writer, this.sprintService,
 				this.sprintTopicService, this.scanner,
 				this.migrationService, this.analyticsService,
@@ -159,12 +159,12 @@ export default class TaskBuJoPlugin extends Plugin {
 		const refs = this.scanner.registerEvents();
 		refs.forEach(ref => this.registerEvent(ref));
 
-		this.addRibbonIcon('check-square', 'Open BuJo', () => this.activateView());
+		this.addRibbonIcon('check-square', 'Open Friday', () => this.activateView());
 		this.addRibbonIcon('layout-dashboard', 'Open JIRA Dashboard', () => this.activateJiraDashboard());
 		this.addRibbonIcon('users', 'Open Team Dashboard', () => this.activateTeamDashboard());
 
 		this.statusBarEl = this.addStatusBarItem();
-		this.statusBarEl.setText('BuJo ...');
+		this.statusBarEl.setText('Friday ...');
 
 		this.addCommand({
 			id: 'open-bujo',
@@ -302,7 +302,7 @@ export default class TaskBuJoPlugin extends Plugin {
 			this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
 				// Always offer "Quick create task"
 				menu.addItem(item => {
-					item.setTitle('BuJo: Quick create task')
+					item.setTitle('Friday: Quick create task')
 						.setIcon('check-square')
 						.onClick(() => {
 							new InsertTaskModal(this.app, (result) => {
@@ -326,7 +326,7 @@ export default class TaskBuJoPlugin extends Plugin {
 					// Toggle done/open
 					const isDone = checkboxMatch[2].toLowerCase() === 'x';
 					menu.addItem(item => {
-						item.setTitle(isDone ? 'BuJo: Mark as open' : 'BuJo: Mark as done')
+						item.setTitle(isDone ? 'Friday: Mark as open' : 'Friday: Mark as done')
 							.setIcon(isDone ? 'circle' : 'check')
 							.onClick(() => {
 								const newChar = isDone ? ' ' : 'x';
@@ -344,7 +344,7 @@ export default class TaskBuJoPlugin extends Plugin {
 
 					for (const [val, label, icon] of priorities) {
 						menu.addItem(item => {
-							item.setTitle(`BuJo: ${label}`)
+							item.setTitle(`Friday: ${label}`)
 								.setIcon(icon)
 								.onClick(() => {
 									this.setLinePriority(editor, cursor.line, val);
@@ -353,7 +353,7 @@ export default class TaskBuJoPlugin extends Plugin {
 					}
 
 					menu.addItem(item => {
-						item.setTitle('BuJo: Remove priority')
+						item.setTitle('Friday: Remove priority')
 							.setIcon('x')
 							.onClick(() => {
 								this.setLinePriority(editor, cursor.line, null);
@@ -362,7 +362,7 @@ export default class TaskBuJoPlugin extends Plugin {
 
 					// Set due date
 					menu.addItem(item => {
-						item.setTitle('BuJo: Set due date')
+						item.setTitle('Friday: Set due date')
 							.setIcon('calendar')
 							.onClick(() => {
 								const existing = currentLine.match(DUE_DATE_REGEX)?.[1] || '';
@@ -377,7 +377,7 @@ export default class TaskBuJoPlugin extends Plugin {
 			})
 		);
 
-		this.addSettingTab(new TaskBuJoSettingTab(this.app, this));
+		this.addSettingTab(new FridaySettingTab(this.app, this));
 
 		this.app.workspace.onLayoutReady(async () => {
 			await this.scanner.fullScan();
@@ -413,20 +413,20 @@ export default class TaskBuJoPlugin extends Plugin {
 			// for the user to trigger an edit.
 			await this.scanner.fullScan();
 			this.store.setTasks(this.scanner.getAllTasks());
-			new Notice(`BuJo: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
+			new Notice(`Friday: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
 		}
 	}
 
 	async activateView(newTab = false): Promise<void> {
 		const { workspace } = this.app;
 		let leaf: WorkspaceLeaf | null = null;
-		const leaves = workspace.getLeavesOfType(VIEW_TYPE_TASK_BUJO);
+		const leaves = workspace.getLeavesOfType(VIEW_TYPE_FRIDAY);
 
 		if (leaves.length > 0 && !newTab) {
 			leaf = leaves[0];
 		} else {
 			leaf = workspace.getLeaf(true);
-			if (leaf) await leaf.setViewState({ type: VIEW_TYPE_TASK_BUJO, active: true });
+			if (leaf) await leaf.setViewState({ type: VIEW_TYPE_FRIDAY, active: true });
 		}
 
 		if (leaf) workspace.revealLeaf(leaf);
@@ -613,7 +613,7 @@ export default class TaskBuJoPlugin extends Plugin {
 	}
 
 	onunload(): void {
-		this.app.workspace.detachLeavesOfType(VIEW_TYPE_TASK_BUJO);
+		this.app.workspace.detachLeavesOfType(VIEW_TYPE_FRIDAY);
 		this.app.workspace.detachLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
 		this.app.workspace.detachLeavesOfType(VIEW_TYPE_TEAM_DASHBOARD);
 		this.scanner.destroy();

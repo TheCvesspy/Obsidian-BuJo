@@ -1,6 +1,63 @@
 # Changelog
 
-All notable changes to the BuJo Obsidian plugin are tracked here.
+All notable changes to the Friday Obsidian plugin (formerly *BuJo*) are tracked here.
+
+## 2.1.0 — 2026-04-27
+
+The plugin has been renamed from **BuJo** to **Friday**. The original "Bullet Journal" framing fit when the plugin was a daily/weekly log helper, but the surface has grown well past that — JIRA Dashboard, Team Dashboard with workload heatmap, Topics-as-strategic-units, 1:1 cadence tracking, weekly review, sprint analytics. *Friday* (the personal-AI-assistant archetype, à la Iron Man) better captures what it is now: a personal ops console that scans your vault, surfaces what needs attention each morning, and keeps the team and JIRA picture next to your notes.
+
+### Changed
+
+- **Display name `BuJo` → `Friday`** (`manifest.json` `name`). The plugin `id` is unchanged (`obsidian-task-bujo`) so existing installs keep their `data.json`, settings, sprint history, JIRA cache, weekly snapshots, and team roster — only the *label* shifted.
+- **Command palette prefix** is now `Friday: …` (Obsidian derives this from the manifest name; command IDs themselves are unchanged so any user-set hotkeys still bind correctly).
+- **All user-visible strings** rebranded: ribbon hover labels (`Open Friday`), status-bar text (`Friday ...`), settings-tab heading (`Friday`), context-menu titles (`Friday: Quick create task`, `Friday: Set due date`, etc.), Notice messages (`Friday: generated N person page(s) …`), and the view tab name (`Friday`).
+- **Internal symbols renamed for consistency** (no behavioural change): `BuJoViewMode` → `FridayViewMode`, `TaskBuJoView` → `FridayView` (file `src/ui/TaskBuJoView.ts` → `src/ui/FridayView.ts`), `TaskBuJoSettingTab` → `FridaySettingTab`, `TaskBuJoPlugin` → `FridayPlugin`, `setTaskBuJoIcon` → `setFridayIcon`.
+- **CSS namespace `task-bujo-*` → `friday-*`** across `styles.css` and ~38 `.ts` files (~2,700 references). Pure cosmetic / structural — no class structure changes, just the prefix.
+- **View-type constants** rebased to `friday-*`: `VIEW_TYPE_TASK_BUJO` (`'task-bujo-view'`) → `VIEW_TYPE_FRIDAY` (`'friday-view'`); `VIEW_TYPE_JIRA_DASHBOARD` value `'task-bujo-jira-dashboard'` → `'friday-jira-dashboard'`; `VIEW_TYPE_TEAM_DASHBOARD` value `'task-bujo-team-dashboard'` → `'friday-team-dashboard'`. **One-time UX hiccup**: Obsidian persists view-type strings in workspace layouts, so any leaves you had pinned with the old types will need to be reopened once after upgrading. Workspace state is otherwise untouched.
+- **`package.json` `name`** → `obsidian-friday` (cosmetic; npm-style id, not used by Obsidian).
+- **manifest description** rewritten to reflect today's scope (ops console / JIRA / team / sprints) rather than the original Bullet Journal framing.
+
+### Intentionally not changed
+
+- **Default folder paths** — `BuJo/Daily`, `BuJo/Monthly`, `BuJo/Sprints/Topics`, `BuJo/Archive`, `BuJo/Team` remain as the out-of-the-box defaults in `PluginSettings`. These map to existing user data on disk; renaming them would orphan everyone's notes. Each is configurable in settings if a user wants to reorganise.
+- **Bullet-Journal methodology references** in `ARCHITECTURE.md` and code comments (e.g. "BuJo-inspired migration") are preserved — that's the conceptual ancestor of the morning-review / forwarding workflow and worth keeping in the historical record.
+- **Plugin `id`** (`obsidian-task-bujo`) and **command IDs** (`open-bujo`, `run-daily-migration`, etc.) — kept to preserve user data, hotkeys, and the data.json location.
+
+### Files
+
+- `manifest.json`, `package.json`, `versions.json` — version → `2.1.0`, name → `Friday` / `obsidian-friday`, description rewritten.
+- `src/**/*.ts` (~38 files), `styles.css` — mass symbol + CSS-class rename via PowerShell, then targeted Edits for user-facing strings.
+- `src/ui/TaskBuJoView.ts` → `src/ui/FridayView.ts` — file renamed; all 15 importers updated by the symbol rename.
+- `CHANGELOG.md`, `ARCHITECTURE.md` — this entry plus brand updates in headers and the architecture intro.
+
+---
+
+## 2.0.1 — 2026-04-27
+
+Bug-fix release for the Morning Review / Daily Migration flow. The dialog opened but its **Yesterday's Incomplete** section was always empty, and no daily note was created for today — both observed against a vault whose most recent daily note was older than the literal calendar yesterday (e.g. opening on Monday after a Friday log, or returning from vacation).
+
+### Fixed
+
+- **"Yesterday" now resolves to the most recent prior daily note** instead of literally `today − 1`. `MigrationService.getMorningReviewData()` previously called `dailyNotes.getDailyNotePath(today − 1)` and matched tasks by exact `sourcePath`; if that filename didn't exist on disk (weekend, vacation, or any skipped day), `yesterdayTasks` was always empty. The lookup now scans the configured `dailyNotePath` folder, picks the newest `YYYY-MM-DD.md` strictly before today, and uses that as the source. Lexicographic comparison on the ISO filenames is safe because zero-padded `YYYY-MM-DD` sorts chronologically.
+- **Today's daily note is created when the Morning Review modal opens.** Previously the file was only created lazily as a side effect of `addMigratedTask` / `addRawTaskLine`, so a user with nothing to forward would close the dialog and find no daily note for today. `MigrationModal.onOpen` now calls the existing idempotent `dailyNotes.getOrCreateDailyNote(new Date())` up front; the file is written with the standard template (`# Daily Log — …` + Inbox / Tasks / Migrated Tasks headings) and is left untouched if it already exists.
+
+### Changed
+
+- **`MorningReviewData` gains a `yesterdayDate: string \| null` field** carrying the ISO date of the prior daily note that populated `yesterdayTasks` (or `null` when no prior note exists). The modal uses it to label the section as **"Incomplete from Thu, Mar 26"** (via `formatDateDisplay`) instead of the misleading static **"Yesterday's Incomplete"** when the prior note isn't actually yesterday. Falls back to the original wording only when no `yesterdayDate` is available.
+
+### Files
+
+- `src/services/dailyNoteService.ts` — new `getMostRecentPriorDailyNotePath(today: Date): string | null`. Walks `vault.getAbstractFileByPath(settings.dailyNotePath).children`, matches `^(\d{4}-\d{2}-\d{2})\.md$`, returns the lexicographically largest path strictly less than today's ISO. Returns `null` if the folder is missing or empty.
+- `src/services/migrationService.ts` — `getMorningReviewData()` swaps the literal-yesterday computation for the new helper, derives `yesterdayDate` by parsing the YYYY-MM-DD out of the resolved path, guards the first-pass loop against a `null` path, and returns `yesterdayDate` on the data object. `MorningReviewData.yesterdayDate` added to the interface.
+- `src/ui/MigrationModal.ts` — `onOpen()` calls `getOrCreateDailyNote(new Date())` (with a `Notice` on failure) before rendering. The "Yesterday's Incomplete" section header is now built dynamically from `reviewData.yesterdayDate`.
+
+### Compatibility
+
+- No data-on-disk schema changes. `MorningReviewData` is an in-memory shape produced fresh on every modal open; the new `yesterdayDate` field is additive and the only consumer (`MigrationModal`) handles `null` explicitly.
+- `needsMigration()` is unchanged — it already routes through `getMorningReviewData()`, so the prior-note lookup feeds the startup-prompt gate automatically.
+- The `migrationPromptOnStartup` toggle, the `BuJo: Run Daily Migration` command, the `executeMigrations` action set (forward / reschedule / done / cancel), and the `addMigratedTask*` writers are all untouched.
+
+---
 
 ## 2.0.0 — 2026-04-24
 

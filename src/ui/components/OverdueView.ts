@@ -15,7 +15,7 @@ export class OverdueView {
 		private searchQuery: string,
 		private collapsedGroups?: Set<string>
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-overdue-view' });
+		this.el = container.createDiv({ cls: 'friday-overdue-view' });
 	}
 
 	render(): void {
@@ -30,16 +30,16 @@ export class OverdueView {
 		}
 
 		// Header
-		const header = this.el.createDiv({ cls: 'task-bujo-view-header' });
+		const header = this.el.createDiv({ cls: 'friday-view-header' });
 		header.createSpan({ text: 'Overdue Tasks' });
 		header.createSpan({
-			cls: 'task-bujo-pending-count',
+			cls: 'friday-pending-count',
 			text: ` (${overdue.length})`
 		});
 
 		if (overdue.length === 0) {
 			this.el.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: 'No overdue tasks — you\'re all caught up!'
 			});
 			return;

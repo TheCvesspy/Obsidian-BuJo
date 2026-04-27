@@ -52,32 +52,32 @@ export function renderTopicCard(
 	topic: SprintTopic,
 	opts: TopicCardOptions,
 ): HTMLElement {
-	const card = container.createDiv({ cls: 'task-bujo-kanban-card' });
+	const card = container.createDiv({ cls: 'friday-kanban-card' });
 
 	if (opts.draggable) {
 		card.draggable = true;
 		card.dataset.filepath = topic.filePath;
 		card.addEventListener('dragstart', (e) => {
 			if (opts.isDragging) opts.isDragging.value = true;
-			card.addClass('task-bujo-kanban-card-dragging');
+			card.addClass('friday-kanban-card-dragging');
 			if (e.dataTransfer) {
 				e.dataTransfer.setData('text/plain', topic.filePath);
 				e.dataTransfer.effectAllowed = 'move';
 			}
 		});
 		card.addEventListener('dragend', () => {
-			card.removeClass('task-bujo-kanban-card-dragging');
+			card.removeClass('friday-kanban-card-dragging');
 			if (opts.isDragging) opts.isDragging.value = false;
 		});
 	}
 
 	// Header: priority dot + title + blocked badge
-	const headerEl = card.createDiv({ cls: 'task-bujo-kanban-card-header' });
+	const headerEl = card.createDiv({ cls: 'friday-kanban-card-header' });
 	if (topic.priority !== Priority.None) {
-		const dot = headerEl.createSpan({ cls: 'task-bujo-priority-dot' });
-		dot.addClass(`task-bujo-priority-${topic.priority}`);
+		const dot = headerEl.createSpan({ cls: 'friday-priority-dot' });
+		dot.addClass(`friday-priority-${topic.priority}`);
 	}
-	const titleEl = headerEl.createSpan({ cls: 'task-bujo-kanban-card-title', text: topic.title });
+	const titleEl = headerEl.createSpan({ cls: 'friday-kanban-card-title', text: topic.title });
 	if (opts.onTitleClick) {
 		titleEl.addEventListener('click', (e) => {
 			e.stopPropagation();
@@ -85,7 +85,7 @@ export function renderTopicCard(
 		});
 	}
 	if (topic.blocked) {
-		headerEl.createSpan({ cls: 'task-bujo-kanban-card-blocked', text: 'BLOCKED' });
+		headerEl.createSpan({ cls: 'friday-kanban-card-blocked', text: 'BLOCKED' });
 	}
 
 	// JIRA tickets (0..n) — one row per linked key
@@ -95,10 +95,10 @@ export function renderTopicCard(
 		const loading = lookup?.loading ?? false;
 		const error = lookup?.error ?? null;
 
-		const jiraRow = card.createDiv({ cls: 'task-bujo-kanban-card-jira-row' });
-		const keyEl = jiraRow.createSpan({ cls: 'task-bujo-kanban-card-jira', text: key });
+		const jiraRow = card.createDiv({ cls: 'friday-kanban-card-jira-row' });
+		const keyEl = jiraRow.createSpan({ cls: 'friday-kanban-card-jira', text: key });
 		if (info?.issueUrl) {
-			keyEl.addClass('task-bujo-clickable');
+			keyEl.addClass('friday-clickable');
 			keyEl.addEventListener('click', (e) => {
 				e.stopPropagation();
 				window.open(info.issueUrl, '_blank');
@@ -106,28 +106,28 @@ export function renderTopicCard(
 		}
 
 		if (loading) {
-			jiraRow.createSpan({ cls: 'task-bujo-jira-chip task-bujo-jira-loading', text: '…' });
+			jiraRow.createSpan({ cls: 'friday-jira-chip friday-jira-loading', text: '…' });
 		} else if (error) {
 			const errEl = jiraRow.createSpan({
-				cls: 'task-bujo-jira-chip task-bujo-jira-error',
+				cls: 'friday-jira-chip friday-jira-error',
 				text: '!',
 			});
 			errEl.setAttribute('title', `JIRA fetch failed: ${error}`);
 		} else if (info) {
 			const statusEl = jiraRow.createSpan({
-				cls: `task-bujo-jira-chip task-bujo-jira-status task-bujo-jira-status-${info.statusCategory}`,
+				cls: `friday-jira-chip friday-jira-status friday-jira-status-${info.statusCategory}`,
 				text: info.status,
 			});
 			statusEl.setAttribute('title', `JIRA status: ${info.status}`);
 			const assigneeLabel = info.assignee ?? 'Unassigned';
 			const assigneeEl = jiraRow.createSpan({
-				cls: 'task-bujo-jira-chip task-bujo-jira-assignee',
+				cls: 'friday-jira-chip friday-jira-assignee',
 				text: assigneeLabel,
 			});
 			assigneeEl.setAttribute('title', info.assignee ? `Assignee: ${info.assignee}` : 'Unassigned');
 			if (info.summary) {
 				const summaryEl = card.createDiv({
-					cls: 'task-bujo-kanban-card-jira-summary',
+					cls: 'friday-kanban-card-jira-summary',
 					text: info.summary,
 				});
 				summaryEl.setAttribute('title', info.summary);
@@ -142,7 +142,7 @@ export function renderTopicCard(
 		if (topic.effort) chips.push(`Effort: ${topic.effort.toUpperCase()}`);
 		if (topic.dueDate) chips.push(`Due: ${topic.dueDate}`);
 		if (chips.length > 0) {
-			card.createDiv({ cls: 'task-bujo-kanban-card-meta', text: chips.join(' \u2022 ') });
+			card.createDiv({ cls: 'friday-kanban-card-meta', text: chips.join(' \u2022 ') });
 		}
 	}
 
@@ -150,10 +150,10 @@ export function renderTopicCard(
 	if (topic.assignee) {
 		const lookup = opts.assigneeLookup?.(topic.assignee) ?? null;
 		const label = lookup?.label ?? topic.assignee;
-		const chip = card.createDiv({ cls: 'task-bujo-kanban-card-assignee' });
+		const chip = card.createDiv({ cls: 'friday-kanban-card-assignee' });
 		chip.setText(label);
 		if (!lookup || lookup.isInactive) {
-			chip.addClass('task-bujo-kanban-card-assignee-stale');
+			chip.addClass('friday-kanban-card-assignee-stale');
 		}
 		chip.setAttribute('title', lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
 	}
@@ -171,25 +171,25 @@ export function renderTopicCard(
 			: daysSinceNudge !== null
 				? ` · ${daysSinceNudge}d`
 				: '';
-		const chip = card.createDiv({ cls: 'task-bujo-kanban-card-waiting' });
+		const chip = card.createDiv({ cls: 'friday-kanban-card-waiting' });
 		chip.setText(`\u23F3 ${label}${suffix}`);
 		const isStale = topic.lastNudged === null
 			|| (daysSinceNudge !== null && daysSinceNudge > threshold);
-		if (isStale) chip.addClass('task-bujo-kanban-card-waiting-stale');
+		if (isStale) chip.addClass('friday-kanban-card-waiting-stale');
 		chip.setAttribute('title', `Waiting on: ${label}${suffix}`);
 	}
 
 	// Linked pages
 	if (topic.linkedPages.length > 0) {
 		const linksText = topic.linkedPages.map(p => `[[${p}]]`).join(', ');
-		card.createDiv({ cls: 'task-bujo-kanban-card-links', text: linksText });
+		card.createDiv({ cls: 'friday-kanban-card-links', text: linksText });
 	}
 
 	// External references — Confluence, Figma, SAP, etc.
 	if (topic.refs.length > 0) {
-		const refsRow = card.createDiv({ cls: 'task-bujo-kanban-card-refs' });
+		const refsRow = card.createDiv({ cls: 'friday-kanban-card-refs' });
 		for (const ref of topic.refs) {
-			const chip = refsRow.createSpan({ cls: 'task-bujo-kanban-card-ref-chip' });
+			const chip = refsRow.createSpan({ cls: 'friday-kanban-card-ref-chip' });
 			chip.setText(`${ref.label} \u2197`);
 			chip.setAttribute('title', ref.url);
 			chip.addEventListener('click', (e) => {
@@ -201,13 +201,13 @@ export function renderTopicCard(
 
 	// Task progress bar
 	if (topic.taskTotal > 0) {
-		const progressDiv = card.createDiv({ cls: 'task-bujo-kanban-card-progress' });
-		const barOuter = progressDiv.createDiv({ cls: 'task-bujo-progress-bar' });
-		const barInner = barOuter.createDiv({ cls: 'task-bujo-progress-fill' });
+		const progressDiv = card.createDiv({ cls: 'friday-kanban-card-progress' });
+		const barOuter = progressDiv.createDiv({ cls: 'friday-progress-bar' });
+		const barInner = barOuter.createDiv({ cls: 'friday-progress-fill' });
 		const pct = Math.round((topic.taskDone / topic.taskTotal) * 100);
 		barInner.style.width = `${pct}%`;
 		progressDiv.createSpan({
-			cls: 'task-bujo-progress-text',
+			cls: 'friday-progress-text',
 			text: `${topic.taskDone}/${topic.taskTotal} tasks`,
 		});
 	}
@@ -218,7 +218,7 @@ export function renderTopicCard(
 	const wantsBlockedButton = opts.onBlockedToggle !== undefined;
 
 	if (wantsStatusButtons || wantsBlockedButton) {
-		const actionsDiv = card.createDiv({ cls: 'task-bujo-kanban-card-actions' });
+		const actionsDiv = card.createDiv({ cls: 'friday-kanban-card-actions' });
 
 		if (wantsStatusButtons && transitions.left) {
 			const leftBtn = actionsDiv.createEl('button', { text: '\u2190' });
@@ -239,7 +239,7 @@ export function renderTopicCard(
 		if (wantsBlockedButton) {
 			const blockedBtn = actionsDiv.createEl('button', {
 				text: topic.blocked ? '\u26A0 Unblock' : '\u26A0',
-				cls: topic.blocked ? 'task-bujo-kanban-blocked-active' : '',
+				cls: topic.blocked ? 'friday-kanban-blocked-active' : '',
 			});
 			blockedBtn.setAttribute('title', topic.blocked ? 'Remove blocked flag' : 'Flag as blocked');
 			blockedBtn.addEventListener('click', (e) => {

@@ -28,7 +28,7 @@ export enum GroupMode {
 	ByDueDate = 'byDueDate',
 }
 
-export enum BuJoViewMode {
+export enum FridayViewMode {
 	Daily = 'daily',
 	Weekly = 'weekly',
 	Monthly = 'monthly',
@@ -213,7 +213,7 @@ export interface PluginSettings {
 	/** Default grouping mode for task views */
 	defaultGroupMode: GroupMode;
 	/** Default view mode on plugin open */
-	defaultViewMode: BuJoViewMode;
+	defaultViewMode: FridayViewMode;
 	/** Folder path for daily log notes */
 	dailyNotePath: string;
 	/** Default sprint length in days */
@@ -395,7 +395,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	folderStates: {},
 	showCompletedTasks: true,
 	defaultGroupMode: GroupMode.ByPage,
-	defaultViewMode: BuJoViewMode.Daily,
+	defaultViewMode: FridayViewMode.Daily,
 	dailyNotePath: 'BuJo/Daily',
 	defaultSprintLength: 14,
 	autoStartNextSprint: true,

@@ -15,7 +15,7 @@ export class TaskList {
 		private collapsedGroups?: Set<string>,
 		private allTasks?: TaskItem[]
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-task-list' });
+		this.el = container.createDiv({ cls: 'friday-task-list' });
 		this.buildLookup();
 		this.setupCallbacks();
 		this.render();
@@ -59,7 +59,7 @@ export class TaskList {
 
 		if (this.groupedTasks.size === 0) {
 			this.el.createDiv({
-				cls: 'task-bujo-empty',
+				cls: 'friday-empty',
 				text: 'No tasks found'
 			});
 			return;

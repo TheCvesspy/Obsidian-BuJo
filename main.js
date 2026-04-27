@@ -24,7 +24,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
-  default: () => TaskBuJoPlugin
+  default: () => FridayPlugin
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian32 = require("obsidian");
@@ -93,9 +93,9 @@ var DEFAULT_PLUGIN_DATA = {
 };
 
 // src/constants.ts
-var VIEW_TYPE_TASK_BUJO = "task-bujo-view";
-var VIEW_TYPE_JIRA_DASHBOARD = "task-bujo-jira-dashboard";
-var VIEW_TYPE_TEAM_DASHBOARD = "task-bujo-team-dashboard";
+var VIEW_TYPE_FRIDAY = "friday-view";
+var VIEW_TYPE_JIRA_DASHBOARD = "friday-jira-dashboard";
+var VIEW_TYPE_TEAM_DASHBOARD = "friday-team-dashboard";
 var CHECKBOX_REGEX = /^(\s*)-\s*\[([ x><!-])\]\s+(.*)$/i;
 var HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 var PRIORITY_TAG_REGEX = /#priority\/(high|medium|low)/i;
@@ -158,7 +158,7 @@ function sanitizePathSegment(name) {
 }
 
 // src/settings.ts
-var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
+var FridaySettingTab = class extends import_obsidian2.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /** Tracks which folder paths are collapsed (persists across re-renders) */
@@ -247,7 +247,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
         this.debouncedSave(false);
       })
     );
-    containerEl.createEl("h2", { text: "BuJo" });
+    containerEl.createEl("h2", { text: "Friday" });
     new import_obsidian2.Setting(containerEl).setName("Daily note folder path").setDesc("Folder where daily notes are stored.").addText(
       (text) => text.setPlaceholder("BuJo/Daily").setValue(this.plugin.settings.dailyNotePath).onChange((value) => {
         this.plugin.settings.dailyNotePath = value.trim();
@@ -462,7 +462,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
   renderTeamManagementSection(containerEl) {
     containerEl.createEl("h2", { text: "Team Management" });
     containerEl.createEl("p", {
-      text: "One folder per teammate with a canonical person page and a 1on1/ subfolder for dated 1:1 session notes. The Team tab in the BuJo view surfaces cadence signals so you don't miss 1:1s.",
+      text: "One folder per teammate with a canonical person page and a 1on1/ subfolder for dated 1:1 session notes. The Team tab in the Friday view surfaces cadence signals so you don't miss 1:1s.",
       cls: "setting-item-description"
     });
     new import_obsidian2.Setting(containerEl).setName("Team folder path").setDesc("Where person pages live. Each teammate gets a subfolder: {folder}/Alice Smith/Alice Smith.md.").addText(
@@ -489,7 +489,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
           if (created === 0) {
             new import_obsidian2.Notice(`No new pages created \u2014 all ${skipped} member(s) already have pages.`);
           } else {
-            new import_obsidian2.Notice(`Created ${created} person page(s). Open the Team tab in BuJo view to see them.`);
+            new import_obsidian2.Notice(`Created ${created} person page(s). Open the Team tab in Friday view to see them.`);
           }
         } catch (e) {
           new import_obsidian2.Notice(`Generation failed: ${e instanceof Error ? e.message : "unknown error"}`);
@@ -504,7 +504,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
    *  because Obsidian Settings don't trivially support in-place row edits. Cheap
    *  given typical team sizes (5–15 people). */
   renderTeamMembersList(containerEl) {
-    const listWrap = containerEl.createDiv({ cls: "task-bujo-team-members-list" });
+    const listWrap = containerEl.createDiv({ cls: "friday-team-members-list" });
     const rerender = () => {
       listWrap.empty();
       this.renderTeamMembersRows(listWrap);
@@ -527,16 +527,16 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
     const members = this.plugin.settings.teamMembers;
     if (members.length === 0) {
       listEl.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: 'No team members configured yet. Click "+ Add team member" to start.'
       });
       return;
     }
     for (let i = 0; i < members.length; i++) {
-      const row = listEl.createDiv({ cls: "task-bujo-team-member-row" });
-      const inputsRow = row.createDiv({ cls: "task-bujo-team-member-inputs" });
+      const row = listEl.createDiv({ cls: "friday-team-member-row" });
+      const inputsRow = row.createDiv({ cls: "friday-team-member-inputs" });
       const nameInput = inputsRow.createEl("input", {
-        cls: "task-bujo-team-member-input",
+        cls: "friday-team-member-input",
         type: "text",
         attr: { placeholder: "Full name", value: members[i].fullName }
       });
@@ -545,7 +545,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings(false);
       });
       const nickInput = inputsRow.createEl("input", {
-        cls: "task-bujo-team-member-input task-bujo-team-member-input-nick",
+        cls: "friday-team-member-input friday-team-member-input-nick",
         type: "text",
         attr: { placeholder: "Nickname", value: members[i].nickname }
       });
@@ -554,7 +554,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings(false);
       });
       const emailInput = inputsRow.createEl("input", {
-        cls: "task-bujo-team-member-input task-bujo-team-member-input-email",
+        cls: "friday-team-member-input friday-team-member-input-email",
         type: "email",
         attr: { placeholder: "email@domain.com", value: members[i].email }
       });
@@ -566,8 +566,8 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
         this.plugin.settings.teamMembers[i].email = raw;
         await this.plugin.saveSettings(false);
       });
-      const controlsRow = row.createDiv({ cls: "task-bujo-team-member-controls" });
-      const activeLabel = controlsRow.createEl("label", { cls: "task-bujo-team-member-active" });
+      const controlsRow = row.createDiv({ cls: "friday-team-member-controls" });
+      const activeLabel = controlsRow.createEl("label", { cls: "friday-team-member-active" });
       const activeCheck = activeLabel.createEl("input", {
         type: "checkbox",
         attr: members[i].active ? { checked: "true" } : {}
@@ -579,7 +579,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings(false);
       });
       const removeBtn = controlsRow.createEl("button", {
-        cls: "task-bujo-team-member-remove",
+        cls: "friday-team-member-remove",
         text: "Remove"
       });
       removeBtn.addEventListener("click", async () => {
@@ -592,7 +592,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
   }
   /** Build folder tree from vault and render it */
   renderFolderTree(containerEl) {
-    this.treeContainer = containerEl.createDiv({ cls: "task-bujo-folder-tree" });
+    this.treeContainer = containerEl.createDiv({ cls: "friday-folder-tree" });
     this.renderTreeContent();
   }
   /** Re-render just the tree content, preserving collapse state and scroll */
@@ -607,7 +607,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
     }
     if (root.length === 0) {
       this.treeContainer.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: "No folders found in vault."
       });
     }
@@ -641,38 +641,38 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
   }
   /** Render a single folder node and its children */
   renderFolderNode(container, node, depth) {
-    const row = container.createDiv({ cls: "task-bujo-folder-row" });
+    const row = container.createDiv({ cls: "friday-folder-row" });
     row.style.paddingLeft = `${depth * 20}px`;
-    const chevron = row.createSpan({ cls: "task-bujo-folder-chevron" });
+    const chevron = row.createSpan({ cls: "friday-folder-chevron" });
     const isCollapsed = this.collapsedFolders.has(node.path);
     if (node.children.length > 0) {
       chevron.textContent = isCollapsed ? "\u25B6" : "\u25BC";
-      chevron.addClass("task-bujo-clickable");
+      chevron.addClass("friday-clickable");
     } else {
       chevron.textContent = " ";
     }
-    const stateBtn = row.createEl("button", { cls: "task-bujo-folder-state-btn" });
+    const stateBtn = row.createEl("button", { cls: "friday-folder-state-btn" });
     const updateStateBtn = () => {
       const explicitState = this.plugin.settings.folderStates[node.path];
       const effective = getEffectiveState(node.path + "/dummy.md", this.plugin.settings.folderStates);
       if (explicitState === "exclude") {
         stateBtn.textContent = "\u2717";
         stateBtn.setAttribute("aria-label", "Excluded");
-        row.addClass("task-bujo-folder-excluded");
-        row.removeClass("task-bujo-folder-inherit");
+        row.addClass("friday-folder-excluded");
+        row.removeClass("friday-folder-inherit");
       } else if (explicitState === "inherit") {
         stateBtn.textContent = "~";
         stateBtn.setAttribute("aria-label", `Inherit (${effective})`);
-        row.removeClass("task-bujo-folder-excluded");
-        row.addClass("task-bujo-folder-inherit");
+        row.removeClass("friday-folder-excluded");
+        row.addClass("friday-folder-inherit");
         if (effective === "exclude") {
-          row.addClass("task-bujo-folder-excluded");
+          row.addClass("friday-folder-excluded");
         }
       } else {
         stateBtn.textContent = "\u2713";
         stateBtn.setAttribute("aria-label", "Included");
-        row.removeClass("task-bujo-folder-excluded");
-        row.removeClass("task-bujo-folder-inherit");
+        row.removeClass("friday-folder-excluded");
+        row.removeClass("friday-folder-inherit");
       }
     };
     updateStateBtn();
@@ -694,11 +694,11 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
       await this.plugin.saveSettings();
       this.renderTreeContent();
     });
-    row.createSpan({ cls: "task-bujo-folder-name", text: node.name });
+    row.createSpan({ cls: "friday-folder-name", text: node.name });
     if (node.children.length > 0) {
-      const childContainer = container.createDiv({ cls: "task-bujo-folder-children" });
+      const childContainer = container.createDiv({ cls: "friday-folder-children" });
       if (isCollapsed) {
-        childContainer.addClass("task-bujo-collapsed");
+        childContainer.addClass("friday-collapsed");
       }
       for (const child of node.children) {
         this.renderFolderNode(childContainer, child, depth + 1);
@@ -710,7 +710,7 @@ var TaskBuJoSettingTab = class extends import_obsidian2.PluginSettingTab {
           this.collapsedFolders.add(node.path);
         }
         const nowCollapsed = this.collapsedFolders.has(node.path);
-        childContainer.toggleClass("task-bujo-collapsed", nowCollapsed);
+        childContainer.toggleClass("friday-collapsed", nowCollapsed);
         chevron.textContent = nowCollapsed ? "\u25B6" : "\u25BC";
       });
     }
@@ -1459,7 +1459,7 @@ var VaultScanner = class {
               session: isOneOnOne ? parseOneOnOneSession(file.path) : null
             };
           } catch (e) {
-            console.warn("[BuJo scan] failed to process", file.path, e);
+            console.warn("[Friday scan] failed to process", file.path, e);
             return { path: file.path, tasks: [], topic: null, teamPage: null, session: null };
           }
         })
@@ -2285,6 +2285,33 @@ var DailyNoteService = class {
     const settings = this.getSettings();
     return `${settings.dailyNotePath}/${formatDateISO(date)}.md`;
   }
+  /** Find the path of the most recent daily note dated strictly before `today`.
+   *  Returns null if no prior daily note exists. Walks the configured
+   *  daily-notes folder and matches files named `YYYY-MM-DD.md`. */
+  getMostRecentPriorDailyNotePath(today) {
+    const settings = this.getSettings();
+    const folder = this.vault.getAbstractFileByPath(settings.dailyNotePath);
+    if (!(folder instanceof import_obsidian5.TFolder))
+      return null;
+    const todayIso = formatDateISO(today);
+    let bestIso = null;
+    let bestPath = null;
+    for (const child of folder.children) {
+      if (!(child instanceof import_obsidian5.TFile))
+        continue;
+      const m = child.name.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
+      if (!m)
+        continue;
+      const iso = m[1];
+      if (iso >= todayIso)
+        continue;
+      if (!bestIso || iso > bestIso) {
+        bestIso = iso;
+        bestPath = child.path;
+      }
+    }
+    return bestPath;
+  }
   /** Get or create today's daily note file. Creates folders if needed. */
   async getOrCreateDailyNote(date) {
     const path = this.getDailyNotePath(date);
@@ -2800,12 +2827,11 @@ var MigrationService = class {
   /** Gather all data for the morning review modal.
    *  Only root tasks (parentId === null) are actionable. Children travel with their parent. */
   getMorningReviewData() {
-    var _a;
+    var _a, _b, _c;
     const today = todayStart();
     const now = /* @__PURE__ */ new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayNotePath = this.dailyNotes.getDailyNotePath(yesterday);
+    const yesterdayNotePath = this.dailyNotes.getMostRecentPriorDailyNotePath(today);
+    const yesterdayDate = yesterdayNotePath ? (_b = (_a = yesterdayNotePath.match(/(\d{4}-\d{2}-\d{2})\.md$/)) == null ? void 0 : _a[1]) != null ? _b : null : null;
     const allTasks = this.store.getTasks();
     let yesterdayTasks = [];
     let overdueTasks = [];
@@ -2815,7 +2841,7 @@ var MigrationService = class {
     for (const t of allTasks) {
       if (t.parentId !== null)
         continue;
-      if (t.sourcePath === yesterdayNotePath && t.status === " " /* Open */) {
+      if (yesterdayNotePath && t.sourcePath === yesterdayNotePath && t.status === " " /* Open */) {
         yesterdayTasks.push(t);
         yesterdayIds.add(t.id);
       }
@@ -2835,7 +2861,7 @@ var MigrationService = class {
         availableTasks.push(t);
       }
     }
-    const dailyNotePath = (_a = this.getSettings) == null ? void 0 : _a.call(this).dailyNotePath;
+    const dailyNotePath = (_c = this.getSettings) == null ? void 0 : _c.call(this).dailyNotePath;
     if (dailyNotePath) {
       yesterdayTasks = this.deduplicateDailyTasks(yesterdayTasks, dailyNotePath);
       overdueTasks = this.deduplicateDailyTasks(overdueTasks, dailyNotePath);
@@ -2843,7 +2869,7 @@ var MigrationService = class {
     }
     overdueTasks.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
     const availableOpenPoints = this.store.getOpenPoints().filter((t) => t.status === " " /* Open */);
-    return { yesterdayTasks, overdueTasks, todayTasks, availableTasks, availableOpenPoints };
+    return { yesterdayTasks, yesterdayDate, overdueTasks, todayTasks, availableTasks, availableOpenPoints };
   }
   /** Get overdue tasks only (for backward compat / needsMigration) */
   getPendingMigrations() {
@@ -4500,7 +4526,7 @@ function buildPersonPageTemplate(fullName, status, email) {
   return fmLines.join("\n") + body;
 }
 
-// src/ui/TaskBuJoView.ts
+// src/ui/FridayView.ts
 var import_obsidian22 = require("obsidian");
 
 // src/ui/components/ViewSwitcher.ts
@@ -4508,7 +4534,7 @@ var ViewSwitcher = class {
   constructor(container, currentMode, callbacks) {
     this.currentMode = currentMode;
     this.callbacks = callbacks;
-    this.el = container.createDiv({ cls: "task-bujo-view-switcher" });
+    this.el = container.createDiv({ cls: "friday-view-switcher" });
     this.render();
   }
   render() {
@@ -4527,11 +4553,11 @@ var ViewSwitcher = class {
     ];
     for (const { mode, label } of tabs) {
       const tab = this.el.createEl("button", {
-        cls: "task-bujo-view-tab"
+        cls: "friday-view-tab"
       });
       tab.createSpan({ text: label });
       if (mode === this.currentMode) {
-        tab.addClass("task-bujo-view-tab-active");
+        tab.addClass("friday-view-tab-active");
       }
       tab.addEventListener("click", () => {
         this.currentMode = mode;
@@ -4557,16 +4583,16 @@ var Toolbar = class {
     this.callbacks = callbacks;
     this.searchValue = "";
     this.debounceTimer = null;
-    this.el = container.createDiv({ cls: "task-bujo-toolbar" });
+    this.el = container.createDiv({ cls: "friday-toolbar" });
     this.render();
   }
   render() {
     this.el.empty();
-    const searchContainer = this.el.createDiv({ cls: "task-bujo-search" });
+    const searchContainer = this.el.createDiv({ cls: "friday-search" });
     const searchInput = searchContainer.createEl("input", {
       type: "text",
       placeholder: "Search tasks...",
-      cls: "task-bujo-search-input"
+      cls: "friday-search-input"
     });
     searchInput.value = this.searchValue;
     searchInput.addEventListener("input", () => {
@@ -4579,8 +4605,8 @@ var Toolbar = class {
     });
     const showGrouping = this.viewMode === "sprint" /* Sprint */ || this.viewMode === "overdue" /* Overdue */ || this.viewMode === "overview" /* Overview */;
     if (showGrouping) {
-      const groupContainer = this.el.createDiv({ cls: "task-bujo-group-selector" });
-      groupContainer.createSpan({ text: "Group:", cls: "task-bujo-label" });
+      const groupContainer = this.el.createDiv({ cls: "friday-group-selector" });
+      groupContainer.createSpan({ text: "Group:", cls: "friday-label" });
       const groupModes = [
         { mode: "byPage" /* ByPage */, label: "Page" },
         { mode: "byPriority" /* ByPriority */, label: "Priority" },
@@ -4589,10 +4615,10 @@ var Toolbar = class {
       for (const { mode, label } of groupModes) {
         const btn = groupContainer.createEl("button", {
           text: label,
-          cls: "task-bujo-group-btn"
+          cls: "friday-group-btn"
         });
         if (mode === this.currentGroupMode) {
-          btn.addClass("task-bujo-active");
+          btn.addClass("friday-active");
         }
         btn.addEventListener("click", () => {
           this.currentGroupMode = mode;
@@ -4625,34 +4651,34 @@ var GroupHeader = class {
     this.collapsedGroups = collapsedGroups;
     var _a;
     this.collapsed = (_a = collapsedGroups == null ? void 0 : collapsedGroups.has(label)) != null ? _a : false;
-    this.el = container.createDiv({ cls: "task-bujo-group-header" });
-    this.contentEl = container.createDiv({ cls: "task-bujo-group-content" });
+    this.el = container.createDiv({ cls: "friday-group-header" });
+    this.contentEl = container.createDiv({ cls: "friday-group-content" });
     this.render();
   }
   render() {
-    const headerRow = this.el.createDiv({ cls: "task-bujo-group-header-row" });
+    const headerRow = this.el.createDiv({ cls: "friday-group-header-row" });
     if (this.collapsible) {
-      const chevron = headerRow.createSpan({ cls: "task-bujo-chevron" });
+      const chevron = headerRow.createSpan({ cls: "friday-chevron" });
       chevron.textContent = this.collapsed ? "\u25B6" : "\u25BC";
       this.el.addEventListener("click", () => this.toggle());
-      this.el.addClass("task-bujo-clickable");
+      this.el.addClass("friday-clickable");
     }
     headerRow.createSpan({
-      cls: "task-bujo-group-label",
+      cls: "friday-group-label",
       text: this.label
     });
     headerRow.createSpan({
-      cls: "task-bujo-group-count",
+      cls: "friday-group-count",
       text: `(${this.count})`
     });
     if (this.collapsed) {
-      this.contentEl.addClass("task-bujo-collapsed");
+      this.contentEl.addClass("friday-collapsed");
     }
   }
   toggle() {
     this.collapsed = !this.collapsed;
-    this.contentEl.toggleClass("task-bujo-collapsed", this.collapsed);
-    const chevron = this.el.querySelector(".task-bujo-chevron");
+    this.contentEl.toggleClass("friday-collapsed", this.collapsed);
+    const chevron = this.el.querySelector(".friday-chevron");
     if (chevron) {
       chevron.textContent = this.collapsed ? "\u25B6" : "\u25BC";
     }
@@ -4676,9 +4702,9 @@ var GroupHeader = class {
 // src/ui/icons.ts
 var import_obsidian13 = require("obsidian");
 var PRIORITY_CLASSES = {
-  high: "task-bujo-priority-high",
-  medium: "task-bujo-priority-medium",
-  low: "task-bujo-priority-low",
+  high: "friday-priority-high",
+  medium: "friday-priority-medium",
+  low: "friday-priority-low",
   none: ""
 };
 var STATUS_DISPLAY = {
@@ -4690,7 +4716,7 @@ var STATUS_DISPLAY = {
 };
 function createPriorityDot(priority) {
   const dot = document.createElement("span");
-  dot.addClass("task-bujo-priority-dot");
+  dot.addClass("friday-priority-dot");
   if (PRIORITY_CLASSES[priority]) {
     dot.addClass(PRIORITY_CLASSES[priority]);
   }
@@ -4698,33 +4724,33 @@ function createPriorityDot(priority) {
 }
 function createDueBadge(text, isOverdue2) {
   const badge = document.createElement("span");
-  badge.addClass("task-bujo-due-badge");
+  badge.addClass("friday-due-badge");
   if (isOverdue2) {
-    badge.addClass("task-bujo-due-overdue");
+    badge.addClass("friday-due-overdue");
   }
   badge.textContent = text;
   return badge;
 }
 function createSourceLink(fileName) {
   const link = document.createElement("span");
-  link.addClass("task-bujo-source-link");
+  link.addClass("friday-source-link");
   link.textContent = fileName;
   return link;
 }
 function createStatusMarker(statusChar) {
   const marker = document.createElement("span");
-  marker.addClass("task-bujo-status-marker");
+  marker.addClass("friday-status-marker");
   const display = STATUS_DISPLAY[statusChar] || "";
   if (display) {
     marker.textContent = display;
-    marker.addClass(`task-bujo-status-${statusChar === ">" ? "migrated" : statusChar === "<" ? "scheduled" : "cancelled"}`);
+    marker.addClass(`friday-status-${statusChar === ">" ? "migrated" : statusChar === "<" ? "scheduled" : "cancelled"}`);
   }
   return marker;
 }
 function createCadenceChip(state, label) {
   const chip = document.createElement("span");
-  chip.addClass("task-bujo-cadence-chip");
-  chip.addClass(`task-bujo-cadence-${state}`);
+  chip.addClass("friday-cadence-chip");
+  chip.addClass(`friday-cadence-${state}`);
   chip.textContent = label;
   return chip;
 }
@@ -4787,11 +4813,11 @@ var TaskItemRow = class {
     this.task = task;
     this.callbacks = callbacks;
     this.collapsed = collapsed;
-    this.el = container.createDiv({ cls: "task-bujo-task-row" });
+    this.el = container.createDiv({ cls: "friday-task-row" });
     if (task.indentLevel > 0) {
       this.el.dataset.indent = String(task.indentLevel);
       this.el.style.paddingLeft = `${task.indentLevel * 24}px`;
-      this.el.addClass("task-bujo-subtask-row");
+      this.el.addClass("friday-subtask-row");
     }
     this.render();
   }
@@ -4802,7 +4828,7 @@ var TaskItemRow = class {
     const isParent = task.childrenIds.length > 0;
     const isCollapsed = (_b = this.collapsed) != null ? _b : false;
     if (isParent) {
-      const toggle = this.el.createSpan({ cls: "task-bujo-subtask-toggle" });
+      const toggle = this.el.createSpan({ cls: "friday-subtask-toggle" });
       toggle.textContent = isCollapsed ? "\u25B6" : "\u25BC";
       toggle.addEventListener("click", (e) => {
         var _a2;
@@ -4813,7 +4839,7 @@ var TaskItemRow = class {
     const checkbox = this.el.createEl("input", { type: "checkbox" });
     checkbox.checked = task.status === "x" /* Done */;
     checkbox.disabled = task.status === ">" /* Migrated */ || task.status === "-" /* Cancelled */;
-    checkbox.addClass("task-bujo-checkbox");
+    checkbox.addClass("friday-checkbox");
     checkbox.addEventListener("change", () => {
       this.callbacks.onToggle(task);
     });
@@ -4824,22 +4850,22 @@ var TaskItemRow = class {
     if (meta.priority !== "none" /* None */) {
       this.el.appendChild(createPriorityDot(meta.priority));
     }
-    const textSpan = this.el.createSpan({ cls: "task-bujo-task-text" });
+    const textSpan = this.el.createSpan({ cls: "friday-task-text" });
     textSpan.textContent = task.text;
     if (task.status === "x" /* Done */ || task.status === "-" /* Cancelled */) {
-      textSpan.addClass("task-bujo-task-done");
+      textSpan.addClass("friday-task-done");
     }
     if (task.status === ">" /* Migrated */) {
-      textSpan.addClass("task-bujo-task-migrated");
+      textSpan.addClass("friday-task-migrated");
     }
     if (task.description) {
-      const descToggle = this.el.createSpan({ cls: "task-bujo-desc-toggle" });
+      const descToggle = this.el.createSpan({ cls: "friday-desc-toggle" });
       descToggle.textContent = "\u2026";
       descToggle.setAttribute("title", "Show/hide description");
     }
     if (isParent && isCollapsed && callbacks.getTaskById) {
       const progress = getChildProgress(task, callbacks.getTaskById);
-      const badge = this.el.createSpan({ cls: "task-bujo-subtask-progress" });
+      const badge = this.el.createSpan({ cls: "friday-subtask-progress" });
       badge.textContent = `${progress.completed}/${progress.total}`;
     }
     if (meta.dueDate) {
@@ -4855,16 +4881,16 @@ var TaskItemRow = class {
     this.el.appendChild(sourceEl);
     if (task.description) {
       const descEl = this.el.createDiv({
-        cls: "task-bujo-task-description task-bujo-task-description-hidden"
+        cls: "friday-task-description friday-task-description-hidden"
       });
       descEl.textContent = task.description;
-      const toggle = this.el.querySelector(".task-bujo-desc-toggle");
+      const toggle = this.el.querySelector(".friday-desc-toggle");
       if (toggle) {
         toggle.addEventListener("click", (e) => {
           e.stopPropagation();
           descEl.toggleClass(
-            "task-bujo-task-description-hidden",
-            !descEl.hasClass("task-bujo-task-description-hidden")
+            "friday-task-description-hidden",
+            !descEl.hasClass("friday-task-description-hidden")
           );
         });
       }
@@ -4885,7 +4911,7 @@ var TaskList = class {
     this.allTasks = allTasks;
     this.collapsedTasks = /* @__PURE__ */ new Set();
     this.taskByIdMap = /* @__PURE__ */ new Map();
-    this.el = container.createDiv({ cls: "task-bujo-task-list" });
+    this.el = container.createDiv({ cls: "friday-task-list" });
     this.buildLookup();
     this.setupCallbacks();
     this.render();
@@ -4924,7 +4950,7 @@ var TaskList = class {
     this.el.empty();
     if (this.groupedTasks.size === 0) {
       this.el.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: "No tasks found"
       });
       return;
@@ -4972,7 +4998,7 @@ var DailyView = class {
     this.settings = settings;
     this.callbacks = callbacks;
     this.searchQuery = searchQuery;
-    this.el = container.createDiv({ cls: "task-bujo-daily-view" });
+    this.el = container.createDiv({ cls: "friday-daily-view" });
   }
   render() {
     this.el.empty();
@@ -5016,9 +5042,9 @@ var DailyView = class {
         pendingCount++;
       }
     }
-    const header = this.el.createDiv({ cls: "task-bujo-view-header" });
+    const header = this.el.createDiv({ cls: "friday-view-header" });
     header.createSpan({ text: `Daily Log \u2014 ${formatDateDisplay(today)}` });
-    header.createSpan({ cls: "task-bujo-pending-count", text: ` (${pendingCount} pending)` });
+    header.createSpan({ cls: "friday-pending-count", text: ` (${pendingCount} pending)` });
     const sections = [
       ["Overdue", overdue],
       ["Carried Over", carriedOver],
@@ -5028,10 +5054,10 @@ var DailyView = class {
       ["Upcoming", upcoming]
     ];
     for (const [label, items] of sections) {
-      const sectionEl = this.el.createDiv({ cls: "task-bujo-section" });
-      sectionEl.createEl("h4", { cls: "task-bujo-section-header", text: label });
+      const sectionEl = this.el.createDiv({ cls: "friday-section" });
+      sectionEl.createEl("h4", { cls: "friday-section-header", text: label });
       if (items.length === 0) {
-        sectionEl.createDiv({ cls: "task-bujo-muted", text: "No tasks" });
+        sectionEl.createDiv({ cls: "friday-muted", text: "No tasks" });
       } else {
         const grouped = /* @__PURE__ */ new Map();
         grouped.set(label, items);
@@ -5053,7 +5079,7 @@ var WeeklyView = class {
     this.callbacks = callbacks;
     this.searchQuery = searchQuery;
     this.collapsedTasks = /* @__PURE__ */ new Set();
-    this.el = container.createDiv({ cls: "task-bujo-weekly-view" });
+    this.el = container.createDiv({ cls: "friday-weekly-view" });
     this.hierarchyCallbacks = {
       ...callbacks,
       getTaskById: (id) => store.getTaskById(id),
@@ -5072,7 +5098,7 @@ var WeeklyView = class {
     this.el.empty();
     const days = getWeekDays(/* @__PURE__ */ new Date());
     const now = /* @__PURE__ */ new Date();
-    const header = this.el.createDiv({ cls: "task-bujo-view-header" });
+    const header = this.el.createDiv({ cls: "friday-view-header" });
     header.createSpan({ text: `Weekly Log \u2014 Week of ${formatDateDisplay(days[0])}` });
     const weekEnd = new Date(days[6]);
     weekEnd.setHours(23, 59, 59, 999);
@@ -5092,26 +5118,26 @@ var WeeklyView = class {
       byDay.get(key).push(t);
     }
     for (const day of days) {
-      const daySection = this.el.createDiv({ cls: "task-bujo-week-day" });
-      const dayHeader = daySection.createDiv({ cls: "task-bujo-day-header" });
+      const daySection = this.el.createDiv({ cls: "friday-week-day" });
+      const dayHeader = daySection.createDiv({ cls: "friday-day-header" });
       dayHeader.createSpan({ text: formatDateDisplay(day) });
       if (isToday(day, now)) {
-        dayHeader.createSpan({ cls: "task-bujo-today-badge", text: "(Today)" });
+        dayHeader.createSpan({ cls: "friday-today-badge", text: "(Today)" });
       }
       const dayTasks = (_a = byDay.get(day.toDateString())) != null ? _a : [];
       if (dayTasks.length === 0) {
-        daySection.createDiv({ cls: "task-bujo-muted", text: "No tasks" });
+        daySection.createDiv({ cls: "friday-muted", text: "No tasks" });
         continue;
       }
       const doneCount = dayTasks.filter((t) => t.status === "x" /* Done */).length;
       const total = dayTasks.length;
       const pct = total > 0 ? Math.round(doneCount / total * 100) : 0;
-      const progressRow = daySection.createDiv({ cls: "task-bujo-progress-row" });
-      progressRow.createSpan({ cls: "task-bujo-day-count", text: `${doneCount}/${total} done` });
-      const barOuter = progressRow.createDiv({ cls: "task-bujo-progress-bar" });
-      const barInner = barOuter.createDiv({ cls: "task-bujo-progress-fill" });
+      const progressRow = daySection.createDiv({ cls: "friday-progress-row" });
+      progressRow.createSpan({ cls: "friday-day-count", text: `${doneCount}/${total} done` });
+      const barOuter = progressRow.createDiv({ cls: "friday-progress-bar" });
+      const barInner = barOuter.createDiv({ cls: "friday-progress-fill" });
       barInner.style.width = `${pct}%`;
-      const taskContainer = daySection.createDiv({ cls: "task-bujo-day-tasks" });
+      const taskContainer = daySection.createDiv({ cls: "friday-day-tasks" });
       for (const task of dayTasks) {
         this.renderTaskTree(taskContainer, task);
       }
@@ -5146,7 +5172,7 @@ var MonthlyView = class {
     this.getData = getData;
     this.onSaveSnapshot = onSaveSnapshot;
     this.collapsedGroups = collapsedGroups;
-    this.el = container.createDiv({ cls: "task-bujo-monthly" });
+    this.el = container.createDiv({ cls: "friday-monthly" });
     this.selectedMonth = /* @__PURE__ */ new Date();
   }
   render() {
@@ -5159,21 +5185,21 @@ var MonthlyView = class {
     this.renderHistory();
   }
   renderHeader(_monthId) {
-    const header = this.el.createDiv({ cls: "task-bujo-monthly-header" });
-    const nav = header.createDiv({ cls: "task-bujo-monthly-nav" });
-    const prevBtn = nav.createEl("button", { cls: "task-bujo-btn task-bujo-monthly-nav-btn", text: "\u2039" });
+    const header = this.el.createDiv({ cls: "friday-monthly-header" });
+    const nav = header.createDiv({ cls: "friday-monthly-nav" });
+    const prevBtn = nav.createEl("button", { cls: "friday-btn friday-monthly-nav-btn", text: "\u2039" });
     prevBtn.addEventListener("click", () => {
       this.selectedMonth = getPreviousMonth(this.selectedMonth);
       this.render();
     });
     nav.createEl("h3", { text: formatMonthDisplay(this.selectedMonth) });
-    const nextBtn = nav.createEl("button", { cls: "task-bujo-btn task-bujo-monthly-nav-btn", text: "\u203A" });
+    const nextBtn = nav.createEl("button", { cls: "friday-btn friday-monthly-nav-btn", text: "\u203A" });
     nextBtn.addEventListener("click", () => {
       this.selectedMonth = getNextMonth(this.selectedMonth);
       this.render();
     });
     const saveBtn = header.createEl("button", {
-      cls: "task-bujo-analytics-save-btn",
+      cls: "friday-analytics-save-btn",
       text: "Save Snapshot"
     });
     saveBtn.addEventListener("click", async () => {
@@ -5190,7 +5216,7 @@ var MonthlyView = class {
     });
   }
   renderStats(stats) {
-    const section = this.el.createDiv({ cls: "task-bujo-analytics-summary" });
+    const section = this.el.createDiv({ cls: "friday-analytics-summary" });
     const cards = [
       { label: "Planned", value: String(stats.totalPlanned) },
       { label: "Completed", value: String(stats.totalCompleted), cls: "done" },
@@ -5198,13 +5224,13 @@ var MonthlyView = class {
       { label: "Migrated", value: String(stats.totalMigrated), cls: "migrated" }
     ];
     for (const card of cards) {
-      const cardEl = section.createDiv({ cls: `task-bujo-analytics-card ${card.cls || ""}` });
-      cardEl.createDiv({ cls: "task-bujo-analytics-card-value", text: card.value });
-      cardEl.createDiv({ cls: "task-bujo-analytics-card-label", text: card.label });
+      const cardEl = section.createDiv({ cls: `friday-analytics-card ${card.cls || ""}` });
+      cardEl.createDiv({ cls: "friday-analytics-card-value", text: card.value });
+      cardEl.createDiv({ cls: "friday-analytics-card-label", text: card.label });
     }
   }
   renderTasks(monthId) {
-    const section = this.el.createDiv({ cls: "task-bujo-monthly-tasks" });
+    const section = this.el.createDiv({ cls: "friday-monthly-tasks" });
     section.createEl("h4", { text: "Tasks" });
     const monthlyNotePath = `${this.settings.monthlyNotePath}/${monthId}.md`;
     let tasks = this.store.getTasks().filter(
@@ -5215,7 +5241,7 @@ var MonthlyView = class {
     }
     tasks = this.store.filterCompleted(tasks, this.settings.showCompletedTasks);
     if (tasks.length === 0) {
-      section.createDiv({ cls: "task-bujo-empty", text: "No tasks for this month" });
+      section.createDiv({ cls: "friday-empty", text: "No tasks for this month" });
       return;
     }
     const grouped = /* @__PURE__ */ new Map([["Monthly Tasks", tasks]]);
@@ -5225,10 +5251,10 @@ var MonthlyView = class {
     const history = this.getData().monthlyHistory;
     if (history.length === 0)
       return;
-    const section = this.el.createDiv({ cls: "task-bujo-analytics-trends" });
+    const section = this.el.createDiv({ cls: "friday-analytics-trends" });
     section.createEl("h4", { text: "Monthly Trends" });
     const recent = history.slice(-6);
-    const table = section.createEl("table", { cls: "task-bujo-analytics-trend-table" });
+    const table = section.createEl("table", { cls: "friday-analytics-trend-table" });
     const thead = table.createEl("thead");
     const headerRow = thead.createEl("tr");
     for (const h of ["Month", "Planned", "Done", "Rate"]) {
@@ -5270,31 +5296,31 @@ function computeDaysSince(isoDate) {
 }
 function renderTopicCard(container, topic, opts) {
   var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
-  const card = container.createDiv({ cls: "task-bujo-kanban-card" });
+  const card = container.createDiv({ cls: "friday-kanban-card" });
   if (opts.draggable) {
     card.draggable = true;
     card.dataset.filepath = topic.filePath;
     card.addEventListener("dragstart", (e) => {
       if (opts.isDragging)
         opts.isDragging.value = true;
-      card.addClass("task-bujo-kanban-card-dragging");
+      card.addClass("friday-kanban-card-dragging");
       if (e.dataTransfer) {
         e.dataTransfer.setData("text/plain", topic.filePath);
         e.dataTransfer.effectAllowed = "move";
       }
     });
     card.addEventListener("dragend", () => {
-      card.removeClass("task-bujo-kanban-card-dragging");
+      card.removeClass("friday-kanban-card-dragging");
       if (opts.isDragging)
         opts.isDragging.value = false;
     });
   }
-  const headerEl = card.createDiv({ cls: "task-bujo-kanban-card-header" });
+  const headerEl = card.createDiv({ cls: "friday-kanban-card-header" });
   if (topic.priority !== "none" /* None */) {
-    const dot = headerEl.createSpan({ cls: "task-bujo-priority-dot" });
-    dot.addClass(`task-bujo-priority-${topic.priority}`);
+    const dot = headerEl.createSpan({ cls: "friday-priority-dot" });
+    dot.addClass(`friday-priority-${topic.priority}`);
   }
-  const titleEl = headerEl.createSpan({ cls: "task-bujo-kanban-card-title", text: topic.title });
+  const titleEl = headerEl.createSpan({ cls: "friday-kanban-card-title", text: topic.title });
   if (opts.onTitleClick) {
     titleEl.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -5302,45 +5328,45 @@ function renderTopicCard(container, topic, opts) {
     });
   }
   if (topic.blocked) {
-    headerEl.createSpan({ cls: "task-bujo-kanban-card-blocked", text: "BLOCKED" });
+    headerEl.createSpan({ cls: "friday-kanban-card-blocked", text: "BLOCKED" });
   }
   for (const key of topic.jira) {
     const lookup = (_a = opts.jiraLookup) == null ? void 0 : _a.call(opts, key);
     const info = (_b = lookup == null ? void 0 : lookup.info) != null ? _b : null;
     const loading = (_c = lookup == null ? void 0 : lookup.loading) != null ? _c : false;
     const error = (_d = lookup == null ? void 0 : lookup.error) != null ? _d : null;
-    const jiraRow = card.createDiv({ cls: "task-bujo-kanban-card-jira-row" });
-    const keyEl = jiraRow.createSpan({ cls: "task-bujo-kanban-card-jira", text: key });
+    const jiraRow = card.createDiv({ cls: "friday-kanban-card-jira-row" });
+    const keyEl = jiraRow.createSpan({ cls: "friday-kanban-card-jira", text: key });
     if (info == null ? void 0 : info.issueUrl) {
-      keyEl.addClass("task-bujo-clickable");
+      keyEl.addClass("friday-clickable");
       keyEl.addEventListener("click", (e) => {
         e.stopPropagation();
         window.open(info.issueUrl, "_blank");
       });
     }
     if (loading) {
-      jiraRow.createSpan({ cls: "task-bujo-jira-chip task-bujo-jira-loading", text: "\u2026" });
+      jiraRow.createSpan({ cls: "friday-jira-chip friday-jira-loading", text: "\u2026" });
     } else if (error) {
       const errEl = jiraRow.createSpan({
-        cls: "task-bujo-jira-chip task-bujo-jira-error",
+        cls: "friday-jira-chip friday-jira-error",
         text: "!"
       });
       errEl.setAttribute("title", `JIRA fetch failed: ${error}`);
     } else if (info) {
       const statusEl = jiraRow.createSpan({
-        cls: `task-bujo-jira-chip task-bujo-jira-status task-bujo-jira-status-${info.statusCategory}`,
+        cls: `friday-jira-chip friday-jira-status friday-jira-status-${info.statusCategory}`,
         text: info.status
       });
       statusEl.setAttribute("title", `JIRA status: ${info.status}`);
       const assigneeLabel = (_e = info.assignee) != null ? _e : "Unassigned";
       const assigneeEl = jiraRow.createSpan({
-        cls: "task-bujo-jira-chip task-bujo-jira-assignee",
+        cls: "friday-jira-chip friday-jira-assignee",
         text: assigneeLabel
       });
       assigneeEl.setAttribute("title", info.assignee ? `Assignee: ${info.assignee}` : "Unassigned");
       if (info.summary) {
         const summaryEl = card.createDiv({
-          cls: "task-bujo-kanban-card-jira-summary",
+          cls: "friday-kanban-card-jira-summary",
           text: info.summary
         });
         summaryEl.setAttribute("title", info.summary);
@@ -5356,16 +5382,16 @@ function renderTopicCard(container, topic, opts) {
     if (topic.dueDate)
       chips.push(`Due: ${topic.dueDate}`);
     if (chips.length > 0) {
-      card.createDiv({ cls: "task-bujo-kanban-card-meta", text: chips.join(" \u2022 ") });
+      card.createDiv({ cls: "friday-kanban-card-meta", text: chips.join(" \u2022 ") });
     }
   }
   if (topic.assignee) {
     const lookup = (_g = (_f = opts.assigneeLookup) == null ? void 0 : _f.call(opts, topic.assignee)) != null ? _g : null;
     const label = (_h = lookup == null ? void 0 : lookup.label) != null ? _h : topic.assignee;
-    const chip = card.createDiv({ cls: "task-bujo-kanban-card-assignee" });
+    const chip = card.createDiv({ cls: "friday-kanban-card-assignee" });
     chip.setText(label);
     if (!lookup || lookup.isInactive) {
-      chip.addClass("task-bujo-kanban-card-assignee-stale");
+      chip.addClass("friday-kanban-card-assignee-stale");
     }
     chip.setAttribute("title", lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
   }
@@ -5376,21 +5402,21 @@ function renderTopicCard(container, topic, opts) {
     const daysSinceNudge = computeDaysSince(topic.lastNudged);
     const threshold = (_l = opts.nudgeThresholdDays) != null ? _l : 7;
     const suffix = topic.lastNudged === null ? " \xB7 never nudged" : daysSinceNudge !== null ? ` \xB7 ${daysSinceNudge}d` : "";
-    const chip = card.createDiv({ cls: "task-bujo-kanban-card-waiting" });
+    const chip = card.createDiv({ cls: "friday-kanban-card-waiting" });
     chip.setText(`\u23F3 ${label}${suffix}`);
     const isStale = topic.lastNudged === null || daysSinceNudge !== null && daysSinceNudge > threshold;
     if (isStale)
-      chip.addClass("task-bujo-kanban-card-waiting-stale");
+      chip.addClass("friday-kanban-card-waiting-stale");
     chip.setAttribute("title", `Waiting on: ${label}${suffix}`);
   }
   if (topic.linkedPages.length > 0) {
     const linksText = topic.linkedPages.map((p) => `[[${p}]]`).join(", ");
-    card.createDiv({ cls: "task-bujo-kanban-card-links", text: linksText });
+    card.createDiv({ cls: "friday-kanban-card-links", text: linksText });
   }
   if (topic.refs.length > 0) {
-    const refsRow = card.createDiv({ cls: "task-bujo-kanban-card-refs" });
+    const refsRow = card.createDiv({ cls: "friday-kanban-card-refs" });
     for (const ref of topic.refs) {
-      const chip = refsRow.createSpan({ cls: "task-bujo-kanban-card-ref-chip" });
+      const chip = refsRow.createSpan({ cls: "friday-kanban-card-ref-chip" });
       chip.setText(`${ref.label} \u2197`);
       chip.setAttribute("title", ref.url);
       chip.addEventListener("click", (e) => {
@@ -5400,13 +5426,13 @@ function renderTopicCard(container, topic, opts) {
     }
   }
   if (topic.taskTotal > 0) {
-    const progressDiv = card.createDiv({ cls: "task-bujo-kanban-card-progress" });
-    const barOuter = progressDiv.createDiv({ cls: "task-bujo-progress-bar" });
-    const barInner = barOuter.createDiv({ cls: "task-bujo-progress-fill" });
+    const progressDiv = card.createDiv({ cls: "friday-kanban-card-progress" });
+    const barOuter = progressDiv.createDiv({ cls: "friday-progress-bar" });
+    const barInner = barOuter.createDiv({ cls: "friday-progress-fill" });
     const pct = Math.round(topic.taskDone / topic.taskTotal * 100);
     barInner.style.width = `${pct}%`;
     progressDiv.createSpan({
-      cls: "task-bujo-progress-text",
+      cls: "friday-progress-text",
       text: `${topic.taskDone}/${topic.taskTotal} tasks`
     });
   }
@@ -5414,7 +5440,7 @@ function renderTopicCard(container, topic, opts) {
   const wantsStatusButtons = opts.onStatusChange && (transitions.left || transitions.right);
   const wantsBlockedButton = opts.onBlockedToggle !== void 0;
   if (wantsStatusButtons || wantsBlockedButton) {
-    const actionsDiv = card.createDiv({ cls: "task-bujo-kanban-card-actions" });
+    const actionsDiv = card.createDiv({ cls: "friday-kanban-card-actions" });
     if (wantsStatusButtons && transitions.left) {
       const leftBtn = actionsDiv.createEl("button", { text: "\u2190" });
       leftBtn.setAttribute("title", `Move to ${STATUS_LABELS[transitions.left]}`);
@@ -5434,7 +5460,7 @@ function renderTopicCard(container, topic, opts) {
     if (wantsBlockedButton) {
       const blockedBtn = actionsDiv.createEl("button", {
         text: topic.blocked ? "\u26A0 Unblock" : "\u26A0",
-        cls: topic.blocked ? "task-bujo-kanban-blocked-active" : ""
+        cls: topic.blocked ? "friday-kanban-blocked-active" : ""
       });
       blockedBtn.setAttribute("title", topic.blocked ? "Remove blocked flag" : "Flag as blocked");
       blockedBtn.addEventListener("click", (e) => {
@@ -5474,7 +5500,7 @@ var SprintView = class {
     this.isDragging = isDragging;
     this.searchQuery = searchQuery;
     this.jiraService = jiraService;
-    this.el = container.createDiv({ cls: "task-bujo-sprint-view" });
+    this.el = container.createDiv({ cls: "friday-sprint-view" });
   }
   render() {
     this.el.empty();
@@ -5486,10 +5512,10 @@ var SprintView = class {
     this.renderSprint(activeSprint);
   }
   renderNoSprint() {
-    const empty = this.el.createDiv({ cls: "task-bujo-sprint-empty" });
+    const empty = this.el.createDiv({ cls: "friday-sprint-empty" });
     empty.createDiv({ text: "No active sprint" });
     const btn = empty.createEl("button", {
-      cls: "task-bujo-btn",
+      cls: "friday-btn",
       text: "Create Sprint"
     });
     btn.addEventListener("click", () => this.onNewSprint());
@@ -5507,28 +5533,28 @@ var SprintView = class {
       daysRemaining = Math.max(0, Math.ceil((endDate.getTime() - today.getTime()) / 864e5));
       dayLabel = "d";
     }
-    const header = this.el.createDiv({ cls: "task-bujo-sprint-header" });
-    const headerInfo = header.createDiv({ cls: "task-bujo-sprint-header-info" });
-    const nameEl = headerInfo.createSpan({ cls: "task-bujo-sprint-name", text: sprint.name });
+    const header = this.el.createDiv({ cls: "friday-sprint-header" });
+    const headerInfo = header.createDiv({ cls: "friday-sprint-header-info" });
+    const nameEl = headerInfo.createSpan({ cls: "friday-sprint-name", text: sprint.name });
     nameEl.setAttribute("title", "Click to edit sprint");
     nameEl.style.cursor = "pointer";
     nameEl.addEventListener("click", () => this.onEditSprint(sprint));
     headerInfo.createSpan({
-      cls: "task-bujo-sprint-dates",
+      cls: "friday-sprint-dates",
       text: ` ${startDate.toLocaleDateString()} \u2013 ${endDate.toLocaleDateString()}`
     });
     headerInfo.createSpan({
-      cls: "task-bujo-sprint-remaining",
+      cls: "friday-sprint-remaining",
       text: ` \xB7 ${daysRemaining} ${dayLabel} remaining`
     });
     const editBtn = headerInfo.createEl("button", {
-      cls: "task-bujo-btn task-bujo-sprint-edit-btn",
+      cls: "friday-btn friday-sprint-edit-btn",
       text: "Edit"
     });
     editBtn.setAttribute("title", "Edit sprint name and dates");
     editBtn.addEventListener("click", () => this.onEditSprint(sprint));
     const addTopicBtn = header.createEl("button", {
-      cls: "task-bujo-btn",
+      cls: "friday-btn",
       text: "+ Topic"
     });
     addTopicBtn.addEventListener("click", () => this.onNewTopic());
@@ -5540,19 +5566,19 @@ var SprintView = class {
       );
     }
     this.prefetchJiraKeys(filteredTopics);
-    const board = this.el.createDiv({ cls: "task-bujo-kanban" });
+    const board = this.el.createDiv({ cls: "friday-kanban" });
     for (const col of COLUMNS) {
       const columnTopics = filteredTopics.filter((t) => t.status === col.status).sort((a, b) => this.sortTopics(a, b));
       this.renderColumn(board, col.status, col.label, columnTopics);
     }
-    const actions = this.el.createDiv({ cls: "task-bujo-sprint-actions" });
+    const actions = this.el.createDiv({ cls: "friday-sprint-actions" });
     const endBtn = actions.createEl("button", {
-      cls: "task-bujo-btn task-bujo-btn-warning",
+      cls: "friday-btn friday-btn-warning",
       text: "End Sprint"
     });
     endBtn.addEventListener("click", () => this.onEndSprint(sprint));
     const newBtn = actions.createEl("button", {
-      cls: "task-bujo-btn",
+      cls: "friday-btn",
       text: "New Sprint"
     });
     newBtn.addEventListener("click", () => this.onNewSprint());
@@ -5568,25 +5594,25 @@ var SprintView = class {
     return ((_a = PRIORITY_ORDER[a.priority]) != null ? _a : 3) - ((_b = PRIORITY_ORDER[b.priority]) != null ? _b : 3);
   }
   renderColumn(board, status, label, topics) {
-    const column = board.createDiv({ cls: "task-bujo-kanban-column" });
+    const column = board.createDiv({ cls: "friday-kanban-column" });
     column.dataset.status = status;
-    const headerEl = column.createDiv({ cls: "task-bujo-kanban-column-header" });
+    const headerEl = column.createDiv({ cls: "friday-kanban-column-header" });
     headerEl.createSpan({ text: label });
-    headerEl.createSpan({ cls: "task-bujo-kanban-column-count", text: `${topics.length}` });
-    const body = column.createDiv({ cls: "task-bujo-kanban-column-body" });
+    headerEl.createSpan({ cls: "friday-kanban-column-count", text: `${topics.length}` });
+    const body = column.createDiv({ cls: "friday-kanban-column-body" });
     body.addEventListener("dragover", (e) => {
       e.preventDefault();
       if (e.dataTransfer)
         e.dataTransfer.dropEffect = "move";
-      body.addClass("task-bujo-kanban-column-dragover");
+      body.addClass("friday-kanban-column-dragover");
     });
     body.addEventListener("dragleave", () => {
-      body.removeClass("task-bujo-kanban-column-dragover");
+      body.removeClass("friday-kanban-column-dragover");
     });
     body.addEventListener("drop", async (e) => {
       var _a;
       e.preventDefault();
-      body.removeClass("task-bujo-kanban-column-dragover");
+      body.removeClass("friday-kanban-column-dragover");
       const filePath = (_a = e.dataTransfer) == null ? void 0 : _a.getData("text/plain");
       if (!filePath)
         return;
@@ -5616,7 +5642,7 @@ var SprintView = class {
       });
     }
     if (topics.length === 0) {
-      body.createDiv({ cls: "task-bujo-kanban-empty", text: "No topics" });
+      body.createDiv({ cls: "friday-kanban-empty", text: "No topics" });
     }
   }
   /** Kick off a prefetch for every JIRA key on every visible topic. No-op if module disabled. */
@@ -5695,28 +5721,28 @@ var TopicsOverviewView = class {
     this.scope = "all";
     /** 'all' | 'unassigned' | team member email. Persists across re-renders of this view instance. */
     this.assigneeFilter = "all";
-    this.el = container.createDiv({ cls: "task-bujo-topics-overview" });
+    this.el = container.createDiv({ cls: "friday-topics-overview" });
   }
   render() {
     this.el.empty();
-    const header = this.el.createDiv({ cls: "task-bujo-topics-header" });
-    const modeGroup = header.createDiv({ cls: "task-bujo-topics-modeswitch" });
+    const header = this.el.createDiv({ cls: "friday-topics-header" });
+    const modeGroup = header.createDiv({ cls: "friday-topics-modeswitch" });
     this.renderModeButton(modeGroup, "list", "List");
     this.renderModeButton(modeGroup, "impactEffort", "Impact / Effort");
     this.renderModeButton(modeGroup, "eisenhower", "Eisenhower");
-    const scopeGroup = header.createDiv({ cls: "task-bujo-topics-scope" });
+    const scopeGroup = header.createDiv({ cls: "friday-topics-scope" });
     this.renderScopeButton(scopeGroup, "all", "All");
     this.renderScopeButton(scopeGroup, "active", "Active sprint");
     this.renderScopeButton(scopeGroup, "backlog", "Backlog");
     this.renderScopeButton(scopeGroup, "archived", "Archived");
     this.renderAssigneeFilter(header);
-    const newBtn = header.createEl("button", { cls: "task-bujo-btn", text: "+ Topic" });
+    const newBtn = header.createEl("button", { cls: "friday-btn", text: "+ Topic" });
     newBtn.addEventListener("click", () => this.onNewTopic());
     const filtered = this.applyFilters(this.topics);
     this.prefetchJiraKeys(filtered);
-    const body = this.el.createDiv({ cls: "task-bujo-topics-body" });
+    const body = this.el.createDiv({ cls: "friday-topics-body" });
     if (filtered.length === 0) {
-      body.createDiv({ cls: "task-bujo-empty", text: "No topics match the current filter." });
+      body.createDiv({ cls: "friday-empty", text: "No topics match the current filter." });
       return;
     }
     switch (this.subMode) {
@@ -5733,11 +5759,11 @@ var TopicsOverviewView = class {
   }
   renderModeButton(parent, mode, label) {
     const btn = parent.createEl("button", {
-      cls: "task-bujo-topics-modebtn",
+      cls: "friday-topics-modebtn",
       text: label
     });
     if (mode === this.subMode)
-      btn.addClass("task-bujo-topics-modebtn-active");
+      btn.addClass("friday-topics-modebtn-active");
     btn.addEventListener("click", () => {
       this.subMode = mode;
       this.render();
@@ -5745,11 +5771,11 @@ var TopicsOverviewView = class {
   }
   renderScopeButton(parent, scope, label) {
     const btn = parent.createEl("button", {
-      cls: "task-bujo-topics-scopebtn",
+      cls: "friday-topics-scopebtn",
       text: label
     });
     if (scope === this.scope)
-      btn.addClass("task-bujo-topics-scopebtn-active");
+      btn.addClass("friday-topics-scopebtn-active");
     btn.addEventListener("click", () => {
       this.scope = scope;
       this.render();
@@ -5764,8 +5790,8 @@ var TopicsOverviewView = class {
     const active = ((_a = this.settings.teamMembers) != null ? _a : []).filter((m) => m.active);
     if (active.length === 0)
       return;
-    const wrapper = parent.createDiv({ cls: "task-bujo-topics-assigneefilter" });
-    const select = wrapper.createEl("select", { cls: "task-bujo-topics-assignee-select" });
+    const wrapper = parent.createDiv({ cls: "friday-topics-assigneefilter" });
+    const select = wrapper.createEl("select", { cls: "friday-topics-assignee-select" });
     const addOpt = (value, label, disabled = false) => {
       const opt = select.createEl("option", { text: label });
       opt.value = value;
@@ -5839,7 +5865,7 @@ var TopicsOverviewView = class {
     const backlog = topics.filter((t) => !t.sprintId);
     const assigned = topics.filter((t) => !!t.sprintId);
     const sections = [
-      { label: "Backlog", cls: "task-bujo-topics-list-backlog", topics: backlog, dropAction: { kind: "moveToBacklog" } },
+      { label: "Backlog", cls: "friday-topics-list-backlog", topics: backlog, dropAction: { kind: "moveToBacklog" } },
       { label: "Open", cls: "", topics: assigned.filter((t) => t.status === "open"), dropAction: { kind: "setStatus", status: "open" } },
       { label: "In Progress", cls: "", topics: assigned.filter((t) => t.status === "in-progress"), dropAction: { kind: "setStatus", status: "in-progress" } },
       { label: "Done", cls: "", topics: assigned.filter((t) => t.status === "done"), dropAction: { kind: "setStatus", status: "done" } }
@@ -5847,15 +5873,15 @@ var TopicsOverviewView = class {
     for (const { label, cls, topics: group, dropAction } of sections) {
       if (group.length === 0 && label === "Backlog" && this.scope === "active")
         continue;
-      const sectionCls = cls ? `task-bujo-topics-list-section ${cls}` : "task-bujo-topics-list-section";
+      const sectionCls = cls ? `friday-topics-list-section ${cls}` : "friday-topics-list-section";
       const section = parent.createDiv({ cls: sectionCls });
-      const headerEl = section.createDiv({ cls: "task-bujo-topics-list-header" });
+      const headerEl = section.createDiv({ cls: "friday-topics-list-header" });
       headerEl.createSpan({ text: label });
-      headerEl.createSpan({ cls: "task-bujo-topics-list-count", text: `${group.length}` });
-      const cardGrid = section.createDiv({ cls: "task-bujo-topics-list-grid" });
+      headerEl.createSpan({ cls: "friday-topics-list-count", text: `${group.length}` });
+      const cardGrid = section.createDiv({ cls: "friday-topics-list-grid" });
       this.wireDropZone(cardGrid, dropAction);
       if (group.length === 0) {
-        section.createDiv({ cls: "task-bujo-empty", text: "No topics" });
+        section.createDiv({ cls: "friday-empty", text: "No topics" });
         continue;
       }
       const sorted = [...group].sort((a, b) => this.sortByPriorityImpact(a, b));
@@ -5870,15 +5896,15 @@ var TopicsOverviewView = class {
       e.preventDefault();
       if (e.dataTransfer)
         e.dataTransfer.dropEffect = "move";
-      zone.addClass("task-bujo-topics-list-dropzone-active");
+      zone.addClass("friday-topics-list-dropzone-active");
     });
     zone.addEventListener("dragleave", () => {
-      zone.removeClass("task-bujo-topics-list-dropzone-active");
+      zone.removeClass("friday-topics-list-dropzone-active");
     });
     zone.addEventListener("drop", async (e) => {
       var _a;
       e.preventDefault();
-      zone.removeClass("task-bujo-topics-list-dropzone-active");
+      zone.removeClass("friday-topics-list-dropzone-active");
       const filePath = (_a = e.dataTransfer) == null ? void 0 : _a.getData("text/plain");
       if (!filePath)
         return;
@@ -5938,16 +5964,16 @@ var TopicsOverviewView = class {
         timeSinks.push(topic);
     }
     const quadrants = [
-      { key: "quickwins", title: "\u{1F3AF} Quick Wins", subtitle: "High Impact + Small Effort \u2014 Do these first", cls: "task-bujo-topicmx-quickwins", topics: quickWins },
-      { key: "bigbets", title: "\u{1F680} Big Bets", subtitle: "High Impact + Med/Large Effort \u2014 Block deep work", cls: "task-bujo-topicmx-bigbets", topics: bigBets },
-      { key: "fillins", title: "\u{1F4CB} Fill-ins", subtitle: "Low Impact + Small Effort \u2014 Between meetings", cls: "task-bujo-topicmx-fillins", topics: fillIns },
-      { key: "timesinks", title: "\u26A0\uFE0F Time Sinks", subtitle: "Low Impact + Med/Large Effort \u2014 Rethink", cls: "task-bujo-topicmx-timesinks", topics: timeSinks }
+      { key: "quickwins", title: "\u{1F3AF} Quick Wins", subtitle: "High Impact + Small Effort \u2014 Do these first", cls: "friday-topicmx-quickwins", topics: quickWins },
+      { key: "bigbets", title: "\u{1F680} Big Bets", subtitle: "High Impact + Med/Large Effort \u2014 Block deep work", cls: "friday-topicmx-bigbets", topics: bigBets },
+      { key: "fillins", title: "\u{1F4CB} Fill-ins", subtitle: "Low Impact + Small Effort \u2014 Between meetings", cls: "friday-topicmx-fillins", topics: fillIns },
+      { key: "timesinks", title: "\u26A0\uFE0F Time Sinks", subtitle: "Low Impact + Med/Large Effort \u2014 Rethink", cls: "friday-topicmx-timesinks", topics: timeSinks }
     ];
-    const axisRow = parent.createDiv({ cls: "task-bujo-topicmx-axis-labels" });
+    const axisRow = parent.createDiv({ cls: "friday-topicmx-axis-labels" });
     axisRow.createDiv();
-    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Small Effort (xs, s)" });
-    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Medium / Large Effort (m, l, xl)" });
-    const grid = parent.createDiv({ cls: "task-bujo-topicmx-grid" });
+    axisRow.createDiv({ cls: "friday-topicmx-axis-label", text: "Small Effort (xs, s)" });
+    axisRow.createDiv({ cls: "friday-topicmx-axis-label", text: "Medium / Large Effort (m, l, xl)" });
+    const grid = parent.createDiv({ cls: "friday-topicmx-grid" });
     for (const q of quadrants) {
       this.renderQuadrant(grid, q);
     }
@@ -5955,7 +5981,7 @@ var TopicsOverviewView = class {
       key: "inbox",
       title: "\u{1F4E5} Inbox",
       subtitle: "Missing impact or effort \u2014 needs sizing",
-      cls: "task-bujo-topicmx-inbox",
+      cls: "friday-topicmx-inbox",
       topics: inbox
     });
   }
@@ -5983,16 +6009,16 @@ var TopicsOverviewView = class {
         q4.push(topic);
     }
     const quadrants = [
-      { key: "q1", title: "\u{1F525} Do Now", subtitle: "Urgent & Important", cls: "task-bujo-topicmx-q1", topics: q1 },
-      { key: "q2", title: "\u{1F3AF} Plan Deep Work", subtitle: "Important, Not Urgent", cls: "task-bujo-topicmx-q2", topics: q2 },
-      { key: "q3", title: "\u{1F91D} Coordinate", subtitle: "Urgent, Not Important", cls: "task-bujo-topicmx-q3", topics: q3 },
-      { key: "q4", title: "\u{1F4E6} Batch Later", subtitle: "Not Urgent, Not Important", cls: "task-bujo-topicmx-q4", topics: q4 }
+      { key: "q1", title: "\u{1F525} Do Now", subtitle: "Urgent & Important", cls: "friday-topicmx-q1", topics: q1 },
+      { key: "q2", title: "\u{1F3AF} Plan Deep Work", subtitle: "Important, Not Urgent", cls: "friday-topicmx-q2", topics: q2 },
+      { key: "q3", title: "\u{1F91D} Coordinate", subtitle: "Urgent, Not Important", cls: "friday-topicmx-q3", topics: q3 },
+      { key: "q4", title: "\u{1F4E6} Batch Later", subtitle: "Not Urgent, Not Important", cls: "friday-topicmx-q4", topics: q4 }
     ];
-    const axisRow = parent.createDiv({ cls: "task-bujo-topicmx-axis-labels" });
+    const axisRow = parent.createDiv({ cls: "friday-topicmx-axis-labels" });
     axisRow.createDiv();
-    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Urgent" });
-    axisRow.createDiv({ cls: "task-bujo-topicmx-axis-label", text: "Not Urgent" });
-    const grid = parent.createDiv({ cls: "task-bujo-topicmx-grid" });
+    axisRow.createDiv({ cls: "friday-topicmx-axis-label", text: "Urgent" });
+    axisRow.createDiv({ cls: "friday-topicmx-axis-label", text: "Not Urgent" });
+    const grid = parent.createDiv({ cls: "friday-topicmx-grid" });
     for (const q of quadrants) {
       this.renderQuadrant(grid, q);
     }
@@ -6000,7 +6026,7 @@ var TopicsOverviewView = class {
       key: "unscheduled",
       title: "Unscheduled",
       subtitle: "No due date \u2014 needs scheduling",
-      cls: "task-bujo-topicmx-inbox",
+      cls: "friday-topicmx-inbox",
       topics: unscheduled
     });
   }
@@ -6023,15 +6049,15 @@ var TopicsOverviewView = class {
   }
   // ── Shared helpers ────────────────────────────────────────────
   renderQuadrant(parent, quadrant) {
-    const el = parent.createDiv({ cls: `task-bujo-topicmx-quadrant ${quadrant.cls}` });
-    const header = el.createDiv({ cls: "task-bujo-topicmx-quadrant-header" });
+    const el = parent.createDiv({ cls: `friday-topicmx-quadrant ${quadrant.cls}` });
+    const header = el.createDiv({ cls: "friday-topicmx-quadrant-header" });
     const titleArea = header.createDiv();
-    titleArea.createDiv({ cls: "task-bujo-topicmx-quadrant-title", text: quadrant.title });
-    titleArea.createDiv({ cls: "task-bujo-topicmx-quadrant-subtitle", text: quadrant.subtitle });
-    header.createDiv({ cls: "task-bujo-topicmx-quadrant-count", text: String(quadrant.topics.length) });
-    const list = el.createDiv({ cls: "task-bujo-topicmx-quadrant-list" });
+    titleArea.createDiv({ cls: "friday-topicmx-quadrant-title", text: quadrant.title });
+    titleArea.createDiv({ cls: "friday-topicmx-quadrant-subtitle", text: quadrant.subtitle });
+    header.createDiv({ cls: "friday-topicmx-quadrant-count", text: String(quadrant.topics.length) });
+    const list = el.createDiv({ cls: "friday-topicmx-quadrant-list" });
     if (quadrant.topics.length === 0) {
-      list.createDiv({ cls: "task-bujo-empty", text: "No topics" });
+      list.createDiv({ cls: "friday-empty", text: "No topics" });
       return;
     }
     for (const topic of quadrant.topics) {
@@ -6056,7 +6082,7 @@ var TopicsOverviewView = class {
     });
     const lastCard = parent.lastElementChild;
     if (lastCard) {
-      const actions = lastCard.querySelector(".task-bujo-kanban-card-actions") || lastCard.createDiv({ cls: "task-bujo-kanban-card-actions" });
+      const actions = lastCard.querySelector(".friday-kanban-card-actions") || lastCard.createDiv({ cls: "friday-kanban-card-actions" });
       const editBtn = actions.createEl("button", { text: "Edit" });
       editBtn.setAttribute("title", "Edit topic details");
       editBtn.addEventListener("click", (e) => {
@@ -6131,22 +6157,22 @@ var OverviewView = class {
     this.searchQuery = searchQuery;
     this.collapsedGroups = collapsedGroups;
     this.activeSubView = "tasks";
-    this.el = container.createDiv({ cls: "task-bujo-overview-view" });
+    this.el = container.createDiv({ cls: "friday-overview-view" });
   }
   render() {
     this.el.empty();
-    const toggleBar = this.el.createDiv({ cls: "task-bujo-overview-toggle" });
+    const toggleBar = this.el.createDiv({ cls: "friday-overview-toggle" });
     const tabs = [
       { key: "tasks", label: "All Tasks" },
       { key: "openPoints", label: "Open Points" }
     ];
     for (const { key, label } of tabs) {
       const btn = toggleBar.createEl("button", {
-        cls: "task-bujo-overview-toggle-btn",
+        cls: "friday-overview-toggle-btn",
         text: label
       });
       if (key === this.activeSubView) {
-        btn.addClass("task-bujo-overview-toggle-active");
+        btn.addClass("friday-overview-toggle-active");
       }
       btn.addEventListener("click", () => {
         if (this.activeSubView !== key) {
@@ -6169,11 +6195,11 @@ var OverviewView = class {
       tasks = tasks.filter((t) => t.text.toLowerCase().includes(q));
     }
     const openCount = tasks.filter((t) => t.status === " " /* Open */).length;
-    const header = this.el.createDiv({ cls: "task-bujo-view-header" });
+    const header = this.el.createDiv({ cls: "friday-view-header" });
     header.createSpan({ text: "All Tasks" });
-    header.createSpan({ cls: "task-bujo-pending-count", text: ` (${openCount} open, ${tasks.length} total)` });
+    header.createSpan({ cls: "friday-pending-count", text: ` (${openCount} open, ${tasks.length} total)` });
     if (tasks.length === 0) {
-      this.el.createDiv({ cls: "task-bujo-empty", text: "No tasks found" });
+      this.el.createDiv({ cls: "friday-empty", text: "No tasks found" });
       return;
     }
     const grouped = this.store.groupTasks(tasks, this.groupMode, this.settings.weekStartDay);
@@ -6194,15 +6220,15 @@ var OverviewView = class {
       uncategorized = uncategorized.filter((t) => t.text.toLowerCase().includes(q));
     }
     const totalCount = openPoints.length + uncategorized.length;
-    const header = this.el.createDiv({ cls: "task-bujo-view-header" });
+    const header = this.el.createDiv({ cls: "friday-view-header" });
     header.createSpan({ text: "Open Points" });
-    header.createSpan({ cls: "task-bujo-pending-count", text: ` (${totalCount})` });
+    header.createSpan({ cls: "friday-pending-count", text: ` (${totalCount})` });
     const allStoreTasks = [...this.store.getOpenPoints(), ...this.store.getUncategorized()];
     const groupedOpenPoints = this.store.groupTasks(openPoints, this.groupMode, this.settings.weekStartDay);
     new TaskList(this.el, groupedOpenPoints, this.callbacks, true, this.collapsedGroups, allStoreTasks);
     if (uncategorized.length > 0) {
-      this.el.createEl("hr", { cls: "task-bujo-separator" });
-      const uncatHeader = this.el.createDiv({ cls: "task-bujo-view-subheader" });
+      this.el.createEl("hr", { cls: "friday-separator" });
+      const uncatHeader = this.el.createDiv({ cls: "friday-view-subheader" });
       uncatHeader.createSpan({ text: `Uncategorized (${uncategorized.length})` });
       const groupedUncat = this.store.groupTasks(uncategorized, this.groupMode, this.settings.weekStartDay);
       new TaskList(this.el, groupedUncat, this.callbacks, true, this.collapsedGroups, allStoreTasks);
@@ -6222,7 +6248,7 @@ var InboxView = class {
     this.groupMode = groupMode;
     this.searchQuery = searchQuery;
     this.collapsedGroups = collapsedGroups;
-    this.el = container.createDiv({ cls: "task-bujo-inbox-view" });
+    this.el = container.createDiv({ cls: "friday-inbox-view" });
   }
   render() {
     this.el.empty();
@@ -6235,15 +6261,15 @@ var InboxView = class {
       items = items.filter((t) => t.text.toLowerCase().includes(q));
     }
     const openCount = items.filter((t) => t.status === " " /* Open */).length;
-    const header = this.el.createDiv({ cls: "task-bujo-view-header" });
+    const header = this.el.createDiv({ cls: "friday-view-header" });
     header.createSpan({ text: "\u{1F4E5} Inbox" });
     header.createSpan({
-      cls: "task-bujo-pending-count",
+      cls: "friday-pending-count",
       text: ` (${openCount} to triage, ${items.length} total)`
     });
     if (items.length === 0) {
       this.el.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: "Nothing to triage \u2014 capture new items under `## Inbox` in your daily note."
       });
       return;
@@ -6266,7 +6292,7 @@ var OverdueView = class {
     this.groupMode = groupMode;
     this.searchQuery = searchQuery;
     this.collapsedGroups = collapsedGroups;
-    this.el = container.createDiv({ cls: "task-bujo-overdue-view" });
+    this.el = container.createDiv({ cls: "friday-overdue-view" });
   }
   render() {
     this.el.empty();
@@ -6275,15 +6301,15 @@ var OverdueView = class {
       const q = this.searchQuery.toLowerCase();
       overdue = overdue.filter((t) => t.text.toLowerCase().includes(q));
     }
-    const header = this.el.createDiv({ cls: "task-bujo-view-header" });
+    const header = this.el.createDiv({ cls: "friday-view-header" });
     header.createSpan({ text: "Overdue Tasks" });
     header.createSpan({
-      cls: "task-bujo-pending-count",
+      cls: "friday-pending-count",
       text: ` (${overdue.length})`
     });
     if (overdue.length === 0) {
       this.el.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: "No overdue tasks \u2014 you're all caught up!"
       });
       return;
@@ -6304,15 +6330,15 @@ var AnalyticsView = class {
     this.settings = settings;
     this.weeklyHistory = weeklyHistory;
     this.onSaveSnapshot = onSaveSnapshot;
-    this.el = container.createDiv({ cls: "task-bujo-analytics" });
+    this.el = container.createDiv({ cls: "friday-analytics" });
   }
   render() {
     this.el.empty();
     const stats = this.analyticsService.getCurrentWeekStats();
-    const header = this.el.createDiv({ cls: "task-bujo-analytics-header" });
+    const header = this.el.createDiv({ cls: "friday-analytics-header" });
     header.createEl("h3", { text: `Analytics \u2014 ${formatWeekId(stats.weekId)}` });
     const saveBtn = header.createEl("button", {
-      cls: "task-bujo-analytics-save-btn",
+      cls: "friday-analytics-save-btn",
       text: "Save Week Snapshot"
     });
     saveBtn.addEventListener("click", () => {
@@ -6333,7 +6359,7 @@ var AnalyticsView = class {
     }
   }
   renderSummary(stats) {
-    const section = this.el.createDiv({ cls: "task-bujo-analytics-summary" });
+    const section = this.el.createDiv({ cls: "friday-analytics-summary" });
     const cards = [
       { label: "Planned", value: String(stats.totalPlanned) },
       { label: "Completed", value: String(stats.totalCompleted), cls: "done" },
@@ -6342,38 +6368,38 @@ var AnalyticsView = class {
       { label: "Completion Rate", value: `${stats.completionRate.toFixed(0)}%` }
     ];
     for (const card of cards) {
-      const cardEl = section.createDiv({ cls: `task-bujo-analytics-card ${card.cls || ""}` });
-      cardEl.createDiv({ cls: "task-bujo-analytics-card-value", text: card.value });
-      cardEl.createDiv({ cls: "task-bujo-analytics-card-label", text: card.label });
+      const cardEl = section.createDiv({ cls: `friday-analytics-card ${card.cls || ""}` });
+      cardEl.createDiv({ cls: "friday-analytics-card-value", text: card.value });
+      cardEl.createDiv({ cls: "friday-analytics-card-label", text: card.label });
     }
   }
   renderBreakdown(title, data) {
     if (data.size === 0)
       return;
-    const section = this.el.createDiv({ cls: "task-bujo-analytics-breakdown" });
+    const section = this.el.createDiv({ cls: "friday-analytics-breakdown" });
     section.createEl("h4", { text: title });
     const maxPlanned = Math.max(...Array.from(data.values()).map((v) => v.planned), 1);
     for (const [name, { planned, completed }] of data) {
-      const row = section.createDiv({ cls: "task-bujo-analytics-bar-row" });
-      row.createDiv({ cls: "task-bujo-analytics-bar-label", text: name });
-      const barContainer = row.createDiv({ cls: "task-bujo-analytics-bar-container" });
+      const row = section.createDiv({ cls: "friday-analytics-bar-row" });
+      row.createDiv({ cls: "friday-analytics-bar-label", text: name });
+      const barContainer = row.createDiv({ cls: "friday-analytics-bar-container" });
       const plannedWidth = planned / maxPlanned * 100;
       const completedWidth = planned > 0 ? completed / planned * plannedWidth : 0;
-      const plannedBar = barContainer.createDiv({ cls: "task-bujo-analytics-bar planned" });
+      const plannedBar = barContainer.createDiv({ cls: "friday-analytics-bar planned" });
       plannedBar.style.width = `${plannedWidth}%`;
-      const completedBar = barContainer.createDiv({ cls: "task-bujo-analytics-bar completed" });
+      const completedBar = barContainer.createDiv({ cls: "friday-analytics-bar completed" });
       completedBar.style.width = `${completedWidth}%`;
       row.createDiv({
-        cls: "task-bujo-analytics-bar-value",
+        cls: "friday-analytics-bar-value",
         text: `${completed}/${planned}`
       });
     }
   }
   renderTrends() {
-    const section = this.el.createDiv({ cls: "task-bujo-analytics-trends" });
+    const section = this.el.createDiv({ cls: "friday-analytics-trends" });
     section.createEl("h4", { text: "Week-over-Week Trends" });
     const recent = this.weeklyHistory.slice(-8);
-    const table = section.createEl("table", { cls: "task-bujo-analytics-trend-table" });
+    const table = section.createEl("table", { cls: "friday-analytics-trend-table" });
     const thead = table.createEl("thead");
     const headerRow = thead.createEl("tr");
     for (const h of ["Week", "Planned", "Done", "Migrated", "Rate"]) {
@@ -6389,14 +6415,14 @@ var AnalyticsView = class {
       const rate = snapshot.totalPlanned > 0 ? (snapshot.totalCompleted / snapshot.totalPlanned * 100).toFixed(0) + "%" : "\u2014";
       row.createEl("td", { text: rate });
     }
-    const chartSection = section.createDiv({ cls: "task-bujo-analytics-trend-chart" });
+    const chartSection = section.createDiv({ cls: "friday-analytics-trend-chart" });
     for (const snapshot of recent) {
       const rate = snapshot.totalPlanned > 0 ? snapshot.totalCompleted / snapshot.totalPlanned * 100 : 0;
-      const col = chartSection.createDiv({ cls: "task-bujo-analytics-trend-col" });
-      const barWrap = col.createDiv({ cls: "task-bujo-analytics-trend-bar-wrap" });
-      const bar = barWrap.createDiv({ cls: "task-bujo-analytics-trend-bar" });
+      const col = chartSection.createDiv({ cls: "friday-analytics-trend-col" });
+      const barWrap = col.createDiv({ cls: "friday-analytics-trend-bar-wrap" });
+      const bar = barWrap.createDiv({ cls: "friday-analytics-trend-bar" });
       bar.style.height = `${rate}%`;
-      col.createDiv({ cls: "task-bujo-analytics-trend-label", text: formatWeekId(snapshot.weekId) });
+      col.createDiv({ cls: "friday-analytics-trend-label", text: formatWeekId(snapshot.weekId) });
     }
   }
 };
@@ -6424,7 +6450,7 @@ var CalendarView = class {
     this.callbacks = callbacks;
     this.searchQuery = searchQuery;
     this.selectedDay = null;
-    this.el = container.createDiv({ cls: "task-bujo-calendar" });
+    this.el = container.createDiv({ cls: "friday-calendar" });
     const now = /* @__PURE__ */ new Date();
     this.selectedMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   }
@@ -6438,9 +6464,9 @@ var CalendarView = class {
     }
   }
   renderHeader() {
-    const header = this.el.createDiv({ cls: "task-bujo-calendar-header" });
+    const header = this.el.createDiv({ cls: "friday-calendar-header" });
     const prevBtn = header.createEl("button", {
-      cls: "task-bujo-calendar-nav",
+      cls: "friday-calendar-nav",
       text: "\u2039"
     });
     prevBtn.addEventListener("click", () => {
@@ -6452,10 +6478,10 @@ var CalendarView = class {
       this.selectedDay = null;
       this.render();
     });
-    const title = header.createSpan({ cls: "task-bujo-calendar-title" });
+    const title = header.createSpan({ cls: "friday-calendar-title" });
     title.textContent = `${MONTH_NAMES2[this.selectedMonth.getMonth()]} ${this.selectedMonth.getFullYear()}`;
     const nextBtn = header.createEl("button", {
-      cls: "task-bujo-calendar-nav",
+      cls: "friday-calendar-nav",
       text: "\u203A"
     });
     nextBtn.addEventListener("click", () => {
@@ -6468,7 +6494,7 @@ var CalendarView = class {
       this.render();
     });
     const todayBtn = header.createEl("button", {
-      cls: "task-bujo-calendar-nav task-bujo-calendar-today-btn",
+      cls: "friday-calendar-nav friday-calendar-today-btn",
       text: "Today"
     });
     todayBtn.addEventListener("click", () => {
@@ -6479,18 +6505,18 @@ var CalendarView = class {
     });
   }
   renderDayLabels() {
-    const labels = this.el.createDiv({ cls: "task-bujo-calendar-day-labels" });
+    const labels = this.el.createDiv({ cls: "friday-calendar-day-labels" });
     const weekStart = this.settings.weekStartDay;
     for (let i = 0; i < 7; i++) {
       const dayIndex = (weekStart + i) % 7;
       labels.createDiv({
-        cls: "task-bujo-calendar-day-label",
+        cls: "friday-calendar-day-label",
         text: DAY_LABELS_SUNDAY[dayIndex]
       });
     }
   }
   renderGrid() {
-    const grid = this.el.createDiv({ cls: "task-bujo-calendar-grid" });
+    const grid = this.el.createDiv({ cls: "friday-calendar-grid" });
     const year = this.selectedMonth.getFullYear();
     const month = this.selectedMonth.getMonth();
     const firstDay = new Date(year, month, 1);
@@ -6521,40 +6547,40 @@ var CalendarView = class {
     for (let i = 0; i < totalCells; i++) {
       const cellDate = new Date(rangeStart);
       cellDate.setDate(cellDate.getDate() + i);
-      const cell = grid.createDiv({ cls: "task-bujo-calendar-cell" });
+      const cell = grid.createDiv({ cls: "friday-calendar-cell" });
       const isCurrentMonth = cellDate.getMonth() === month;
       const isTodayCell = isToday(cellDate, today);
       const isSelected = this.selectedDay && isSameDay(cellDate, this.selectedDay);
       if (!isCurrentMonth)
-        cell.addClass("task-bujo-calendar-other-month");
+        cell.addClass("friday-calendar-other-month");
       if (isTodayCell)
-        cell.addClass("task-bujo-calendar-today");
+        cell.addClass("friday-calendar-today");
       if (isSelected)
-        cell.addClass("task-bujo-calendar-selected");
+        cell.addClass("friday-calendar-selected");
       cell.createDiv({
-        cls: "task-bujo-calendar-day-number",
+        cls: "friday-calendar-day-number",
         text: String(cellDate.getDate())
       });
       const key = `${cellDate.getFullYear()}-${cellDate.getMonth()}-${cellDate.getDate()}`;
       const dayTasks = tasksByDay.get(key) || [];
       if (dayTasks.length > 0) {
-        const dots = cell.createDiv({ cls: "task-bujo-calendar-task-dots" });
+        const dots = cell.createDiv({ cls: "friday-calendar-task-dots" });
         const maxDots = 4;
         const shown = dayTasks.slice(0, maxDots);
         for (const t of shown) {
-          const dot = dots.createSpan({ cls: "task-bujo-calendar-dot" });
+          const dot = dots.createSpan({ cls: "friday-calendar-dot" });
           if (t.priority === "high" /* High */)
-            dot.addClass("task-bujo-priority-high");
+            dot.addClass("friday-priority-high");
           else if (t.priority === "medium" /* Medium */)
-            dot.addClass("task-bujo-priority-medium");
+            dot.addClass("friday-priority-medium");
           else if (t.priority === "low" /* Low */)
-            dot.addClass("task-bujo-priority-low");
+            dot.addClass("friday-priority-low");
           else
-            dot.addClass("task-bujo-calendar-dot-default");
+            dot.addClass("friday-calendar-dot-default");
         }
         if (dayTasks.length > maxDots) {
           dots.createSpan({
-            cls: "task-bujo-calendar-dot-more",
+            cls: "friday-calendar-dot-more",
             text: `+${dayTasks.length - maxDots}`
           });
         }
@@ -6567,8 +6593,8 @@ var CalendarView = class {
     }
   }
   renderDayDetail(date) {
-    const detail = this.el.createDiv({ cls: "task-bujo-calendar-detail" });
-    const dayLabel = detail.createDiv({ cls: "task-bujo-calendar-detail-header" });
+    const detail = this.el.createDiv({ cls: "friday-calendar-detail" });
+    const dayLabel = detail.createDiv({ cls: "friday-calendar-detail-header" });
     const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     dayLabel.textContent = `${days[date.getDay()]}, ${MONTH_NAMES2[date.getMonth()]} ${date.getDate()}`;
     let dayTasks = this.store.getTasksForDate(date);
@@ -6578,12 +6604,12 @@ var CalendarView = class {
     }
     if (dayTasks.length === 0) {
       detail.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: "No tasks due on this day."
       });
       return;
     }
-    const list = detail.createDiv({ cls: "task-bujo-calendar-detail-list" });
+    const list = detail.createDiv({ cls: "friday-calendar-detail-list" });
     for (const task of dayTasks) {
       new TaskItemRow(list, task, this.callbacks);
     }
@@ -6623,21 +6649,21 @@ var SyntaxReferenceModal = class extends import_obsidian15.Modal {
   }
   /** Create a clickable syntax row — inserts on click if editor is available */
   createSyntaxRow(table, syntax, desc) {
-    const row = table.createEl("tr", { cls: "task-bujo-syntax-row-clickable" });
-    row.createEl("td", { cls: "task-bujo-syntax-code" }).createEl("code", { text: syntax });
-    row.createEl("td", { cls: "task-bujo-syntax-desc", text: desc });
+    const row = table.createEl("tr", { cls: "friday-syntax-row-clickable" });
+    row.createEl("td", { cls: "friday-syntax-code" }).createEl("code", { text: syntax });
+    row.createEl("td", { cls: "friday-syntax-desc", text: desc });
     row.addEventListener("click", () => this.insertAtCursor(syntax));
     row.setAttribute("title", "Click to insert at cursor");
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-syntax-modal");
+    this.modalEl.addClass("friday-syntax-modal");
     contentEl.createEl("h2", { text: "Syntax Reference" });
     const hasEditor = this.getActiveEditor() !== null;
     if (hasEditor) {
       contentEl.createEl("p", {
         text: "Click any row to insert at cursor position.",
-        cls: "task-bujo-syntax-hint"
+        cls: "friday-syntax-hint"
       });
     }
     const entries = [
@@ -6673,10 +6699,10 @@ var SyntaxReferenceModal = class extends import_obsidian15.Modal {
       ["## Open Points", "Heading \u2192 items are Open Points"],
       ["## Inbox", "Heading \u2192 items are quick-capture Inbox"]
     ];
-    const table = contentEl.createEl("table", { cls: "task-bujo-syntax-table" });
+    const table = contentEl.createEl("table", { cls: "friday-syntax-table" });
     for (const [syntax, desc] of entries) {
       if (!syntax && !desc) {
-        const row = table.createEl("tr", { cls: "task-bujo-syntax-separator" });
+        const row = table.createEl("tr", { cls: "friday-syntax-separator" });
         row.createEl("td", { attr: { colspan: "2" } });
         continue;
       }
@@ -6684,12 +6710,12 @@ var SyntaxReferenceModal = class extends import_obsidian15.Modal {
         this.createSyntaxRow(table, syntax, desc);
       } else {
         const row = table.createEl("tr");
-        row.createEl("td", { cls: "task-bujo-syntax-code" }).createEl("code", { text: syntax });
-        row.createEl("td", { cls: "task-bujo-syntax-desc", text: desc });
+        row.createEl("td", { cls: "friday-syntax-code" }).createEl("code", { text: syntax });
+        row.createEl("td", { cls: "friday-syntax-desc", text: desc });
       }
     }
     contentEl.createEl("h3", { text: "Default Work Types" });
-    const wtTable = contentEl.createEl("table", { cls: "task-bujo-syntax-table" });
+    const wtTable = contentEl.createEl("table", { cls: "friday-syntax-table" });
     const workTypes = [
       ["Deep Work", "DW"],
       ["Review", "RV"],
@@ -6703,12 +6729,12 @@ var SyntaxReferenceModal = class extends import_obsidian15.Modal {
         this.createSyntaxRow(wtTable, `#w/${code}`, name);
       } else {
         const row = wtTable.createEl("tr");
-        row.createEl("td", { cls: "task-bujo-syntax-code" }).createEl("code", { text: `#w/${code}` });
-        row.createEl("td", { cls: "task-bujo-syntax-desc", text: name });
+        row.createEl("td", { cls: "friday-syntax-code" }).createEl("code", { text: `#w/${code}` });
+        row.createEl("td", { cls: "friday-syntax-desc", text: name });
       }
     }
     contentEl.createEl("h3", { text: "Default Purposes" });
-    const pTable = contentEl.createEl("table", { cls: "task-bujo-syntax-table" });
+    const pTable = contentEl.createEl("table", { cls: "friday-syntax-table" });
     const purposes = [
       ["Delivery", "D"],
       ["Capability", "CA"],
@@ -6720,8 +6746,8 @@ var SyntaxReferenceModal = class extends import_obsidian15.Modal {
         this.createSyntaxRow(pTable, `#p/${code}`, name);
       } else {
         const row = pTable.createEl("tr");
-        row.createEl("td", { cls: "task-bujo-syntax-code" }).createEl("code", { text: `#p/${code}` });
-        row.createEl("td", { cls: "task-bujo-syntax-desc", text: name });
+        row.createEl("td", { cls: "friday-syntax-code" }).createEl("code", { text: `#p/${code}` });
+        row.createEl("td", { cls: "friday-syntax-desc", text: name });
       }
     }
   }
@@ -6751,7 +6777,7 @@ var InsertTaskModal = class extends import_obsidian16.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-insert-modal");
+    this.modalEl.addClass("friday-insert-modal");
     contentEl.createEl("h2", { text: "Quick Create Task" });
     new import_obsidian16.Setting(contentEl).setName("Task text").addText((text) => {
       text.setPlaceholder("What needs to be done?").onChange((v) => {
@@ -6812,7 +6838,7 @@ var InsertTaskModal = class extends import_obsidian16.Modal {
     }
     const descSetting = new import_obsidian16.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
     const descArea = descSetting.controlEl.createEl("textarea", {
-      cls: "task-bujo-insert-description",
+      cls: "friday-insert-description",
       attr: { rows: "3", placeholder: "Additional context, notes, links..." }
     });
     descArea.addEventListener("input", () => {
@@ -6869,15 +6895,15 @@ var AddTaskBar = class {
     this.getSettings = getSettings;
     this.callbacks = callbacks;
     var _a;
-    this.el = container.createDiv({ cls: "task-bujo-add-bar" });
+    this.el = container.createDiv({ cls: "friday-add-bar" });
     this.target = (_a = this.getSettings().defaultQuickAddTarget) != null ? _a : "tasks";
     this.render();
   }
   render() {
     this.el.empty();
-    const form = this.el.createDiv({ cls: "task-bujo-add-form" });
+    const form = this.el.createDiv({ cls: "friday-add-form" });
     const targetToggle = form.createEl("button", {
-      cls: "task-bujo-add-target-toggle",
+      cls: "friday-add-target-toggle",
       text: this.target === "inbox" ? "\u{1F4E5} Inbox" : "\u2713 Tasks"
     });
     targetToggle.setAttribute("title", "Toggle between Tasks and Inbox");
@@ -6889,12 +6915,12 @@ var AddTaskBar = class {
     const textInput = form.createEl("input", {
       type: "text",
       placeholder: this.target === "inbox" ? "Quick capture note..." : "Quick add task...",
-      cls: "task-bujo-add-input"
+      cls: "friday-add-input"
     });
     let prioritySelect = null;
     let dateInput = null;
     if (this.target === "tasks") {
-      prioritySelect = form.createEl("select", { cls: "task-bujo-add-priority" });
+      prioritySelect = form.createEl("select", { cls: "friday-add-priority" });
       const options = [
         ["none", "\u2014"],
         ["high", "H"],
@@ -6907,12 +6933,12 @@ var AddTaskBar = class {
       dateInput = form.createEl("input", {
         type: "text",
         placeholder: "DD-MM-YYYY",
-        cls: "task-bujo-add-date"
+        cls: "friday-add-date"
       });
     }
     const addBtn = form.createEl("button", {
       text: this.target === "inbox" ? "Capture" : "+ Add",
-      cls: "task-bujo-add-btn"
+      cls: "friday-add-btn"
     });
     const doAdd = async () => {
       var _a, _b;
@@ -7017,7 +7043,7 @@ var SprintModal = class extends import_obsidian18.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-sprint-modal");
+    this.modalEl.addClass("friday-sprint-modal");
     if (this.editSprint) {
       this.name = this.editSprint.name;
       this.startDate = this.editSprint.startDate;
@@ -7054,7 +7080,7 @@ var SprintModal = class extends import_obsidian18.Modal {
     });
     this.durationEl = contentEl.createEl("p");
     this.updateDuration();
-    this.errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
+    this.errorEl = contentEl.createDiv({ cls: "friday-modal-error" });
     new import_obsidian18.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(() => this.save())
     );
@@ -7163,7 +7189,7 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
   onOpen() {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-topic-modal");
+    this.modalEl.addClass("friday-topic-modal");
     if (this.editTopic) {
       this.title = this.editTopic.title;
       this.jira = this.editTopic.jira.join(", ");
@@ -7230,14 +7256,14 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
       );
       if (this.editTopic && this.editTopic.sprintHistory.length > 0) {
         const historySetting = new import_obsidian19.Setting(contentEl).setName("Sprint history").setDesc("All sprints this topic has been assigned to (in order)");
-        const listEl = historySetting.settingEl.createDiv({ cls: "task-bujo-topic-sprint-history" });
+        const listEl = historySetting.settingEl.createDiv({ cls: "friday-topic-sprint-history" });
         for (const sprintId of this.editTopic.sprintHistory) {
           const sprint = sprints.find((s) => s.id === sprintId);
           const label = sprint ? `${sprint.name} (${sprint.startDate} \u2192 ${sprint.endDate})` : `${sprintId} \xB7 deleted`;
-          const chip = listEl.createDiv({ cls: "task-bujo-topic-sprint-history-chip" });
+          const chip = listEl.createDiv({ cls: "friday-topic-sprint-history-chip" });
           chip.setText(label);
           if (sprintId === this.editTopic.sprintId) {
-            chip.addClass("task-bujo-topic-sprint-history-current");
+            chip.addClass("friday-topic-sprint-history-current");
           }
         }
       }
@@ -7318,10 +7344,10 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
         }).open();
       })
     );
-    this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: "task-bujo-page-chips" });
+    this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: "friday-page-chips" });
     this.renderChips();
     this.renderRefsSection(contentEl);
-    const errorEl = contentEl.createDiv({ cls: "task-bujo-modal-error" });
+    const errorEl = contentEl.createDiv({ cls: "friday-modal-error" });
     new import_obsidian19.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
         errorEl.empty();
@@ -7336,7 +7362,7 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
   /** Render the Waiting-on + Last nudged settings as a dynamic block that re-renders
    *  its inner controls when the mode changes. */
   renderWaitingOnSetting(contentEl, activeMembers, teamMembers) {
-    const wrapper = contentEl.createDiv({ cls: "task-bujo-topic-waiting-wrapper" });
+    const wrapper = contentEl.createDiv({ cls: "friday-topic-waiting-wrapper" });
     const renderInner = () => {
       wrapper.empty();
       const options = { none: "\u2014 Not waiting \u2014" };
@@ -7473,15 +7499,15 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
     this.chipsContainer.empty();
     if (this.linkedPages.length === 0) {
       this.chipsContainer.createSpan({
-        cls: "task-bujo-page-chips-empty",
+        cls: "friday-page-chips-empty",
         text: "No pages linked yet"
       });
       return;
     }
     for (const page of this.linkedPages) {
-      const chip = this.chipsContainer.createDiv({ cls: "task-bujo-page-chip" });
+      const chip = this.chipsContainer.createDiv({ cls: "friday-page-chip" });
       chip.createSpan({ text: page });
-      const removeBtn = chip.createSpan({ cls: "task-bujo-page-chip-remove", text: "\xD7" });
+      const removeBtn = chip.createSpan({ cls: "friday-page-chip-remove", text: "\xD7" });
       removeBtn.addEventListener("click", () => {
         this.linkedPages = this.linkedPages.filter((p) => p !== page);
         this.renderChips();
@@ -7491,12 +7517,12 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
   /** References section: label+URL chip list + an add form. */
   renderRefsSection(contentEl) {
     const setting = new import_obsidian19.Setting(contentEl).setName("References").setDesc("External links (Confluence, Figma, SAP, Miro, \u2026). label \xB7 host");
-    this.refsContainer = setting.settingEl.createDiv({ cls: "task-bujo-refs-chips" });
-    const addForm = setting.settingEl.createDiv({ cls: "task-bujo-refs-add-form" });
+    this.refsContainer = setting.settingEl.createDiv({ cls: "friday-refs-chips" });
+    const addForm = setting.settingEl.createDiv({ cls: "friday-refs-add-form" });
     const labelInput = addForm.createEl("input", { type: "text", placeholder: "Label (e.g. Confluence)" });
-    labelInput.addClass("task-bujo-refs-label-input");
+    labelInput.addClass("friday-refs-label-input");
     const urlInput = addForm.createEl("input", { type: "url", placeholder: "https://\u2026" });
-    urlInput.addClass("task-bujo-refs-url-input");
+    urlInput.addClass("friday-refs-url-input");
     urlInput.addEventListener("blur", () => {
       if (!labelInput.value.trim() && urlInput.value.trim()) {
         try {
@@ -7507,7 +7533,7 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
       }
     });
     const addBtn = addForm.createEl("button", { text: "+ Add" });
-    addBtn.addClass("task-bujo-refs-add-btn");
+    addBtn.addClass("friday-refs-add-btn");
     const tryAdd = () => {
       const label = labelInput.value.trim();
       const url = urlInput.value.trim();
@@ -7539,13 +7565,13 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
     this.refsContainer.empty();
     if (this.refs.length === 0) {
       this.refsContainer.createSpan({
-        cls: "task-bujo-page-chips-empty",
+        cls: "friday-page-chips-empty",
         text: "No references yet"
       });
       return;
     }
     for (const ref of this.refs) {
-      const chip = this.refsContainer.createDiv({ cls: "task-bujo-refs-chip" });
+      const chip = this.refsContainer.createDiv({ cls: "friday-refs-chip" });
       let host = "";
       try {
         host = new URL(ref.url).hostname.replace(/^www\./, "");
@@ -7554,7 +7580,7 @@ var SprintTopicModal = class extends import_obsidian19.Modal {
       const text = host ? `${ref.label} \xB7 ${host}` : ref.label;
       chip.createSpan({ text });
       chip.setAttribute("title", ref.url);
-      const removeBtn = chip.createSpan({ cls: "task-bujo-page-chip-remove", text: "\xD7" });
+      const removeBtn = chip.createSpan({ cls: "friday-page-chip-remove", text: "\xD7" });
       removeBtn.addEventListener("click", () => {
         this.refs = this.refs.filter((r) => r !== ref);
         this.renderRefsChips();
@@ -7580,7 +7606,7 @@ var SprintCloseModal = class extends import_obsidian20.Modal {
     this.summaryEl = null;
   }
   onOpen() {
-    this.modalEl.addClass("task-bujo-sprint-close-modal");
+    this.modalEl.addClass("friday-sprint-close-modal");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: `Close Sprint \u2014 ${this.sprint.name}` });
@@ -7588,14 +7614,14 @@ var SprintCloseModal = class extends import_obsidian20.Modal {
     if (openTopics.length === 0) {
       contentEl.createEl("p", {
         text: "All topics are done. Sprint is ready to close!",
-        cls: "task-bujo-empty"
+        cls: "friday-empty"
       });
       this.renderApplySection(contentEl, openTopics);
       return;
     }
     contentEl.createEl("p", {
       text: `${openTopics.length} topic${openTopics.length > 1 ? "s are" : " is"} not yet done. Choose what to do with each:`,
-      cls: "task-bujo-migration-intro"
+      cls: "friday-migration-intro"
     });
     for (const topic of openTopics) {
       this.decisions.set(topic.filePath, { topic, action: "carry-forward" });
@@ -7606,30 +7632,30 @@ var SprintCloseModal = class extends import_obsidian20.Modal {
     this.renderApplySection(contentEl, openTopics);
   }
   renderTopicItem(container, topic) {
-    const item = container.createDiv({ cls: "task-bujo-sprint-close-item" });
-    const headerRow = item.createDiv({ cls: "task-bujo-sprint-close-item-header" });
+    const item = container.createDiv({ cls: "friday-sprint-close-item" });
+    const headerRow = item.createDiv({ cls: "friday-sprint-close-item-header" });
     if (topic.priority !== "none" /* None */) {
-      const dot = headerRow.createSpan({ cls: "task-bujo-priority-dot" });
-      dot.addClass(`task-bujo-priority-${topic.priority}`);
+      const dot = headerRow.createSpan({ cls: "friday-priority-dot" });
+      dot.addClass(`friday-priority-${topic.priority}`);
     }
     headerRow.createSpan({ text: topic.title });
     if (topic.jira.length > 0) {
-      headerRow.createSpan({ cls: "task-bujo-kanban-card-jira", text: ` ${topic.jira.join(", ")}` });
+      headerRow.createSpan({ cls: "friday-kanban-card-jira", text: ` ${topic.jira.join(", ")}` });
     }
     if (topic.blocked) {
-      headerRow.createSpan({ cls: "task-bujo-kanban-card-blocked", text: "BLOCKED" });
+      headerRow.createSpan({ cls: "friday-kanban-card-blocked", text: "BLOCKED" });
     }
     if (topic.taskTotal > 0) {
       item.createDiv({
-        cls: "task-bujo-sprint-close-item-progress",
+        cls: "friday-sprint-close-item-progress",
         text: `${topic.taskDone}/${topic.taskTotal} tasks done`
       });
     }
-    const actionsRow = item.createDiv({ cls: "task-bujo-sprint-close-actions-row" });
+    const actionsRow = item.createDiv({ cls: "friday-sprint-close-actions-row" });
     const actions = [
-      { action: "carry-forward", label: "Carry Forward", cls: "task-bujo-btn task-bujo-btn-forward" },
-      { action: "archive", label: "Archive", cls: "task-bujo-btn task-bujo-btn-done" },
-      { action: "cancel", label: "Cancel", cls: "task-bujo-btn task-bujo-btn-cancel" }
+      { action: "carry-forward", label: "Carry Forward", cls: "friday-btn friday-btn-forward" },
+      { action: "archive", label: "Archive", cls: "friday-btn friday-btn-done" },
+      { action: "cancel", label: "Cancel", cls: "friday-btn friday-btn-cancel" }
     ];
     for (const { action, label, cls } of actions) {
       const btn = actionsRow.createEl("button", { text: label, cls });
@@ -7645,10 +7671,10 @@ var SprintCloseModal = class extends import_obsidian20.Modal {
   }
   renderApplySection(container, openTopics) {
     if (openTopics.length > 0) {
-      this.summaryEl = container.createDiv({ cls: "task-bujo-sprint-close-summary" });
+      this.summaryEl = container.createDiv({ cls: "friday-sprint-close-summary" });
       this.updateSummary();
     }
-    const actionsDiv = container.createDiv({ cls: "task-bujo-migration-actions" });
+    const actionsDiv = container.createDiv({ cls: "friday-migration-actions" });
     const applyBtn = actionsDiv.createEl("button", { text: "Close Sprint", cls: "mod-cta" });
     applyBtn.addEventListener("click", async () => {
       applyBtn.setAttribute("disabled", "true");
@@ -7657,7 +7683,7 @@ var SprintCloseModal = class extends import_obsidian20.Modal {
       this.onComplete();
       this.close();
     });
-    const cancelBtn = actionsDiv.createEl("button", { text: "Cancel", cls: "task-bujo-btn" });
+    const cancelBtn = actionsDiv.createEl("button", { text: "Cancel", cls: "friday-btn" });
     cancelBtn.addEventListener("click", () => this.close());
   }
   async executeDecisions() {
@@ -7731,18 +7757,18 @@ var SubtaskConfirmModal = class extends import_obsidian21.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    contentEl.addClass("task-bujo-confirm-modal");
+    contentEl.addClass("friday-confirm-modal");
     contentEl.createDiv({
-      cls: "task-bujo-confirm-task-name",
+      cls: "friday-confirm-task-name",
       text: this.task.text
     });
     contentEl.createDiv({
-      cls: "task-bujo-confirm-message",
+      cls: "friday-confirm-message",
       text: `This task has ${this.openChildCount} incomplete subtask${this.openChildCount !== 1 ? "s" : ""}. ${this.actionLabel} them too?`
     });
-    const actions = contentEl.createDiv({ cls: "task-bujo-confirm-actions" });
+    const actions = contentEl.createDiv({ cls: "friday-confirm-actions" });
     const cancelBtn = actions.createEl("button", {
-      cls: "task-bujo-btn",
+      cls: "friday-btn",
       text: "Cancel"
     });
     cancelBtn.addEventListener("click", () => {
@@ -7750,7 +7776,7 @@ var SubtaskConfirmModal = class extends import_obsidian21.Modal {
       this.close();
     });
     const parentOnlyBtn = actions.createEl("button", {
-      cls: "task-bujo-btn",
+      cls: "friday-btn",
       text: "Parent Only"
     });
     parentOnlyBtn.addEventListener("click", () => {
@@ -7758,7 +7784,7 @@ var SubtaskConfirmModal = class extends import_obsidian21.Modal {
       this.close();
     });
     const allBtn = actions.createEl("button", {
-      cls: "task-bujo-btn task-bujo-btn-primary",
+      cls: "friday-btn friday-btn-primary",
       text: `${this.actionLabel} All`
     });
     allBtn.addEventListener("click", () => {
@@ -7782,8 +7808,8 @@ var SubtaskConfirmModal = class extends import_obsidian21.Modal {
   }
 };
 
-// src/ui/TaskBuJoView.ts
-var TaskBuJoView = class extends import_obsidian22.ItemView {
+// src/ui/FridayView.ts
+var FridayView = class extends import_obsidian22.ItemView {
   constructor(leaf, store, writer, sprintService, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
     super(leaf);
     this.store = store;
@@ -7813,10 +7839,10 @@ var TaskBuJoView = class extends import_obsidian22.ItemView {
     this.currentGroupMode = settings.defaultGroupMode;
   }
   getViewType() {
-    return VIEW_TYPE_TASK_BUJO;
+    return VIEW_TYPE_FRIDAY;
   }
   getDisplayText() {
-    return "BuJo";
+    return "Friday";
   }
   getIcon() {
     return "check-square";
@@ -7824,7 +7850,7 @@ var TaskBuJoView = class extends import_obsidian22.ItemView {
   async onOpen() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("task-bujo-container");
+    containerEl.addClass("friday-container");
     new ViewSwitcher(containerEl, this.currentMode, {
       onViewChange: (mode) => {
         this.currentMode = mode;
@@ -7844,13 +7870,13 @@ var TaskBuJoView = class extends import_obsidian22.ItemView {
         this.refresh();
       }
     });
-    this.contentContainer = containerEl.createDiv({ cls: "task-bujo-content" });
-    const footer = containerEl.createDiv({ cls: "task-bujo-footer" });
+    this.contentContainer = containerEl.createDiv({ cls: "friday-content" });
+    const footer = containerEl.createDiv({ cls: "friday-footer" });
     new AddTaskBar(footer, this.app, () => this.settings, {
       onTaskAdded: () => this.refresh()
     });
     const syntaxBtn = footer.createEl("button", {
-      cls: "task-bujo-syntax-toggle",
+      cls: "friday-syntax-toggle",
       text: "Syntax Reference"
     });
     syntaxBtn.addEventListener("click", () => {
@@ -8226,10 +8252,10 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
   async onOpen() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("task-bujo-container");
-    containerEl.addClass("task-bujo-jira-dashboard-container");
+    containerEl.addClass("friday-container");
+    containerEl.addClass("friday-jira-dashboard-container");
     this.renderHeader(containerEl);
-    this.contentContainer = containerEl.createDiv({ cls: "task-bujo-content task-bujo-jira-dashboard-content" });
+    this.contentContainer = containerEl.createDiv({ cls: "friday-content friday-jira-dashboard-content" });
     this.listenerHandle = () => this.renderContent();
     this.dashboardService.on(this.listenerHandle);
     this.teamListenerHandle = () => this.renderContent();
@@ -8268,13 +8294,13 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
   }
   // ── Rendering ─────────────────────────────────────────────────
   renderHeader(containerEl) {
-    const header = containerEl.createDiv({ cls: "task-bujo-jira-dashboard-header" });
-    const titleRow = header.createDiv({ cls: "task-bujo-jira-dashboard-title-row" });
-    titleRow.createEl("h3", { text: "JIRA Dashboard", cls: "task-bujo-jira-dashboard-title" });
-    this.headerMetaEl = titleRow.createSpan({ cls: "task-bujo-jira-dashboard-meta" });
-    const actions = titleRow.createDiv({ cls: "task-bujo-jira-dashboard-actions" });
+    const header = containerEl.createDiv({ cls: "friday-jira-dashboard-header" });
+    const titleRow = header.createDiv({ cls: "friday-jira-dashboard-title-row" });
+    titleRow.createEl("h3", { text: "JIRA Dashboard", cls: "friday-jira-dashboard-title" });
+    this.headerMetaEl = titleRow.createSpan({ cls: "friday-jira-dashboard-meta" });
+    const actions = titleRow.createDiv({ cls: "friday-jira-dashboard-actions" });
     this.refreshBtnEl = actions.createEl("button", {
-      cls: "task-bujo-btn task-bujo-jira-dashboard-refresh",
+      cls: "friday-btn friday-jira-dashboard-refresh",
       text: "Refresh"
     });
     this.refreshBtnEl.addEventListener("click", () => {
@@ -8282,11 +8308,11 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
         return;
       this.dashboardService.refresh();
     });
-    this.tabBarEl = header.createDiv({ cls: "task-bujo-jira-dashboard-tabs" });
+    this.tabBarEl = header.createDiv({ cls: "friday-jira-dashboard-tabs" });
     this.renderTabs();
-    const searchRow = header.createDiv({ cls: "task-bujo-jira-dashboard-search-row" });
+    const searchRow = header.createDiv({ cls: "friday-jira-dashboard-search-row" });
     const searchInput = searchRow.createEl("input", {
-      cls: "task-bujo-jira-dashboard-search",
+      cls: "friday-jira-dashboard-search",
       type: "text",
       placeholder: "Filter by key, summary, assignee, label\u2026"
     });
@@ -8307,7 +8333,7 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     }
     this.tabBarEl.removeClass("is-hidden");
     const mkTab = (id, label) => {
-      const tab = this.tabBarEl.createDiv({ cls: "task-bujo-jira-dashboard-tab" });
+      const tab = this.tabBarEl.createDiv({ cls: "friday-jira-dashboard-tab" });
       tab.setText(label);
       if (id === active)
         tab.addClass("is-active");
@@ -8348,7 +8374,7 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     this.contentContainer.empty();
     if (!this.dashboardService.isEnabled()) {
       this.contentContainer.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: "JIRA integration is disabled. Enable it in plugin settings."
       });
       return;
@@ -8367,14 +8393,14 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     var _a;
     const err = this.dashboardService.getError();
     if (err) {
-      const errEl = container.createDiv({ cls: "task-bujo-jira-dashboard-error" });
+      const errEl = container.createDiv({ cls: "friday-jira-dashboard-error" });
       errEl.createSpan({ text: `Failed to load dashboard: ${err}` });
       return;
     }
     const issues = this.dashboardService.getIssues();
     if (issues === null) {
       container.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: this.dashboardService.isLoading() ? "Loading JIRA issues\u2026" : "No data yet. Click Refresh."
       });
       return;
@@ -8394,21 +8420,21 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
   renderTeamTab(container, topicIndex) {
     if (!this.teamService.isEnabled()) {
       container.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: "Team tracking is off. Enable it under Settings \u2192 JIRA Integration \u2192 Team Members."
       });
       return;
     }
     const err = this.teamService.getError();
     if (err) {
-      const errEl = container.createDiv({ cls: "task-bujo-jira-dashboard-error" });
+      const errEl = container.createDiv({ cls: "friday-jira-dashboard-error" });
       errEl.createSpan({ text: `Failed to load team issues: ${err}` });
       return;
     }
     const issues = this.teamService.getIssues();
     if (issues === null) {
       container.createDiv({
-        cls: "task-bujo-empty",
+        cls: "friday-empty",
         text: this.teamService.isLoading() ? "Loading team issues\u2026" : "No team data yet. Click Refresh."
       });
       return;
@@ -8553,13 +8579,13 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     const settings = this.getSettings();
     const stickyState = settings.jiraDashboardCollapsedSections[section.id];
     const collapsed = stickyState != null ? stickyState : !!section.defaultCollapsed;
-    const sectionEl = container.createDiv({ cls: "task-bujo-jira-dashboard-section" });
+    const sectionEl = container.createDiv({ cls: "friday-jira-dashboard-section" });
     if (collapsed)
       sectionEl.addClass("is-collapsed");
-    const header = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-header" });
-    const chevron = header.createSpan({ cls: "task-bujo-jira-dashboard-section-chevron", text: collapsed ? "\u25B6" : "\u25BC" });
-    header.createSpan({ cls: "task-bujo-jira-dashboard-section-label", text: section.label });
-    header.createSpan({ cls: "task-bujo-jira-dashboard-section-count", text: `${issues.length}` });
+    const header = sectionEl.createDiv({ cls: "friday-jira-dashboard-section-header" });
+    const chevron = header.createSpan({ cls: "friday-jira-dashboard-section-chevron", text: collapsed ? "\u25B6" : "\u25BC" });
+    header.createSpan({ cls: "friday-jira-dashboard-section-label", text: section.label });
+    header.createSpan({ cls: "friday-jira-dashboard-section-count", text: `${issues.length}` });
     header.addEventListener("click", async () => {
       const cur = sectionEl.hasClass("is-collapsed");
       sectionEl.toggleClass("is-collapsed", !cur);
@@ -8568,9 +8594,9 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
       s.jiraDashboardCollapsedSections[section.id] = !cur;
       await this.saveSettings();
     });
-    const body = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-body" });
+    const body = sectionEl.createDiv({ cls: "friday-jira-dashboard-section-body" });
     if (issues.length === 0) {
-      body.createDiv({ cls: "task-bujo-empty task-bujo-jira-dashboard-section-empty", text: "No issues." });
+      body.createDiv({ cls: "friday-empty friday-jira-dashboard-section-empty", text: "No issues." });
       return;
     }
     for (const issue of issues) {
@@ -8579,8 +8605,8 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
   }
   renderIssueRow(container, issue, topicIndex) {
     var _a;
-    const row = container.createDiv({ cls: "task-bujo-jira-dashboard-row" });
-    row.addClass(`task-bujo-jira-row-status-${issue.statusCategory}`);
+    const row = container.createDiv({ cls: "friday-jira-dashboard-row" });
+    row.addClass(`friday-jira-row-status-${issue.statusCategory}`);
     if (issue.flagged)
       row.addClass("is-flagged");
     row.addEventListener("contextmenu", (evt) => {
@@ -8588,17 +8614,17 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
       evt.preventDefault();
       this.openRowContextMenu(evt, issue, (_a2 = topicIndex.get(issue.key)) != null ? _a2 : []);
     });
-    const leftEl = row.createDiv({ cls: "task-bujo-jira-dashboard-row-left" });
+    const leftEl = row.createDiv({ cls: "friday-jira-dashboard-row-left" });
     if (issue.issueTypeIconUrl) {
       const img = leftEl.createEl("img", {
-        cls: "task-bujo-jira-dashboard-icon",
+        cls: "friday-jira-dashboard-icon",
         attr: { src: issue.issueTypeIconUrl, alt: issue.issueType, title: issue.issueType }
       });
       img.setAttribute("width", "16");
       img.setAttribute("height", "16");
     }
     const keyEl = leftEl.createEl("a", {
-      cls: "task-bujo-jira-dashboard-key",
+      cls: "friday-jira-dashboard-key",
       text: issue.key,
       attr: { href: issue.issueUrl, target: "_blank", rel: "noopener" }
     });
@@ -8606,9 +8632,9 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
       e.preventDefault();
       window.open(issue.issueUrl, "_blank");
     });
-    const summaryEl = row.createDiv({ cls: "task-bujo-jira-dashboard-summary" });
+    const summaryEl = row.createDiv({ cls: "friday-jira-dashboard-summary" });
     const summaryLink = summaryEl.createEl("a", {
-      cls: "task-bujo-jira-dashboard-summary-link",
+      cls: "friday-jira-dashboard-summary-link",
       text: issue.summary,
       attr: { href: issue.issueUrl, target: "_blank", rel: "noopener" }
     });
@@ -8617,22 +8643,22 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
       window.open(issue.issueUrl, "_blank");
     });
     if (issue.parentKey) {
-      const parentEl = summaryEl.createDiv({ cls: "task-bujo-jira-dashboard-parent" });
+      const parentEl = summaryEl.createDiv({ cls: "friday-jira-dashboard-parent" });
       parentEl.createSpan({ text: "\u2191 " });
-      parentEl.createSpan({ cls: "task-bujo-jira-dashboard-parent-key", text: issue.parentKey });
+      parentEl.createSpan({ cls: "friday-jira-dashboard-parent-key", text: issue.parentKey });
       if (issue.parentSummary) {
-        parentEl.createSpan({ cls: "task-bujo-jira-dashboard-parent-summary", text: ` \u2014 ${issue.parentSummary}` });
+        parentEl.createSpan({ cls: "friday-jira-dashboard-parent-summary", text: ` \u2014 ${issue.parentSummary}` });
       }
     }
-    const metaEl = row.createDiv({ cls: "task-bujo-jira-dashboard-meta-row" });
-    const statusChip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-status" });
-    statusChip.addClass(`task-bujo-jira-dashboard-status-${issue.statusCategory}`);
+    const metaEl = row.createDiv({ cls: "friday-jira-dashboard-meta-row" });
+    const statusChip = metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-status" });
+    statusChip.addClass(`friday-jira-dashboard-status-${issue.statusCategory}`);
     statusChip.setText(issue.status);
     if (issue.priority) {
-      const priChip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-priority" });
+      const priChip = metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-priority" });
       if (issue.priorityIconUrl) {
         const img = priChip.createEl("img", {
-          cls: "task-bujo-jira-dashboard-priority-icon",
+          cls: "friday-jira-dashboard-priority-icon",
           attr: { src: issue.priorityIconUrl, alt: issue.priority }
         });
         img.setAttribute("width", "12");
@@ -8641,38 +8667,38 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
       priChip.createSpan({ text: issue.priority });
     }
     if (issue.flagged) {
-      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-flagged", text: "\u2691 Flagged" });
+      metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-flagged", text: "\u2691 Flagged" });
     }
     if (issue.assignee) {
-      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-assignee", text: `\u{1F464} ${issue.assignee}` });
+      metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-assignee", text: `\u{1F464} ${issue.assignee}` });
     } else {
-      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-assignee is-unassigned", text: "Unassigned" });
+      metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-assignee is-unassigned", text: "Unassigned" });
     }
     if (issue.dueDate) {
       const overdue = this.isOverdue(issue.dueDate);
-      const chip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-due", text: `\u{1F4C5} ${issue.dueDate}` });
+      const chip = metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-due", text: `\u{1F4C5} ${issue.dueDate}` });
       if (overdue)
         chip.addClass("is-overdue");
     }
     if (issue.sprintName) {
-      const chip = metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-sprint", text: `\u{1F3C3} ${issue.sprintName}` });
+      const chip = metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-sprint", text: `\u{1F3C3} ${issue.sprintName}` });
       if (issue.sprintActive)
         chip.addClass("is-active");
     }
     const timeLabel = this.formatTime(issue.timeSpentSeconds, issue.timeRemainingSeconds);
     if (timeLabel) {
-      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-time", text: timeLabel });
+      metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-time", text: timeLabel });
     }
     for (const label of issue.labels.slice(0, 5)) {
-      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-label", text: `#${label}` });
+      metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-label", text: `#${label}` });
     }
     if (issue.labels.length > 5) {
-      metaEl.createSpan({ cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-label is-more", text: `+${issue.labels.length - 5}` });
+      metaEl.createSpan({ cls: "friday-jira-dashboard-chip friday-jira-dashboard-label is-more", text: `+${issue.labels.length - 5}` });
     }
     const linkedTopics = (_a = topicIndex.get(issue.key)) != null ? _a : [];
     for (const topic of linkedTopics) {
       const chip = metaEl.createSpan({
-        cls: "task-bujo-jira-dashboard-chip task-bujo-jira-dashboard-topic",
+        cls: "friday-jira-dashboard-chip friday-jira-dashboard-topic",
         text: `\u2194 ${topic.title}`
       });
       chip.setAttribute("aria-label", `Open topic: ${topic.filePath}`);
@@ -8766,10 +8792,10 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
   renderTeamBlock(container, topicIndex) {
     if (!this.teamService.isEnabled())
       return;
-    const wrap = container.createDiv({ cls: "task-bujo-jira-dashboard-team-block" });
-    const header = wrap.createDiv({ cls: "task-bujo-jira-dashboard-team-header" });
-    header.createSpan({ cls: "task-bujo-jira-dashboard-team-title", text: "Team" });
-    const teamMeta = header.createSpan({ cls: "task-bujo-jira-dashboard-team-meta" });
+    const wrap = container.createDiv({ cls: "friday-jira-dashboard-team-block" });
+    const header = wrap.createDiv({ cls: "friday-jira-dashboard-team-header" });
+    header.createSpan({ cls: "friday-jira-dashboard-team-title", text: "Team" });
+    const teamMeta = header.createSpan({ cls: "friday-jira-dashboard-team-meta" });
     const teamErr = this.teamService.getError();
     if (this.teamService.isLoading()) {
       teamMeta.setText("Loading team\u2026");
@@ -8787,7 +8813,7 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     if (teamIssues === null) {
       if (!teamErr) {
         wrap.createDiv({
-          cls: "task-bujo-empty",
+          cls: "friday-empty",
           text: this.teamService.isLoading() ? "Loading team issues\u2026" : "No team data yet."
         });
       }
@@ -8795,7 +8821,7 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     }
     const members = this.getSettings().teamMembers.filter((m) => m.active);
     if (members.length === 0) {
-      wrap.createDiv({ cls: "task-bujo-empty", text: "No active team members configured." });
+      wrap.createDiv({ cls: "friday-empty", text: "No active team members configured." });
       return;
     }
     const filteredTeam = this.applySearch(teamIssues, this.searchQuery);
@@ -8843,8 +8869,8 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     return out;
   }
   renderHeatmap(container, members, byMember) {
-    const wrap = container.createDiv({ cls: "task-bujo-jira-dashboard-heatmap" });
-    const title = wrap.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-title" });
+    const wrap = container.createDiv({ cls: "friday-jira-dashboard-heatmap" });
+    const title = wrap.createDiv({ cls: "friday-jira-dashboard-heatmap-title" });
     title.setText("Workload");
     const rows = members.map((m) => {
       var _a;
@@ -8858,19 +8884,19 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     const maxTotal = Math.max(1, ...rows.map((r) => r.total));
     rows.sort((a, b) => b.total - a.total);
     for (const r of rows) {
-      const rowEl = wrap.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-row" });
+      const rowEl = wrap.createDiv({ cls: "friday-jira-dashboard-heatmap-row" });
       rowEl.createSpan({
-        cls: "task-bujo-jira-dashboard-heatmap-nick",
+        cls: "friday-jira-dashboard-heatmap-nick",
         text: r.member.nickname || r.member.fullName || r.member.email,
         attr: { title: r.member.fullName || r.member.email }
       });
-      const track = rowEl.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-track" });
-      const fill = track.createDiv({ cls: "task-bujo-jira-dashboard-heatmap-fill" });
+      const track = rowEl.createDiv({ cls: "friday-jira-dashboard-heatmap-track" });
+      const fill = track.createDiv({ cls: "friday-jira-dashboard-heatmap-fill" });
       fill.style.width = `${r.total / maxTotal * 100}%`;
       const addSeg = (count, cls, label) => {
         if (count === 0)
           return;
-        const seg = fill.createDiv({ cls: `task-bujo-jira-dashboard-heatmap-seg ${cls}` });
+        const seg = fill.createDiv({ cls: `friday-jira-dashboard-heatmap-seg ${cls}` });
         seg.style.flex = `${count} ${count} 0`;
         seg.setAttribute("title", `${count} ${label}`);
       };
@@ -8878,7 +8904,7 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
       addSeg(r.inProgress, "is-in-progress", "in progress");
       addSeg(r.open, "is-open", "open");
       addSeg(r.done, "is-done", "done");
-      const counts = rowEl.createSpan({ cls: "task-bujo-jira-dashboard-heatmap-counts" });
+      const counts = rowEl.createSpan({ cls: "friday-jira-dashboard-heatmap-counts" });
       const parts = [];
       if (r.blocked)
         parts.push(`${r.blocked} blocked`);
@@ -8896,15 +8922,15 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
     const settings = this.getSettings();
     const stickyKey = `team:${member.email}`;
     const collapsed = (_a = settings.jiraDashboardCollapsedSections[stickyKey]) != null ? _a : true;
-    const sectionEl = container.createDiv({ cls: "task-bujo-jira-dashboard-section task-bujo-jira-dashboard-team-section" });
+    const sectionEl = container.createDiv({ cls: "friday-jira-dashboard-section friday-jira-dashboard-team-section" });
     if (collapsed)
       sectionEl.addClass("is-collapsed");
-    const header = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-header" });
-    const chevron = header.createSpan({ cls: "task-bujo-jira-dashboard-section-chevron", text: collapsed ? "\u25B6" : "\u25BC" });
+    const header = sectionEl.createDiv({ cls: "friday-jira-dashboard-section-header" });
+    const chevron = header.createSpan({ cls: "friday-jira-dashboard-section-chevron", text: collapsed ? "\u25B6" : "\u25BC" });
     const label = member.fullName || member.nickname || member.email;
     const suffix = member.nickname && member.nickname !== member.fullName ? ` (${member.nickname})` : "";
-    header.createSpan({ cls: "task-bujo-jira-dashboard-section-label", text: `${label}${suffix}` });
-    header.createSpan({ cls: "task-bujo-jira-dashboard-section-count", text: `${issues.length}` });
+    header.createSpan({ cls: "friday-jira-dashboard-section-label", text: `${label}${suffix}` });
+    header.createSpan({ cls: "friday-jira-dashboard-section-count", text: `${issues.length}` });
     header.addEventListener("click", async () => {
       const cur = sectionEl.hasClass("is-collapsed");
       sectionEl.toggleClass("is-collapsed", !cur);
@@ -8913,9 +8939,9 @@ var JiraDashboardView = class extends import_obsidian23.ItemView {
       s.jiraDashboardCollapsedSections[stickyKey] = !cur;
       await this.saveSettings();
     });
-    const body = sectionEl.createDiv({ cls: "task-bujo-jira-dashboard-section-body" });
+    const body = sectionEl.createDiv({ cls: "friday-jira-dashboard-section-body" });
     if (issues.length === 0) {
-      body.createDiv({ cls: "task-bujo-empty task-bujo-jira-dashboard-section-empty", text: "No issues in scope." });
+      body.createDiv({ cls: "friday-empty friday-jira-dashboard-section-empty", text: "No issues in scope." });
       return;
     }
     for (const issue of issues) {
@@ -8991,7 +9017,7 @@ var TeamOverviewView = class {
   }
   render() {
     this.container.empty();
-    this.container.addClass("task-bujo-team-overview");
+    this.container.addClass("friday-team-overview");
     const members = this.service.getVisibleMembers();
     if (members.length === 0) {
       this.renderEmptyState();
@@ -9022,53 +9048,53 @@ var TeamOverviewView = class {
       }
       return a.name.localeCompare(b.name);
     });
-    const header = this.container.createDiv({ cls: "task-bujo-team-header" });
-    header.createEl("h2", { text: "Team", cls: "task-bujo-team-title" });
+    const header = this.container.createDiv({ cls: "friday-team-header" });
+    header.createEl("h2", { text: "Team", cls: "friday-team-title" });
     const startBtn = header.createEl("button", {
-      cls: "task-bujo-team-start-1on1 mod-cta",
+      cls: "friday-team-start-1on1 mod-cta",
       text: "Start 1:1\u2026"
     });
     startBtn.addEventListener("click", () => this.openOneOnOnePicker());
-    const grid = this.container.createDiv({ cls: "task-bujo-team-grid" });
+    const grid = this.container.createDiv({ cls: "friday-team-grid" });
     for (const member of sorted) {
       this.renderCard(grid, member, signals.get(member.folderPath));
     }
   }
   renderEmptyState() {
-    const empty = this.container.createDiv({ cls: "task-bujo-empty" });
+    const empty = this.container.createDiv({ cls: "friday-empty" });
     empty.createEl("p", {
       text: `No team members found.`
     });
-    const hint = empty.createEl("p", { cls: "task-bujo-empty-hint" });
+    const hint = empty.createEl("p", { cls: "friday-empty-hint" });
     hint.appendText(`Create a folder under `);
     hint.createEl("code", { text: this.settings.teamFolderPath });
     hint.appendText(` with a person page inside, or use the `);
     hint.createEl("em", { text: "Generate person pages" });
-    hint.appendText(` button in BuJo settings.`);
+    hint.appendText(` button in Friday settings.`);
   }
   renderCard(parent, member, signal) {
-    const card = parent.createDiv({ cls: "task-bujo-team-card" });
+    const card = parent.createDiv({ cls: "friday-team-card" });
     if (member.status === "on_leave")
       card.addClass("is-on-leave");
-    const topRow = card.createDiv({ cls: "task-bujo-team-card-top" });
-    const avatar = topRow.createDiv({ cls: "task-bujo-team-avatar" });
+    const topRow = card.createDiv({ cls: "friday-team-card-top" });
+    const avatar = topRow.createDiv({ cls: "friday-team-avatar" });
     avatar.textContent = initialsOf(member.name);
-    const identityBlock = topRow.createDiv({ cls: "task-bujo-team-identity" });
-    identityBlock.createEl("div", { cls: "task-bujo-team-name", text: member.name });
+    const identityBlock = topRow.createDiv({ cls: "friday-team-identity" });
+    identityBlock.createEl("div", { cls: "friday-team-name", text: member.name });
     if (member.role) {
-      identityBlock.createEl("div", { cls: "task-bujo-team-role", text: member.role });
+      identityBlock.createEl("div", { cls: "friday-team-role", text: member.role });
     }
-    const chipRow = topRow.createDiv({ cls: "task-bujo-team-chips" });
+    const chipRow = topRow.createDiv({ cls: "friday-team-chips" });
     if (member.status === "on_leave") {
       chipRow.appendChild(createCadenceChip("suspended", "On leave"));
     } else {
       chipRow.appendChild(createCadenceChip(signal.state, formatCadenceLabel(member, signal)));
     }
-    const actions = card.createDiv({ cls: "task-bujo-team-actions" });
-    const openPageBtn = actions.createEl("button", { cls: "task-bujo-team-action", text: "Open page" });
+    const actions = card.createDiv({ cls: "friday-team-actions" });
+    const openPageBtn = actions.createEl("button", { cls: "friday-team-action", text: "Open page" });
     openPageBtn.addEventListener("click", () => this.openFile(member.filePath));
     const startBtn = actions.createEl("button", {
-      cls: "task-bujo-team-action",
+      cls: "friday-team-action",
       text: signal.state === "overdue" ? "Start 1:1 (overdue)" : "Start 1:1"
     });
     if (signal.state === "overdue")
@@ -9076,7 +9102,7 @@ var TeamOverviewView = class {
     startBtn.addEventListener("click", () => this.startOneOnOne(member));
     if (member.sessionPaths.length > 0 && member.lastOneOnOne) {
       const lastBtn = actions.createEl("button", {
-        cls: "task-bujo-team-action",
+        cls: "friday-team-action",
         text: "Last 1:1"
       });
       const lastPath = mostRecentSessionPath(member);
@@ -9084,7 +9110,7 @@ var TeamOverviewView = class {
     }
     if (this.settings.jiraEnabled && this.settings.jiraTeamEnabled && member.jiraIdentity) {
       const jiraBtn = actions.createEl("button", {
-        cls: "task-bujo-team-action",
+        cls: "friday-team-action",
         text: "JIRA workload \u2192"
       });
       jiraBtn.addEventListener("click", () => this.openJiraTeamTab());
@@ -9205,10 +9231,10 @@ var TeamDashboardView = class extends import_obsidian26.ItemView {
   async onOpen() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("task-bujo-container");
-    containerEl.addClass("task-bujo-team-dashboard-container");
+    containerEl.addClass("friday-container");
+    containerEl.addClass("friday-team-dashboard-container");
     this.contentContainer = containerEl.createDiv({
-      cls: "task-bujo-content task-bujo-team-dashboard-content"
+      cls: "friday-content friday-team-dashboard-content"
     });
     this.onTeamChanged(() => {
       if (!this.contentContainer)
@@ -9267,9 +9293,14 @@ var MigrationModal = class extends import_obsidian27.Modal {
   }
   async onOpen() {
     var _a, _b;
-    this.modalEl.addClass("task-bujo-migration-modal");
+    this.modalEl.addClass("friday-migration-modal");
     const { contentEl } = this;
     contentEl.empty();
+    try {
+      await this.dailyNotes.getOrCreateDailyNote(/* @__PURE__ */ new Date());
+    } catch (e) {
+      new import_obsidian27.Notice(`Could not create today's daily note: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
     contentEl.createEl("h2", { text: "Morning Review" });
     const overdueOneOnOnes = (_b = (_a = this.teamService) == null ? void 0 : _a.getOverdueOneOnOnes()) != null ? _b : [];
     if (overdueOneOnOnes.length > 0) {
@@ -9284,14 +9315,15 @@ var MigrationModal = class extends import_obsidian27.Modal {
     if (!hasActionable && todayTasks.length === 0 && overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0) {
       contentEl.createEl("p", {
         text: "No tasks to review. Your slate is clean!",
-        cls: "task-bujo-empty"
+        cls: "friday-empty"
       });
       this.renderQuickAdd(contentEl);
       this.renderCloseButton(contentEl);
       return;
     }
     if (yesterdayTasks.length > 0) {
-      this.renderSection(contentEl, "Yesterday's Incomplete", yesterdayTasks, true);
+      const label = this.reviewData.yesterdayDate ? `Incomplete from ${formatDateDisplay(/* @__PURE__ */ new Date(this.reviewData.yesterdayDate + "T00:00:00"))}` : "Yesterday's Incomplete";
+      this.renderSection(contentEl, label, yesterdayTasks, true);
     }
     if (overdueTasks.length > 0) {
       this.renderSection(contentEl, "Overdue", overdueTasks, true);
@@ -9300,7 +9332,7 @@ var MigrationModal = class extends import_obsidian27.Modal {
       this.renderSection(contentEl, "Due Today", todayTasks, false);
     }
     if (hasActionable) {
-      this.summaryEl = contentEl.createDiv({ cls: "task-bujo-migration-summary" });
+      this.summaryEl = contentEl.createDiv({ cls: "friday-migration-summary" });
       this.updateSummary();
     }
     if (this.reviewData.availableTasks.length > 0) {
@@ -9310,9 +9342,9 @@ var MigrationModal = class extends import_obsidian27.Modal {
       this.renderPicker(contentEl, "Pick from Open Points", this.reviewData.availableOpenPoints, this.selectedOpenPoints);
     }
     if (this.reviewData.availableTasks.length > 0 || this.reviewData.availableOpenPoints.length > 0) {
-      const addSelectedContainer = contentEl.createDiv({ cls: "task-bujo-picker-actions" });
+      const addSelectedContainer = contentEl.createDiv({ cls: "friday-picker-actions" });
       const addSelectedBtn = addSelectedContainer.createEl("button", { text: "Add Selected to Today", cls: "mod-cta" });
-      const addedFeedback = addSelectedContainer.createDiv({ cls: "task-bujo-picker-feedback" });
+      const addedFeedback = addSelectedContainer.createDiv({ cls: "friday-picker-feedback" });
       addSelectedBtn.addEventListener("click", async () => {
         const allItems = [...this.reviewData.availableTasks, ...this.reviewData.availableOpenPoints];
         const itemMap = new Map(allItems.map((t) => [t.id, t]));
@@ -9340,7 +9372,7 @@ var MigrationModal = class extends import_obsidian27.Modal {
       });
     }
     this.renderQuickAdd(contentEl);
-    const buttonContainer = contentEl.createDiv({ cls: "task-bujo-migration-actions" });
+    const buttonContainer = contentEl.createDiv({ cls: "friday-migration-actions" });
     if (hasActionable) {
       const applyBtn = buttonContainer.createEl("button", { text: "Apply", cls: "mod-cta" });
       applyBtn.addEventListener("click", async () => {
@@ -9367,10 +9399,10 @@ var MigrationModal = class extends import_obsidian27.Modal {
     this.contentEl.empty();
   }
   renderSection(container, title, tasks, actionable) {
-    const section = container.createDiv({ cls: "task-bujo-review-section" });
-    const header = section.createDiv({ cls: "task-bujo-review-section-header" });
-    header.createSpan({ text: title, cls: "task-bujo-review-section-title" });
-    header.createSpan({ text: ` (${tasks.length})`, cls: "task-bujo-review-section-count" });
+    const section = container.createDiv({ cls: "friday-review-section" });
+    const header = section.createDiv({ cls: "friday-review-section-header" });
+    header.createSpan({ text: title, cls: "friday-review-section-title" });
+    header.createSpan({ text: ` (${tasks.length})`, cls: "friday-review-section-count" });
     for (const task of tasks) {
       if (actionable) {
         this.renderActionableTask(section, task);
@@ -9380,38 +9412,38 @@ var MigrationModal = class extends import_obsidian27.Modal {
     }
   }
   renderActionableTask(container, task) {
-    const itemEl = container.createDiv({ cls: "task-bujo-migration-item" });
-    const infoEl = itemEl.createDiv({ cls: "task-bujo-migration-item-info" });
-    const textEl = infoEl.createDiv({ cls: "task-bujo-migration-item-text" });
+    const itemEl = container.createDiv({ cls: "friday-migration-item" });
+    const infoEl = itemEl.createDiv({ cls: "friday-migration-item-info" });
+    const textEl = infoEl.createDiv({ cls: "friday-migration-item-text" });
     if (task.priority && task.priority !== "none" /* None */) {
-      textEl.createSpan({ cls: `task-bujo-priority-dot task-bujo-priority-${task.priority}` });
+      textEl.createSpan({ cls: `friday-priority-dot friday-priority-${task.priority}` });
     }
     textEl.createSpan({ text: task.text });
-    const metaEl = infoEl.createDiv({ cls: "task-bujo-migration-item-meta" });
-    metaEl.createSpan({ cls: "task-bujo-migration-item-source", text: this.getFileName(task.sourcePath) });
+    const metaEl = infoEl.createDiv({ cls: "friday-migration-item-meta" });
+    metaEl.createSpan({ cls: "friday-migration-item-source", text: this.getFileName(task.sourcePath) });
     if (task.dueDate) {
       metaEl.createSpan({ text: " \xB7 " });
-      metaEl.createSpan({ cls: "task-bujo-migration-item-date", text: formatDateDisplay(task.dueDate) });
+      metaEl.createSpan({ cls: "friday-migration-item-date", text: formatDateDisplay(task.dueDate) });
     }
     if (task.childrenIds.length > 0) {
       for (const childId of task.childrenIds) {
         const child = this.store.getTaskById(childId);
         if (child) {
-          const childEl = itemEl.createDiv({ cls: "task-bujo-migration-subtask" });
+          const childEl = itemEl.createDiv({ cls: "friday-migration-subtask" });
           const statusIcon = child.status === "x" /* Done */ ? "[x]" : child.status === "-" /* Cancelled */ ? "[-]" : "[ ]";
           childEl.textContent = `${statusIcon} ${child.text}`;
         }
       }
     }
-    const actionsEl = itemEl.createDiv({ cls: "task-bujo-migration-item-actions" });
+    const actionsEl = itemEl.createDiv({ cls: "friday-migration-item-actions" });
     const actions = [
-      { action: "forward", label: "Forward", cls: "task-bujo-btn-forward" },
-      { action: "reschedule", label: "Reschedule", cls: "task-bujo-btn-reschedule" },
-      { action: "done", label: "Done", cls: "task-bujo-btn-done" },
-      { action: "cancel", label: "Cancel", cls: "task-bujo-btn-cancel" }
+      { action: "forward", label: "Forward", cls: "friday-btn-forward" },
+      { action: "reschedule", label: "Reschedule", cls: "friday-btn-reschedule" },
+      { action: "done", label: "Done", cls: "friday-btn-done" },
+      { action: "cancel", label: "Cancel", cls: "friday-btn-cancel" }
     ];
     const buttons = [];
-    const dateInputContainer = itemEl.createDiv({ cls: "task-bujo-migration-date-input" });
+    const dateInputContainer = itemEl.createDiv({ cls: "friday-migration-date-input" });
     dateInputContainer.style.display = "none";
     const dateInput = dateInputContainer.createEl("input", { type: "date" });
     for (const { action, label, cls } of actions) {
@@ -9447,20 +9479,20 @@ var MigrationModal = class extends import_obsidian27.Modal {
       buttons[i].addClass("is-dimmed");
   }
   renderPreviewTask(container, task) {
-    const itemEl = container.createDiv({ cls: "task-bujo-migration-item task-bujo-preview-item" });
-    const infoEl = itemEl.createDiv({ cls: "task-bujo-migration-item-info" });
-    const textEl = infoEl.createDiv({ cls: "task-bujo-migration-item-text" });
+    const itemEl = container.createDiv({ cls: "friday-migration-item friday-preview-item" });
+    const infoEl = itemEl.createDiv({ cls: "friday-migration-item-info" });
+    const textEl = infoEl.createDiv({ cls: "friday-migration-item-text" });
     if (task.priority && task.priority !== "none" /* None */) {
-      textEl.createSpan({ cls: `task-bujo-priority-dot task-bujo-priority-${task.priority}` });
+      textEl.createSpan({ cls: `friday-priority-dot friday-priority-${task.priority}` });
     }
     textEl.createSpan({ text: task.text });
-    const metaEl = infoEl.createDiv({ cls: "task-bujo-migration-item-meta" });
-    metaEl.createSpan({ cls: "task-bujo-migration-item-source", text: this.getFileName(task.sourcePath) });
+    const metaEl = infoEl.createDiv({ cls: "friday-migration-item-meta" });
+    metaEl.createSpan({ cls: "friday-migration-item-source", text: this.getFileName(task.sourcePath) });
     if (task.childrenIds.length > 0) {
       for (const childId of task.childrenIds) {
         const child = this.store.getTaskById(childId);
         if (child) {
-          const childEl = itemEl.createDiv({ cls: "task-bujo-migration-subtask" });
+          const childEl = itemEl.createDiv({ cls: "friday-migration-subtask" });
           const statusIcon = child.status === "x" /* Done */ ? "[x]" : child.status === "-" /* Cancelled */ ? "[-]" : "[ ]";
           childEl.textContent = `${statusIcon} ${child.text}`;
         }
@@ -9468,25 +9500,25 @@ var MigrationModal = class extends import_obsidian27.Modal {
     }
   }
   renderQuickAdd(container) {
-    const section = container.createDiv({ cls: "task-bujo-review-quickadd" });
+    const section = container.createDiv({ cls: "friday-review-quickadd" });
     section.createEl("h3", { text: "Add Task for Today" });
-    const form = section.createDiv({ cls: "task-bujo-add-form" });
+    const form = section.createDiv({ cls: "friday-add-form" });
     const textInput = form.createEl("input", {
       type: "text",
       placeholder: "New task...",
-      cls: "task-bujo-add-input"
+      cls: "friday-add-input"
     });
-    const prioritySelect = form.createEl("select", { cls: "task-bujo-add-priority" });
+    const prioritySelect = form.createEl("select", { cls: "friday-add-priority" });
     const opts = [["none", "--"], ["high", "H"], ["medium", "M"], ["low", "L"]];
     for (const [val, label] of opts) {
       prioritySelect.createEl("option", { value: val, text: label });
     }
     const dateInput = form.createEl("input", {
       type: "date",
-      cls: "task-bujo-add-date"
+      cls: "friday-add-date"
     });
-    const addBtn = form.createEl("button", { text: "+ Add", cls: "task-bujo-add-btn" });
-    const addedList = section.createDiv({ cls: "task-bujo-review-added" });
+    const addBtn = form.createEl("button", { text: "+ Add", cls: "friday-add-btn" });
+    const addedList = section.createDiv({ cls: "friday-review-added" });
     const doAdd = async () => {
       const text = textInput.value.trim();
       if (!text)
@@ -9495,7 +9527,7 @@ var MigrationModal = class extends import_obsidian27.Modal {
       const due = dateInput.value ? isoToPluginDate(dateInput.value) : "";
       const line = buildTaskLine(text, priority, due);
       await this.dailyNotes.addRawTaskLine(line, /* @__PURE__ */ new Date());
-      addedList.createDiv({ cls: "task-bujo-muted", text: `Added: ${text}` });
+      addedList.createDiv({ cls: "friday-muted", text: `Added: ${text}` });
       textInput.value = "";
       dateInput.value = "";
       prioritySelect.value = "none";
@@ -9508,16 +9540,16 @@ var MigrationModal = class extends import_obsidian27.Modal {
     });
   }
   renderPicker(container, title, items, selectedSet) {
-    const section = container.createDiv({ cls: "task-bujo-picker-section" });
-    const header = section.createDiv({ cls: "task-bujo-picker-header" });
-    header.createSpan({ text: title, cls: "task-bujo-review-section-title" });
-    header.createSpan({ text: ` (${items.length})`, cls: "task-bujo-review-section-count" });
+    const section = container.createDiv({ cls: "friday-picker-section" });
+    const header = section.createDiv({ cls: "friday-picker-header" });
+    header.createSpan({ text: title, cls: "friday-review-section-title" });
+    header.createSpan({ text: ` (${items.length})`, cls: "friday-review-section-count" });
     const searchInput = section.createEl("input", {
       type: "text",
       placeholder: "Search...",
-      cls: "task-bujo-picker-search"
+      cls: "friday-picker-search"
     });
-    const listEl = section.createDiv({ cls: "task-bujo-picker-list" });
+    const listEl = section.createDiv({ cls: "friday-picker-list" });
     const MAX_VISIBLE = 50;
     const renderList = (query) => {
       listEl.empty();
@@ -9525,11 +9557,11 @@ var MigrationModal = class extends import_obsidian27.Modal {
       const filtered = q ? items.filter((t) => t.text.toLowerCase().includes(q) || t.sourcePath.toLowerCase().includes(q)) : items;
       const visible = filtered.slice(0, MAX_VISIBLE);
       if (visible.length === 0) {
-        listEl.createDiv({ cls: "task-bujo-muted", text: "No items match" });
+        listEl.createDiv({ cls: "friday-muted", text: "No items match" });
         return;
       }
       for (const item of visible) {
-        const row = listEl.createDiv({ cls: "task-bujo-picker-item" });
+        const row = listEl.createDiv({ cls: "friday-picker-item" });
         const checkbox = row.createEl("input", { type: "checkbox" });
         checkbox.checked = selectedSet.has(item.id);
         checkbox.addEventListener("change", () => {
@@ -9539,19 +9571,19 @@ var MigrationModal = class extends import_obsidian27.Modal {
             selectedSet.delete(item.id);
           }
         });
-        const textEl = row.createDiv({ cls: "task-bujo-picker-item-text" });
+        const textEl = row.createDiv({ cls: "friday-picker-item-text" });
         if (item.priority && item.priority !== "none" /* None */) {
-          textEl.createSpan({ cls: `task-bujo-priority-dot task-bujo-priority-${item.priority}` });
+          textEl.createSpan({ cls: `friday-priority-dot friday-priority-${item.priority}` });
         }
         textEl.createSpan({ text: item.text });
-        const sourceEl = row.createDiv({ cls: "task-bujo-picker-item-source" });
+        const sourceEl = row.createDiv({ cls: "friday-picker-item-source" });
         sourceEl.textContent = this.getFileName(item.sourcePath);
         if (item.dueDate) {
           sourceEl.textContent += ` \xB7 ${formatDateDisplay(item.dueDate)}`;
         }
       }
       if (filtered.length > MAX_VISIBLE) {
-        listEl.createDiv({ cls: "task-bujo-muted", text: `+ ${filtered.length - MAX_VISIBLE} more (use search to narrow)` });
+        listEl.createDiv({ cls: "friday-muted", text: `+ ${filtered.length - MAX_VISIBLE} more (use search to narrow)` });
       }
     };
     renderList("");
@@ -9564,7 +9596,7 @@ var MigrationModal = class extends import_obsidian27.Modal {
     });
   }
   renderCloseButton(container) {
-    const buttonContainer = container.createDiv({ cls: "task-bujo-migration-actions" });
+    const buttonContainer = container.createDiv({ cls: "friday-migration-actions" });
     const closeBtn = buttonContainer.createEl("button", { text: "Close" });
     closeBtn.addEventListener("click", () => {
       this.onComplete(null);
@@ -9576,27 +9608,27 @@ var MigrationModal = class extends import_obsidian27.Modal {
    *  line to today's daily note — the author still decides when to actually
    *  hold the 1:1 and can trigger `Start 1:1` from the Team view at that point. */
   renderOverdueOneOnOnes(container, overdue) {
-    const section = container.createDiv({ cls: "task-bujo-review-section task-bujo-review-oneonones" });
-    const header = section.createDiv({ cls: "task-bujo-review-section-header" });
-    header.createSpan({ text: "Overdue 1:1s", cls: "task-bujo-review-section-title" });
-    header.createSpan({ text: ` (${overdue.length})`, cls: "task-bujo-review-section-count" });
+    const section = container.createDiv({ cls: "friday-review-section friday-review-oneonones" });
+    const header = section.createDiv({ cls: "friday-review-section-header" });
+    header.createSpan({ text: "Overdue 1:1s", cls: "friday-review-section-title" });
+    header.createSpan({ text: ` (${overdue.length})`, cls: "friday-review-section-count" });
     for (const { member, daysOverdue } of overdue) {
-      const row = section.createDiv({ cls: "task-bujo-migration-item task-bujo-oneonone-row" });
-      const infoEl = row.createDiv({ cls: "task-bujo-migration-item-info" });
-      const textEl = infoEl.createDiv({ cls: "task-bujo-migration-item-text" });
-      textEl.createSpan({ text: member.name, cls: "task-bujo-oneonone-name" });
+      const row = section.createDiv({ cls: "friday-migration-item friday-oneonone-row" });
+      const infoEl = row.createDiv({ cls: "friday-migration-item-info" });
+      const textEl = infoEl.createDiv({ cls: "friday-migration-item-text" });
+      textEl.createSpan({ text: member.name, cls: "friday-oneonone-name" });
       if (member.role) {
-        textEl.createSpan({ text: ` \u2014 ${member.role}`, cls: "task-bujo-oneonone-role" });
+        textEl.createSpan({ text: ` \u2014 ${member.role}`, cls: "friday-oneonone-role" });
       }
-      const metaEl = infoEl.createDiv({ cls: "task-bujo-migration-item-meta" });
+      const metaEl = infoEl.createDiv({ cls: "friday-migration-item-meta" });
       metaEl.createSpan({
-        cls: "task-bujo-oneonone-overdue",
+        cls: "friday-oneonone-overdue",
         text: `${daysOverdue}d overdue \xB7 cadence ${member.cadence}`
       });
-      const actionsEl = row.createDiv({ cls: "task-bujo-migration-item-actions" });
+      const actionsEl = row.createDiv({ cls: "friday-migration-item-actions" });
       const scheduleBtn = actionsEl.createEl("button", {
         text: "Schedule 1:1",
-        cls: "task-bujo-btn-forward"
+        cls: "friday-btn-forward"
       });
       scheduleBtn.addEventListener("click", async () => {
         try {
@@ -9637,27 +9669,27 @@ var MigrationModal = class extends import_obsidian27.Modal {
    *  mark the nudge as done (updates `lastNudged`) or clear the waitingOn flag. */
   renderStaleWaitingTopics(container, topics) {
     var _a, _b, _c;
-    const section = container.createDiv({ cls: "task-bujo-review-section task-bujo-review-waiting" });
-    const header = section.createDiv({ cls: "task-bujo-review-section-header" });
-    header.createSpan({ text: "Waiting on", cls: "task-bujo-review-section-title" });
-    header.createSpan({ text: ` (${topics.length})`, cls: "task-bujo-review-section-count" });
+    const section = container.createDiv({ cls: "friday-review-section friday-review-waiting" });
+    const header = section.createDiv({ cls: "friday-review-section-header" });
+    header.createSpan({ text: "Waiting on", cls: "friday-review-section-title" });
+    header.createSpan({ text: ` (${topics.length})`, cls: "friday-review-section-count" });
     const members = (_b = (_a = this.settings) == null ? void 0 : _a.teamMembers) != null ? _b : [];
     const byEmail = new Map(members.map((m) => [m.email, m]));
     for (const topic of topics) {
-      const row = section.createDiv({ cls: "task-bujo-migration-item task-bujo-waiting-row" });
-      const infoEl = row.createDiv({ cls: "task-bujo-migration-item-info" });
-      const textEl = infoEl.createDiv({ cls: "task-bujo-migration-item-text" });
-      textEl.createSpan({ text: topic.title, cls: "task-bujo-waiting-topic" });
+      const row = section.createDiv({ cls: "friday-migration-item friday-waiting-row" });
+      const infoEl = row.createDiv({ cls: "friday-migration-item-info" });
+      const textEl = infoEl.createDiv({ cls: "friday-migration-item-text" });
+      textEl.createSpan({ text: topic.title, cls: "friday-waiting-topic" });
       const waitingOn = (_c = topic.waitingOn) != null ? _c : "";
       const member = byEmail.get(waitingOn);
       const label = member ? member.nickname || member.fullName || member.email : waitingOn;
-      const metaEl = infoEl.createDiv({ cls: "task-bujo-migration-item-meta" });
+      const metaEl = infoEl.createDiv({ cls: "friday-migration-item-meta" });
       const summary = topic.lastNudged ? `Waiting on ${label} \xB7 last nudged ${topic.lastNudged}` : `Waiting on ${label} \xB7 never nudged`;
-      metaEl.createSpan({ text: summary, cls: "task-bujo-waiting-meta" });
-      const actionsEl = row.createDiv({ cls: "task-bujo-migration-item-actions" });
+      metaEl.createSpan({ text: summary, cls: "friday-waiting-meta" });
+      const actionsEl = row.createDiv({ cls: "friday-migration-item-actions" });
       const nudgedBtn = actionsEl.createEl("button", {
         text: "Just nudged",
-        cls: "task-bujo-btn-forward"
+        cls: "friday-btn-forward"
       });
       nudgedBtn.addEventListener("click", async () => {
         try {
@@ -9671,7 +9703,7 @@ var MigrationModal = class extends import_obsidian27.Modal {
       });
       const clearBtn = actionsEl.createEl("button", {
         text: "Unblock",
-        cls: "task-bujo-btn"
+        cls: "friday-btn"
       });
       clearBtn.addEventListener("click", async () => {
         try {
@@ -9740,9 +9772,9 @@ var WeeklyReviewModal = class extends import_obsidian28.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-weekly-review-modal");
+    this.modalEl.addClass("friday-weekly-review-modal");
     contentEl.createEl("h2", { text: `Weekly Review \u2014 ${formatWeekId(this.stats.weekId)}` });
-    const summarySection = contentEl.createDiv({ cls: "task-bujo-review-summary" });
+    const summarySection = contentEl.createDiv({ cls: "friday-review-summary" });
     const summaryItems = [
       { label: "Tasks Planned", value: String(this.stats.totalPlanned) },
       { label: "Completed", value: String(this.stats.totalCompleted) },
@@ -9751,9 +9783,9 @@ var WeeklyReviewModal = class extends import_obsidian28.Modal {
       { label: "Completion Rate", value: `${this.stats.completionRate.toFixed(0)}%` }
     ];
     for (const item of summaryItems) {
-      const row = summarySection.createDiv({ cls: "task-bujo-review-stat" });
-      row.createSpan({ cls: "task-bujo-review-stat-label", text: item.label });
-      row.createSpan({ cls: "task-bujo-review-stat-value", text: item.value });
+      const row = summarySection.createDiv({ cls: "friday-review-stat" });
+      row.createSpan({ cls: "friday-review-stat-label", text: item.label });
+      row.createSpan({ cls: "friday-review-stat-value", text: item.value });
     }
     if (this.stats.workTypeBreakdown.size > 0) {
       this.renderBreakdownSection(contentEl, "Work Type Breakdown", this.stats.workTypeBreakdown);
@@ -9764,7 +9796,7 @@ var WeeklyReviewModal = class extends import_obsidian28.Modal {
     if (this.weeklyHistory.length > 0) {
       this.renderComparison(contentEl);
     }
-    const actions = contentEl.createDiv({ cls: "task-bujo-review-actions" });
+    const actions = contentEl.createDiv({ cls: "friday-review-actions" });
     const saveBtn = actions.createEl("button", {
       cls: "mod-cta",
       text: "Save Snapshot & Close"
@@ -9778,25 +9810,25 @@ var WeeklyReviewModal = class extends import_obsidian28.Modal {
     closeBtn.addEventListener("click", () => this.close());
   }
   renderBreakdownSection(container, title, data) {
-    const section = container.createDiv({ cls: "task-bujo-review-breakdown" });
+    const section = container.createDiv({ cls: "friday-review-breakdown" });
     section.createEl("h3", { text: title });
     for (const [name, { planned, completed }] of data) {
-      const row = section.createDiv({ cls: "task-bujo-review-breakdown-row" });
-      row.createSpan({ cls: "task-bujo-review-breakdown-name", text: name });
-      const barWrap = row.createDiv({ cls: "task-bujo-review-breakdown-bar-wrap" });
+      const row = section.createDiv({ cls: "friday-review-breakdown-row" });
+      row.createSpan({ cls: "friday-review-breakdown-name", text: name });
+      const barWrap = row.createDiv({ cls: "friday-review-breakdown-bar-wrap" });
       const pct = planned > 0 ? completed / planned * 100 : 0;
-      const bar = barWrap.createDiv({ cls: "task-bujo-review-breakdown-bar" });
+      const bar = barWrap.createDiv({ cls: "friday-review-breakdown-bar" });
       bar.style.width = `${pct}%`;
-      row.createSpan({ cls: "task-bujo-review-breakdown-value", text: `${completed}/${planned}` });
+      row.createSpan({ cls: "friday-review-breakdown-value", text: `${completed}/${planned}` });
     }
   }
   renderComparison(container) {
-    const section = container.createDiv({ cls: "task-bujo-review-comparison" });
+    const section = container.createDiv({ cls: "friday-review-comparison" });
     section.createEl("h3", { text: "Recent Weeks" });
     const recent = this.weeklyHistory.slice(-4);
     for (const snap of recent) {
       const rate = snap.totalPlanned > 0 ? (snap.totalCompleted / snap.totalPlanned * 100).toFixed(0) : "0";
-      const row = section.createDiv({ cls: "task-bujo-review-comparison-row" });
+      const row = section.createDiv({ cls: "friday-review-comparison-row" });
       row.createSpan({ text: formatWeekId(snap.weekId) });
       row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%)` });
     }
@@ -9820,10 +9852,10 @@ var MonthlyReviewModal = class extends import_obsidian29.Modal {
   }
   async onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-weekly-review-modal");
+    this.modalEl.addClass("friday-weekly-review-modal");
     const now = /* @__PURE__ */ new Date();
     contentEl.createEl("h2", { text: `Monthly Review \u2014 ${formatMonthDisplay(now)}` });
-    const summarySection = contentEl.createDiv({ cls: "task-bujo-review-summary" });
+    const summarySection = contentEl.createDiv({ cls: "friday-review-summary" });
     const summaryItems = [
       { label: "Tasks Planned", value: String(this.stats.totalPlanned) },
       { label: "Completed", value: String(this.stats.totalCompleted) },
@@ -9832,15 +9864,15 @@ var MonthlyReviewModal = class extends import_obsidian29.Modal {
       { label: "Completion Rate", value: `${this.stats.completionRate.toFixed(0)}%` }
     ];
     for (const item of summaryItems) {
-      const row = summarySection.createDiv({ cls: "task-bujo-review-stat" });
-      row.createSpan({ cls: "task-bujo-review-stat-label", text: item.label });
-      row.createSpan({ cls: "task-bujo-review-stat-value", text: item.value });
+      const row = summarySection.createDiv({ cls: "friday-review-stat" });
+      row.createSpan({ cls: "friday-review-stat-label", text: item.label });
+      row.createSpan({ cls: "friday-review-stat-value", text: item.value });
     }
     await this.renderReflections(contentEl);
     if (this.monthlyHistory.length > 0) {
       this.renderComparison(contentEl);
     }
-    const actions = contentEl.createDiv({ cls: "task-bujo-review-actions" });
+    const actions = contentEl.createDiv({ cls: "friday-review-actions" });
     const saveBtn = actions.createEl("button", {
       cls: "mod-cta",
       text: "Save Snapshot & Close"
@@ -9855,15 +9887,15 @@ var MonthlyReviewModal = class extends import_obsidian29.Modal {
     closeBtn.addEventListener("click", () => this.close());
   }
   async renderReflections(container) {
-    const section = container.createDiv({ cls: "task-bujo-monthly-reflections-section" });
+    const section = container.createDiv({ cls: "friday-monthly-reflections-section" });
     section.createEl("h3", { text: "Reflections" });
     section.createEl("p", {
       text: "What went well? What could be improved? What to focus on next month?",
-      cls: "task-bujo-text-muted"
+      cls: "friday-text-muted"
     });
     this.reflectionsText = await this.monthlyNotes.readReflections(/* @__PURE__ */ new Date());
     const textarea = section.createEl("textarea", {
-      cls: "task-bujo-monthly-reflections-textarea",
+      cls: "friday-monthly-reflections-textarea",
       placeholder: "Write your reflections here..."
     });
     textarea.value = this.reflectionsText;
@@ -9873,12 +9905,12 @@ var MonthlyReviewModal = class extends import_obsidian29.Modal {
     });
   }
   renderComparison(container) {
-    const section = container.createDiv({ cls: "task-bujo-review-comparison" });
+    const section = container.createDiv({ cls: "friday-review-comparison" });
     section.createEl("h3", { text: "Recent Months" });
     const recent = this.monthlyHistory.slice(-4);
     for (const snap of recent) {
       const rate = snap.totalPlanned > 0 ? (snap.totalCompleted / snap.totalPlanned * 100).toFixed(0) : "0";
-      const row = section.createDiv({ cls: "task-bujo-review-comparison-row" });
+      const row = section.createDiv({ cls: "friday-review-comparison-row" });
       row.createSpan({ text: formatMonthIdDisplay(snap.monthId) });
       row.createSpan({ text: `${snap.totalCompleted}/${snap.totalPlanned} (${rate}%)` });
     }
@@ -9898,10 +9930,10 @@ var QuickCaptureModal = class extends import_obsidian30.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-quick-capture-modal");
+    this.modalEl.addClass("friday-quick-capture-modal");
     contentEl.createEl("h3", { text: "Capture to Inbox" });
     const textarea = contentEl.createEl("textarea", {
-      cls: "task-bujo-quick-capture-textarea",
+      cls: "friday-quick-capture-textarea",
       attr: {
         placeholder: "e.g. follow up with architect about API versioning \u2014 details, links, whatever\u2026",
         rows: "6"
@@ -9922,9 +9954,9 @@ var QuickCaptureModal = class extends import_obsidian30.Modal {
       }
     });
     setTimeout(() => textarea.focus(), 50);
-    const hint = contentEl.createDiv({ cls: "task-bujo-quick-capture-hint" });
+    const hint = contentEl.createDiv({ cls: "friday-quick-capture-hint" });
     hint.setText("Ctrl+Enter to capture \xB7 Esc to cancel");
-    const actions = contentEl.createDiv({ cls: "task-bujo-quick-capture-actions" });
+    const actions = contentEl.createDiv({ cls: "friday-quick-capture-actions" });
     const saveBtn = actions.createEl("button", { text: "Capture", cls: "mod-cta" });
     saveBtn.addEventListener("click", () => this.submit());
     const cancelBtn = actions.createEl("button", { text: "Cancel" });
@@ -9953,7 +9985,7 @@ var DueDateModal = class extends import_obsidian31.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("task-bujo-due-modal");
+    this.modalEl.addClass("friday-due-modal");
     contentEl.createEl("h3", { text: "Set Due Date" });
     new import_obsidian31.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
@@ -9989,7 +10021,7 @@ var DueDateModal = class extends import_obsidian31.Modal {
 };
 
 // src/main.ts
-var TaskBuJoPlugin = class extends import_obsidian32.Plugin {
+var FridayPlugin = class extends import_obsidian32.Plugin {
   async onload() {
     var _a, _b, _c;
     const saved = await this.loadData();
@@ -10041,8 +10073,8 @@ var TaskBuJoPlugin = class extends import_obsidian32.Plugin {
       this.store.setTasks(this.scanner.getAllTasks());
     });
     this.registerView(
-      VIEW_TYPE_TASK_BUJO,
-      (leaf) => new TaskBuJoView(
+      VIEW_TYPE_FRIDAY,
+      (leaf) => new FridayView(
         leaf,
         this.store,
         this.writer,
@@ -10091,11 +10123,11 @@ var TaskBuJoPlugin = class extends import_obsidian32.Plugin {
     );
     const refs = this.scanner.registerEvents();
     refs.forEach((ref) => this.registerEvent(ref));
-    this.addRibbonIcon("check-square", "Open BuJo", () => this.activateView());
+    this.addRibbonIcon("check-square", "Open Friday", () => this.activateView());
     this.addRibbonIcon("layout-dashboard", "Open JIRA Dashboard", () => this.activateJiraDashboard());
     this.addRibbonIcon("users", "Open Team Dashboard", () => this.activateTeamDashboard());
     this.statusBarEl = this.addStatusBarItem();
-    this.statusBarEl.setText("BuJo ...");
+    this.statusBarEl.setText("Friday ...");
     this.addCommand({
       id: "open-bujo",
       name: "Open",
@@ -10211,7 +10243,7 @@ ${rest}` : `- [ ] ${first}`;
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
         menu.addItem((item) => {
-          item.setTitle("BuJo: Quick create task").setIcon("check-square").onClick(() => {
+          item.setTitle("Friday: Quick create task").setIcon("check-square").onClick(() => {
             new InsertTaskModal(this.app, (result) => {
               const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
               const cursor2 = editor.getCursor();
@@ -10228,7 +10260,7 @@ ${rest}` : `- [ ] ${first}`;
           menu.addSeparator();
           const isDone = checkboxMatch[2].toLowerCase() === "x";
           menu.addItem((item) => {
-            item.setTitle(isDone ? "BuJo: Mark as open" : "BuJo: Mark as done").setIcon(isDone ? "circle" : "check").onClick(() => {
+            item.setTitle(isDone ? "Friday: Mark as open" : "Friday: Mark as done").setIcon(isDone ? "circle" : "check").onClick(() => {
               const newChar = isDone ? " " : "x";
               const newLine = currentLine.replace(/\[([ x><!-])\]/i, `[${newChar}]`);
               editor.setLine(cursor.line, newLine);
@@ -10241,18 +10273,18 @@ ${rest}` : `- [ ] ${first}`;
           ];
           for (const [val, label, icon] of priorities) {
             menu.addItem((item) => {
-              item.setTitle(`BuJo: ${label}`).setIcon(icon).onClick(() => {
+              item.setTitle(`Friday: ${label}`).setIcon(icon).onClick(() => {
                 this.setLinePriority(editor, cursor.line, val);
               });
             });
           }
           menu.addItem((item) => {
-            item.setTitle("BuJo: Remove priority").setIcon("x").onClick(() => {
+            item.setTitle("Friday: Remove priority").setIcon("x").onClick(() => {
               this.setLinePriority(editor, cursor.line, null);
             });
           });
           menu.addItem((item) => {
-            item.setTitle("BuJo: Set due date").setIcon("calendar").onClick(() => {
+            item.setTitle("Friday: Set due date").setIcon("calendar").onClick(() => {
               var _a2;
               const existing = ((_a2 = currentLine.match(DUE_DATE_REGEX)) == null ? void 0 : _a2[1]) || "";
               new DueDateModal(this.app, existing, (newDate) => {
@@ -10266,7 +10298,7 @@ ${rest}` : `- [ ] ${first}`;
         }
       })
     );
-    this.addSettingTab(new TaskBuJoSettingTab(this.app, this));
+    this.addSettingTab(new FridaySettingTab(this.app, this));
     this.app.workspace.onLayoutReady(async () => {
       await this.scanner.fullScan();
       this.store.setTasks(this.scanner.getAllTasks());
@@ -10300,19 +10332,19 @@ ${rest}` : `- [ ] ${first}`;
     if (created > 0) {
       await this.scanner.fullScan();
       this.store.setTasks(this.scanner.getAllTasks());
-      new import_obsidian32.Notice(`BuJo: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
+      new import_obsidian32.Notice(`Friday: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
     }
   }
   async activateView(newTab = false) {
     const { workspace } = this.app;
     let leaf = null;
-    const leaves = workspace.getLeavesOfType(VIEW_TYPE_TASK_BUJO);
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE_FRIDAY);
     if (leaves.length > 0 && !newTab) {
       leaf = leaves[0];
     } else {
       leaf = workspace.getLeaf(true);
       if (leaf)
-        await leaf.setViewState({ type: VIEW_TYPE_TASK_BUJO, active: true });
+        await leaf.setViewState({ type: VIEW_TYPE_FRIDAY, active: true });
     }
     if (leaf)
       workspace.revealLeaf(leaf);
@@ -10480,7 +10512,7 @@ ${rest}` : `- [ ] ${first}`;
     editor.setLine(lineNum, line);
   }
   onunload() {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_TASK_BUJO);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_FRIDAY);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_TEAM_DASHBOARD);
     this.scanner.destroy();

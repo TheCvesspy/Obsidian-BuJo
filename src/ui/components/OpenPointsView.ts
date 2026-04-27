@@ -18,25 +18,25 @@ export class OverviewView {
 		private searchQuery: string = '',
 		private collapsedGroups?: Set<string>
 	) {
-		this.el = container.createDiv({ cls: 'task-bujo-overview-view' });
+		this.el = container.createDiv({ cls: 'friday-overview-view' });
 	}
 
 	render(): void {
 		this.el.empty();
 
 		// Sub-view toggle bar
-		const toggleBar = this.el.createDiv({ cls: 'task-bujo-overview-toggle' });
+		const toggleBar = this.el.createDiv({ cls: 'friday-overview-toggle' });
 		const tabs: { key: OverviewSubView; label: string }[] = [
 			{ key: 'tasks', label: 'All Tasks' },
 			{ key: 'openPoints', label: 'Open Points' },
 		];
 		for (const { key, label } of tabs) {
 			const btn = toggleBar.createEl('button', {
-				cls: 'task-bujo-overview-toggle-btn',
+				cls: 'friday-overview-toggle-btn',
 				text: label,
 			});
 			if (key === this.activeSubView) {
-				btn.addClass('task-bujo-overview-toggle-active');
+				btn.addClass('friday-overview-toggle-active');
 			}
 			btn.addEventListener('click', () => {
 				if (this.activeSubView !== key) {
@@ -66,12 +66,12 @@ export class OverviewView {
 		const openCount = tasks.filter(t => t.status === TaskStatus.Open).length;
 
 		// Header
-		const header = this.el.createDiv({ cls: 'task-bujo-view-header' });
+		const header = this.el.createDiv({ cls: 'friday-view-header' });
 		header.createSpan({ text: 'All Tasks' });
-		header.createSpan({ cls: 'task-bujo-pending-count', text: ` (${openCount} open, ${tasks.length} total)` });
+		header.createSpan({ cls: 'friday-pending-count', text: ` (${openCount} open, ${tasks.length} total)` });
 
 		if (tasks.length === 0) {
-			this.el.createDiv({ cls: 'task-bujo-empty', text: 'No tasks found' });
+			this.el.createDiv({ cls: 'friday-empty', text: 'No tasks found' });
 			return;
 		}
 
@@ -100,9 +100,9 @@ export class OverviewView {
 		const totalCount = openPoints.length + uncategorized.length;
 
 		// Header
-		const header = this.el.createDiv({ cls: 'task-bujo-view-header' });
+		const header = this.el.createDiv({ cls: 'friday-view-header' });
 		header.createSpan({ text: 'Open Points' });
-		header.createSpan({ cls: 'task-bujo-pending-count', text: ` (${totalCount})` });
+		header.createSpan({ cls: 'friday-pending-count', text: ` (${totalCount})` });
 
 		// Open points grouped
 		const allStoreTasks = [...this.store.getOpenPoints(), ...this.store.getUncategorized()];
@@ -111,9 +111,9 @@ export class OverviewView {
 
 		// Uncategorized section
 		if (uncategorized.length > 0) {
-			this.el.createEl('hr', { cls: 'task-bujo-separator' });
+			this.el.createEl('hr', { cls: 'friday-separator' });
 
-			const uncatHeader = this.el.createDiv({ cls: 'task-bujo-view-subheader' });
+			const uncatHeader = this.el.createDiv({ cls: 'friday-view-subheader' });
 			uncatHeader.createSpan({ text: `Uncategorized (${uncategorized.length})` });
 
 			const groupedUncat = this.store.groupTasks(uncategorized, this.groupMode, this.settings.weekStartDay);

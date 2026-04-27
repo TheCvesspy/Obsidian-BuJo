@@ -22,7 +22,7 @@ export class SprintModal extends Modal {
 
     onOpen(): void {
         const { contentEl } = this;
-        this.modalEl.addClass('task-bujo-sprint-modal');
+        this.modalEl.addClass('friday-sprint-modal');
 
         if (this.editSprint) {
             this.name = this.editSprint.name;
@@ -70,7 +70,7 @@ export class SprintModal extends Modal {
         this.durationEl = contentEl.createEl('p');
         this.updateDuration();
 
-        this.errorEl = contentEl.createDiv({ cls: 'task-bujo-modal-error' });
+        this.errorEl = contentEl.createDiv({ cls: 'friday-modal-error' });
 
         new Setting(contentEl)
             .addButton(btn => btn

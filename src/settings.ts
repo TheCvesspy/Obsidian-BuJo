@@ -3,7 +3,7 @@ import {
     PluginSettings,
     FolderState,
     GroupMode,
-    BuJoViewMode,
+    FridayViewMode,
     TagCategory,
     DEFAULT_WORK_TYPES,
     DEFAULT_PURPOSES,
@@ -15,7 +15,7 @@ import { JiraDashboardService } from './services/jiraDashboardService';
 import { JiraTeamService } from './services/jiraTeamService';
 import { TeamMemberService } from './services/teamMemberService';
 
-interface TaskBuJoPlugin {
+interface FridayPlugin {
     settings: PluginSettings;
     saveSettings(requiresRescan?: boolean): Promise<void>;
     jiraService: JiraService;
@@ -31,8 +31,8 @@ interface FolderNode {
     children: FolderNode[];
 }
 
-export class TaskBuJoSettingTab extends PluginSettingTab {
-    plugin: TaskBuJoPlugin;
+export class FridaySettingTab extends PluginSettingTab {
+    plugin: FridayPlugin;
     /** Tracks which folder paths are collapsed (persists across re-renders) */
     private collapsedFolders: Set<string> = new Set();
     /** Reference to the tree container for partial re-renders */
@@ -40,7 +40,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
     /** Debounce timer for text settings */
     private settingsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    constructor(app: App, plugin: TaskBuJoPlugin) {
+    constructor(app: App, plugin: FridayPlugin) {
         super(app, plugin as any);
         this.plugin = plugin;
     }
@@ -107,20 +107,20 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
             .addDropdown(dropdown =>
                 dropdown
                     .addOptions({
-                        [BuJoViewMode.Daily]: 'Daily',
-                        [BuJoViewMode.Weekly]: 'Weekly',
-                        [BuJoViewMode.Monthly]: 'Monthly',
-                        [BuJoViewMode.Calendar]: 'Calendar',
-                        [BuJoViewMode.Sprint]: 'Sprint',
-                        [BuJoViewMode.Topics]: 'Topics',
-                        [BuJoViewMode.Inbox]: 'Inbox',
-                        [BuJoViewMode.Overdue]: 'Overdue',
-                        [BuJoViewMode.Overview]: 'Overview',
-                        [BuJoViewMode.Analytics]: 'Analytics',
+                        [FridayViewMode.Daily]: 'Daily',
+                        [FridayViewMode.Weekly]: 'Weekly',
+                        [FridayViewMode.Monthly]: 'Monthly',
+                        [FridayViewMode.Calendar]: 'Calendar',
+                        [FridayViewMode.Sprint]: 'Sprint',
+                        [FridayViewMode.Topics]: 'Topics',
+                        [FridayViewMode.Inbox]: 'Inbox',
+                        [FridayViewMode.Overdue]: 'Overdue',
+                        [FridayViewMode.Overview]: 'Overview',
+                        [FridayViewMode.Analytics]: 'Analytics',
                     })
                     .setValue(this.plugin.settings.defaultViewMode)
                     .onChange(async value => {
-                        this.plugin.settings.defaultViewMode = value as BuJoViewMode;
+                        this.plugin.settings.defaultViewMode = value as FridayViewMode;
                         await this.plugin.saveSettings(false);
                     })
             );
@@ -188,8 +188,8 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                 })
             );
 
-        // ── BuJo ──────────────────────────────────────────────────
-        containerEl.createEl('h2', { text: 'BuJo' });
+        // ── Friday ────────────────────────────────────────────────
+        containerEl.createEl('h2', { text: 'Friday' });
 
         new Setting(containerEl)
             .setName('Daily note folder path')
@@ -593,7 +593,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
     private renderTeamManagementSection(containerEl: HTMLElement): void {
         containerEl.createEl('h2', { text: 'Team Management' });
         containerEl.createEl('p', {
-            text: 'One folder per teammate with a canonical person page and a 1on1/ subfolder for dated 1:1 session notes. The Team tab in the BuJo view surfaces cadence signals so you don\'t miss 1:1s.',
+            text: 'One folder per teammate with a canonical person page and a 1on1/ subfolder for dated 1:1 session notes. The Team tab in the Friday view surfaces cadence signals so you don\'t miss 1:1s.',
             cls: 'setting-item-description',
         });
 
@@ -630,7 +630,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                             if (created === 0) {
                                 new Notice(`No new pages created — all ${skipped} member(s) already have pages.`);
                             } else {
-                                new Notice(`Created ${created} person page(s). Open the Team tab in BuJo view to see them.`);
+                                new Notice(`Created ${created} person page(s). Open the Team tab in Friday view to see them.`);
                             }
                         } catch (e) {
                             new Notice(`Generation failed: ${e instanceof Error ? e.message : 'unknown error'}`);
@@ -646,7 +646,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
      *  because Obsidian Settings don't trivially support in-place row edits. Cheap
      *  given typical team sizes (5–15 people). */
     private renderTeamMembersList(containerEl: HTMLElement): void {
-        const listWrap = containerEl.createDiv({ cls: 'task-bujo-team-members-list' });
+        const listWrap = containerEl.createDiv({ cls: 'friday-team-members-list' });
         const rerender = () => {
             listWrap.empty();
             this.renderTeamMembersRows(listWrap);
@@ -675,20 +675,20 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
         const members = this.plugin.settings.teamMembers;
         if (members.length === 0) {
             listEl.createDiv({
-                cls: 'task-bujo-empty',
+                cls: 'friday-empty',
                 text: 'No team members configured yet. Click "+ Add team member" to start.',
             });
             return;
         }
 
         for (let i = 0; i < members.length; i++) {
-            const row = listEl.createDiv({ cls: 'task-bujo-team-member-row' });
+            const row = listEl.createDiv({ cls: 'friday-team-member-row' });
 
             // Row 1: full name + nickname + email (all in one row for density)
-            const inputsRow = row.createDiv({ cls: 'task-bujo-team-member-inputs' });
+            const inputsRow = row.createDiv({ cls: 'friday-team-member-inputs' });
 
             const nameInput = inputsRow.createEl('input', {
-                cls: 'task-bujo-team-member-input',
+                cls: 'friday-team-member-input',
                 type: 'text',
                 attr: { placeholder: 'Full name', value: members[i].fullName },
             });
@@ -698,7 +698,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
             });
 
             const nickInput = inputsRow.createEl('input', {
-                cls: 'task-bujo-team-member-input task-bujo-team-member-input-nick',
+                cls: 'friday-team-member-input friday-team-member-input-nick',
                 type: 'text',
                 attr: { placeholder: 'Nickname', value: members[i].nickname },
             });
@@ -708,7 +708,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
             });
 
             const emailInput = inputsRow.createEl('input', {
-                cls: 'task-bujo-team-member-input task-bujo-team-member-input-email',
+                cls: 'friday-team-member-input friday-team-member-input-email',
                 type: 'email',
                 attr: { placeholder: 'email@domain.com', value: members[i].email },
             });
@@ -724,9 +724,9 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
             });
 
             // Row 2: active toggle + remove button
-            const controlsRow = row.createDiv({ cls: 'task-bujo-team-member-controls' });
+            const controlsRow = row.createDiv({ cls: 'friday-team-member-controls' });
 
-            const activeLabel = controlsRow.createEl('label', { cls: 'task-bujo-team-member-active' });
+            const activeLabel = controlsRow.createEl('label', { cls: 'friday-team-member-active' });
             const activeCheck = activeLabel.createEl('input', {
                 type: 'checkbox',
                 attr: members[i].active ? { checked: 'true' } : {},
@@ -739,7 +739,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
             });
 
             const removeBtn = controlsRow.createEl('button', {
-                cls: 'task-bujo-team-member-remove',
+                cls: 'friday-team-member-remove',
                 text: 'Remove',
             });
             removeBtn.addEventListener('click', async () => {
@@ -754,7 +754,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
 
     /** Build folder tree from vault and render it */
     private renderFolderTree(containerEl: HTMLElement): void {
-        this.treeContainer = containerEl.createDiv({ cls: 'task-bujo-folder-tree' });
+        this.treeContainer = containerEl.createDiv({ cls: 'friday-folder-tree' });
         this.renderTreeContent();
     }
 
@@ -772,7 +772,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
 
         if (root.length === 0) {
             this.treeContainer.createDiv({
-                cls: 'task-bujo-empty',
+                cls: 'friday-empty',
                 text: 'No folders found in vault.'
             });
         }
@@ -813,21 +813,21 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
 
     /** Render a single folder node and its children */
     private renderFolderNode(container: HTMLElement, node: FolderNode, depth: number): void {
-        const row = container.createDiv({ cls: 'task-bujo-folder-row' });
+        const row = container.createDiv({ cls: 'friday-folder-row' });
         row.style.paddingLeft = `${depth * 20}px`;
 
         // Collapse/expand chevron (only if has children)
-        const chevron = row.createSpan({ cls: 'task-bujo-folder-chevron' });
+        const chevron = row.createSpan({ cls: 'friday-folder-chevron' });
         const isCollapsed = this.collapsedFolders.has(node.path);
         if (node.children.length > 0) {
             chevron.textContent = isCollapsed ? '▶' : '▼';
-            chevron.addClass('task-bujo-clickable');
+            chevron.addClass('friday-clickable');
         } else {
             chevron.textContent = ' ';
         }
 
         // State indicator button
-        const stateBtn = row.createEl('button', { cls: 'task-bujo-folder-state-btn' });
+        const stateBtn = row.createEl('button', { cls: 'friday-folder-state-btn' });
         const updateStateBtn = () => {
             const explicitState = this.plugin.settings.folderStates[node.path];
             const effective = getEffectiveState(node.path + '/dummy.md', this.plugin.settings.folderStates);
@@ -835,22 +835,22 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
             if (explicitState === 'exclude') {
                 stateBtn.textContent = '✗';
                 stateBtn.setAttribute('aria-label', 'Excluded');
-                row.addClass('task-bujo-folder-excluded');
-                row.removeClass('task-bujo-folder-inherit');
+                row.addClass('friday-folder-excluded');
+                row.removeClass('friday-folder-inherit');
             } else if (explicitState === 'inherit') {
                 stateBtn.textContent = '~';
                 stateBtn.setAttribute('aria-label', `Inherit (${effective})`);
-                row.removeClass('task-bujo-folder-excluded');
-                row.addClass('task-bujo-folder-inherit');
+                row.removeClass('friday-folder-excluded');
+                row.addClass('friday-folder-inherit');
                 if (effective === 'exclude') {
-                    row.addClass('task-bujo-folder-excluded');
+                    row.addClass('friday-folder-excluded');
                 }
             } else {
                 // include (explicit or default)
                 stateBtn.textContent = '✓';
                 stateBtn.setAttribute('aria-label', 'Included');
-                row.removeClass('task-bujo-folder-excluded');
-                row.removeClass('task-bujo-folder-inherit');
+                row.removeClass('friday-folder-excluded');
+                row.removeClass('friday-folder-inherit');
             }
         };
         updateStateBtn();
@@ -880,13 +880,13 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
         });
 
         // Folder name
-        row.createSpan({ cls: 'task-bujo-folder-name', text: node.name });
+        row.createSpan({ cls: 'friday-folder-name', text: node.name });
 
         // Children container
         if (node.children.length > 0) {
-            const childContainer = container.createDiv({ cls: 'task-bujo-folder-children' });
+            const childContainer = container.createDiv({ cls: 'friday-folder-children' });
             if (isCollapsed) {
-                childContainer.addClass('task-bujo-collapsed');
+                childContainer.addClass('friday-collapsed');
             }
 
             for (const child of node.children) {
@@ -901,7 +901,7 @@ export class TaskBuJoSettingTab extends PluginSettingTab {
                     this.collapsedFolders.add(node.path);
                 }
                 const nowCollapsed = this.collapsedFolders.has(node.path);
-                childContainer.toggleClass('task-bujo-collapsed', nowCollapsed);
+                childContainer.toggleClass('friday-collapsed', nowCollapsed);
                 chevron.textContent = nowCollapsed ? '▶' : '▼';
             });
         }
