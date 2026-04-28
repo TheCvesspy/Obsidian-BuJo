@@ -5870,18 +5870,19 @@ var TopicsOverviewView = class {
       { label: "In Progress", cls: "", topics: assigned.filter((t) => t.status === "in-progress"), dropAction: { kind: "setStatus", status: "in-progress" } },
       { label: "Done", cls: "", topics: assigned.filter((t) => t.status === "done"), dropAction: { kind: "setStatus", status: "done" } }
     ];
+    const board = parent.createDiv({ cls: "friday-topics-list-board" });
     for (const { label, cls, topics: group, dropAction } of sections) {
       if (group.length === 0 && label === "Backlog" && this.scope === "active")
         continue;
       const sectionCls = cls ? `friday-topics-list-section ${cls}` : "friday-topics-list-section";
-      const section = parent.createDiv({ cls: sectionCls });
+      const section = board.createDiv({ cls: sectionCls });
       const headerEl = section.createDiv({ cls: "friday-topics-list-header" });
       headerEl.createSpan({ text: label });
       headerEl.createSpan({ cls: "friday-topics-list-count", text: `${group.length}` });
       const cardGrid = section.createDiv({ cls: "friday-topics-list-grid" });
       this.wireDropZone(cardGrid, dropAction);
       if (group.length === 0) {
-        section.createDiv({ cls: "friday-empty", text: "No topics" });
+        cardGrid.createDiv({ cls: "friday-empty", text: "No topics" });
         continue;
       }
       const sorted = [...group].sort((a, b) => this.sortByPriorityImpact(a, b));

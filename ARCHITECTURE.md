@@ -247,7 +247,7 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 | `WeeklyView.ts` | ~86 | 7-day calendar (Mon–Sun) with per-day progress bars |
 | `CalendarView.ts` | ~190 | Month grid with day cells, priority-colored task dots, click-to-expand detail panel |
 | `SprintView.ts` | ~215 | Active sprint Kanban (Open/In Progress/Done columns) with drag-and-drop. Delegates card rendering to `TopicCard` |
-| `TopicsOverviewView.ts` | ~410 | Top-level Topics tab: scope-filtered list of all topics with three sub-modes (List, Impact/Effort, Eisenhower). Drag-and-drop between Backlog ↔ status sections in List mode |
+| `TopicsOverviewView.ts` | ~410 | Top-level Topics tab: scope-filtered list of all topics with three sub-modes (List, Impact/Effort, Eisenhower). List mode is a 4-column kanban (Backlog \| Open \| In Progress \| Done) with drag-and-drop between columns |
 | `TopicCard.ts` | ~145 | Shared topic card renderer used by both `SprintView` and `TopicsOverviewView`. Options: draggable, click handlers, matrix-metadata chip row |
 | `OpenPointsView.ts` | ~65 | Open points grouped by page + uncategorized section |
 | `OverdueView.ts` | ~56 | Overdue tasks with configurable grouping |
@@ -397,7 +397,7 @@ Markdown Files in Vault
 | **Monthly** | `FridayViewMode.Monthly` | Goals progress, stats cards, month navigation, trends table, save snapshot. |
 | **Calendar** | `FridayViewMode.Calendar` | Month grid with priority-colored task dots per day. Click a day to expand task detail below. Today highlighting. Month navigation + "Today" button. Respects `weekStartDay` setting. |
 | **Sprint** | `FridayViewMode.Sprint` | Active sprint header (name, dates, days remaining), Kanban board (Open/In Progress/Done), drag-and-drop. Cards rendered via shared `TopicCard`. |
-| **Topics** | `FridayViewMode.Topics` | Top-level Topic browser across **all** sprints and backlog. Scope chips: All / Active sprint / Backlog / Archived. Three sub-modes: **List** (grouped by Backlog + Open/In Progress/Done, drag-and-drop between sections), **Impact/Effort** (Quick Wins / Big Bets / Fill-ins / Time Sinks + Inbox), **Eisenhower** (Do Now / Plan Deep Work / Coordinate / Batch Later + Unscheduled). See §15. |
+| **Topics** | `FridayViewMode.Topics` | Top-level Topic browser across **all** sprints and backlog. Scope chips: All / Active sprint / Backlog / Archived. Three sub-modes: **List** (4-column kanban — Backlog \| Open \| In Progress \| Done — with drag-and-drop between columns), **Impact/Effort** (Quick Wins / Big Bets / Fill-ins / Time Sinks + Inbox), **Eisenhower** (Do Now / Plan Deep Work / Coordinate / Batch Later + Unscheduled). See §15. |
 | **Overdue** | `FridayViewMode.Overdue` | Open tasks with past due dates. Supports all group modes. |
 | **Overview** | `FridayViewMode.Overview` | All Tasks + Open Points sub-tabs, grouped by mode. |
 | **Analytics** | `FridayViewMode.Analytics` | Summary cards, work type/purpose bar charts, 8-week trend table + chart. |
@@ -733,8 +733,8 @@ Missing optional keys parse to `null` / `[]`. The serializer **omits null-valued
 
 ### Topics tab sub-modes
 
-- **List** — sections: Backlog (no sprint) + Open / In Progress / Done. Empty Backlog is hidden when the scope filter is "Active sprint". Drag-and-drop:
-  - Drop onto a status section → `setTopicStatus`. If dragged from Backlog, also `assignTopicToSprint(active)` first.
+- **List** — 4-column kanban: Backlog (no sprint) \| Open \| In Progress \| Done. Columns render side-by-side via `.friday-topics-list-board` (flex row, `overflow-x: auto` at narrow widths); cards stack vertically inside each column's `.friday-topics-list-grid` drop zone. Empty Backlog column is hidden when the scope filter is "Active sprint". The empty-state placeholder lives inside the drop zone, so empty columns still accept drops. Drag-and-drop:
+  - Drop onto a status column → `setTopicStatus`. If dragged from Backlog, also `assignTopicToSprint(active)` first.
   - Drop onto Backlog → `moveTopicToBacklog` (clears `sprint`, preserves status).
   - Blocked → Done auto-clears the blocked flag.
   - If no active sprint exists when moving out of Backlog, a Notice explains and nothing is written.

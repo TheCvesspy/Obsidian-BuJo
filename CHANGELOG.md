@@ -2,6 +2,20 @@
 
 All notable changes to the Friday Obsidian plugin (formerly *BuJo*) are tracked here.
 
+## Unreleased
+
+### Changed
+
+- **Topics view → List sub-mode now renders as a 4-column kanban (Backlog \| Open \| In Progress \| Done) instead of stacked rows.** The four sections previously stacked top-to-bottom with their cards laid out in a wrapping `auto-fill` grid; with longer backlogs this pushed Done off-screen and the multi-row card grids made it hard to scan a single status. The same four sections now render side-by-side as columns, with cards stacked vertically inside each — matching the existing Sprint Kanban shape so the two views feel consistent. All existing semantics carry over unchanged: scope chips, assignee filter, sort order (impact → priority → title), and drag-and-drop (status set on drop, auto-assign-to-active-sprint when leaving Backlog, blocked-cleared on Done, `moveToBacklog` on backlog drop). Empty-Backlog suppression under the *Active sprint* scope still applies. As a side fix, the "No topics" empty-state placeholder is now rendered **inside** each column's drop zone (previously it sat outside, so empty columns silently rejected drops).
+
+### Files
+
+- `src/ui/components/TopicsOverviewView.ts` — `renderList` wraps the four sections in a new `.friday-topics-list-board` container; the empty-state `friday-empty` div moved from the section into its `.friday-topics-list-grid` drop zone. No changes to data flow, drop handlers, or card rendering.
+- `styles.css` — added `.friday-topics-list-board { display: flex; gap: 12px; align-items: stretch; min-height: 200px; overflow-x: auto; }`; `.friday-topics-list-section` gains `flex: 1; min-width: 220px`; `.friday-topics-list-grid` switches from `grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))` to a vertical `flex` stack with `flex: 1` so the drop zone fills the column.
+- `ARCHITECTURE.md` — UI Components table (`TopicsOverviewView.ts` row), View modes table (`Topics` row), and §15 Topics tab sub-modes (List description) updated to reflect the column layout.
+
+---
+
 ## 2.1.0 — 2026-04-27
 
 The plugin has been renamed from **BuJo** to **Friday**. The original "Bullet Journal" framing fit when the plugin was a daily/weekly log helper, but the surface has grown well past that — JIRA Dashboard, Team Dashboard with workload heatmap, Topics-as-strategic-units, 1:1 cadence tracking, weekly review, sprint analytics. *Friday* (the personal-AI-assistant archetype, à la Iron Man) better captures what it is now: a personal ops console that scans your vault, surfaces what needs attention each morning, and keeps the team and JIRA picture next to your notes.

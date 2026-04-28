@@ -242,6 +242,9 @@ export class TopicsOverviewView {
 			{ label: 'Done', cls: '', topics: assigned.filter(t => t.status === 'done'), dropAction: { kind: 'setStatus', status: 'done' } },
 		];
 
+		// Sections render side-by-side as columns (Backlog | Open | In Progress | Done).
+		const board = parent.createDiv({ cls: 'friday-topics-list-board' });
+
 		for (const { label, cls, topics: group, dropAction } of sections) {
 			// Omit empty Backlog entirely if the current scope already hides backlog topics —
 			// showing "Backlog (0)" alongside "Active sprint" filter is noise.
@@ -250,7 +253,7 @@ export class TopicsOverviewView {
 			const sectionCls = cls
 				? `friday-topics-list-section ${cls}`
 				: 'friday-topics-list-section';
-			const section = parent.createDiv({ cls: sectionCls });
+			const section = board.createDiv({ cls: sectionCls });
 
 			const headerEl = section.createDiv({ cls: 'friday-topics-list-header' });
 			headerEl.createSpan({ text: label });
@@ -261,7 +264,8 @@ export class TopicsOverviewView {
 			this.wireDropZone(cardGrid, dropAction);
 
 			if (group.length === 0) {
-				section.createDiv({ cls: 'friday-empty', text: 'No topics' });
+				// Empty placeholder lives inside the drop zone so empty columns still accept drops.
+				cardGrid.createDiv({ cls: 'friday-empty', text: 'No topics' });
 				continue;
 			}
 
