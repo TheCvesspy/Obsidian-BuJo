@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab, Setting, TFolder } from 'obsidian';
+import { App, Notice, Platform, PluginSettingTab, Setting, TFolder } from 'obsidian';
 import {
     PluginSettings,
     FolderState,
@@ -14,6 +14,7 @@ import { JiraService } from './services/jiraService';
 import { JiraDashboardService } from './services/jiraDashboardService';
 import { JiraTeamService } from './services/jiraTeamService';
 import { TeamMemberService } from './services/teamMemberService';
+import { McpServer, generateMcpToken } from './mcp/server';
 
 interface FridayPlugin {
     settings: PluginSettings;
@@ -22,6 +23,8 @@ interface FridayPlugin {
     jiraDashboardService: JiraDashboardService;
     jiraTeamService: JiraTeamService;
     teamMemberService: TeamMemberService;
+    mcpServer: McpServer;
+    applyMcpServerState(): Promise<void>;
 }
 
 /** Recursive folder tree node */
@@ -108,11 +111,12 @@ export class FridaySettingTab extends PluginSettingTab {
                 dropdown
                     .addOptions({
                         [FridayViewMode.Daily]: 'Daily',
+                        [FridayViewMode.Topics]: 'Topics',
                         [FridayViewMode.Weekly]: 'Weekly',
                         [FridayViewMode.Monthly]: 'Monthly',
                         [FridayViewMode.Calendar]: 'Calendar',
+                        [FridayViewMode.Unscheduled]: 'Unscheduled',
                         [FridayViewMode.Sprint]: 'Sprint',
-                        [FridayViewMode.Topics]: 'Topics',
                         [FridayViewMode.Inbox]: 'Inbox',
                         [FridayViewMode.Overdue]: 'Overdue',
                         [FridayViewMode.Overview]: 'Overview',
@@ -322,7 +326,7 @@ export class FridaySettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Urgency threshold (days)')
-            .setDesc('Tasks due within this many days are considered "urgent" in the Eisenhower view.')
+            .setDesc('Tasks / topics due within this many days are flagged as "urgent" in views that surface urgency cues.')
             .addText(text =>
                 text
                     .setPlaceholder('2')
@@ -586,6 +590,297 @@ export class FridaySettingTab extends PluginSettingTab {
         // Person pages (one .md per teammate) + 1:1 session notes. Independent of
         // JIRA — this section appears even when JIRA is off.
         this.renderTeamManagementSection(containerEl);
+
+        // ── MCP Server ───────────────────────────────────────────────
+        // Embedded HTTP MCP server (desktop only). Lets MCP-aware clients like
+        // Claude Desktop / Claude Code call Friday's task and topic operations
+        // directly.
+        this.renderMcpSection(containerEl);
+    }
+
+    /** MCP-server settings section: enable toggle, port, token, and live sample
+     *  connector snippets for Claude Desktop / Claude Code. */
+    private renderMcpSection(containerEl: HTMLElement): void {
+        containerEl.createEl('h2', { text: 'MCP Server' });
+        containerEl.createEl('p', {
+            text:
+                'Optional. When enabled, Friday hosts a small HTTP MCP server on localhost so ' +
+                'Claude Desktop / Claude Code can call task and topic operations directly. ' +
+                'Desktop only — does nothing on mobile.',
+            cls: 'setting-item-description',
+        });
+
+        if (!Platform.isDesktop) {
+            containerEl.createEl('p', {
+                text: 'Not available on mobile (no Node http access).',
+                cls: 'setting-item-description',
+            });
+            return;
+        }
+
+        new Setting(containerEl)
+            .setName('Enable MCP server')
+            .setDesc('Master switch. When on, Friday listens on the configured port for MCP requests.')
+            .addToggle(toggle =>
+                toggle
+                    .setValue(this.plugin.settings.mcpEnabled)
+                    .onChange(async value => {
+                        this.plugin.settings.mcpEnabled = value;
+                        if (value && !this.plugin.settings.mcpToken) {
+                            this.plugin.settings.mcpToken = generateMcpToken();
+                        }
+                        await this.plugin.saveSettings(false);
+                        await this.plugin.applyMcpServerState();
+                        // Re-render so the status / snippets / etc. update.
+                        this.display();
+                    })
+            );
+
+        if (!this.plugin.settings.mcpEnabled) return;
+
+        new Setting(containerEl)
+            .setName('Port')
+            .setDesc('TCP port to bind on 127.0.0.1. Default 27225. Restarts the server on change.')
+            .addText(text => {
+                text.inputEl.type = 'number';
+                text.inputEl.min = '1024';
+                text.inputEl.max = '65535';
+                text
+                    .setPlaceholder('27225')
+                    .setValue(String(this.plugin.settings.mcpPort))
+                    .onChange(value => {
+                        const parsed = parseInt(value, 10);
+                        if (!isNaN(parsed) && parsed >= 1024 && parsed <= 65535) {
+                            this.plugin.settings.mcpPort = parsed;
+                            this.debouncedMcpRestart();
+                        }
+                    });
+            });
+
+        // Server-status line. Refreshes on each settings render — the user gets a
+        // clear "running on http://… / stopped / port-in-use" indicator.
+        const status = this.plugin.mcpServer.getStatus();
+        const statusEl = containerEl.createDiv({ cls: 'friday-mcp-status' });
+        statusEl.style.padding = '8px 12px';
+        statusEl.style.margin = '8px 0';
+        statusEl.style.borderRadius = '4px';
+        statusEl.style.fontSize = '0.9em';
+        if (status.state === 'running') {
+            statusEl.style.background = 'var(--background-modifier-success)';
+            statusEl.setText(`● Running on ${status.url}`);
+        } else if (status.state === 'error') {
+            statusEl.style.background = 'var(--background-modifier-error)';
+            statusEl.setText(`● Error: ${status.message ?? 'unknown'}`);
+        } else {
+            statusEl.style.background = 'var(--background-modifier-border)';
+            statusEl.setText('● Stopped');
+        }
+
+        // Token row with read-only display + Copy + Regenerate buttons.
+        new Setting(containerEl)
+            .setName('Bearer token')
+            .setDesc('Required on every MCP request. Treat this like a password — copy it into your MCP client config and keep it secret.')
+            .addText(text => {
+                text.inputEl.type = 'password';
+                text.inputEl.readOnly = true;
+                text.setValue(this.plugin.settings.mcpToken);
+            })
+            .addButton(btn =>
+                btn
+                    .setButtonText('Copy')
+                    .onClick(async () => {
+                        await navigator.clipboard.writeText(this.plugin.settings.mcpToken);
+                        new Notice('MCP token copied to clipboard.');
+                    })
+            )
+            .addButton(btn =>
+                btn
+                    .setButtonText('Regenerate')
+                    .setWarning()
+                    .onClick(async () => {
+                        this.plugin.settings.mcpToken = generateMcpToken();
+                        await this.plugin.saveSettings(false);
+                        await this.plugin.applyMcpServerState();
+                        new Notice('Token regenerated. Existing clients must be updated.');
+                        this.display();
+                    })
+            );
+
+        // Two install paths are surfaced, in order of recommendation:
+        //   1) MCPB bundle — one-click install in Claude Desktop, no JSON editing,
+        //      port/token entered in the install dialog. Best on Windows where
+        //      Claude Desktop's stdio wrapping breaks paths with spaces.
+        //   2) Manual JSON snippets — fallback for clients that don't ingest
+        //      .mcpb bundles, or when the user wants to tweak the config.
+        this.renderMcpbBundleSection(containerEl);
+        this.renderMcpConnectorSnippets(containerEl);
+    }
+
+    /** Tell the user where the prebuilt .mcpb bundle lives + brief install steps. */
+    private renderMcpbBundleSection(containerEl: HTMLElement): void {
+        const wrap = containerEl.createDiv({ cls: 'friday-mcp-bundle' });
+        wrap.style.marginTop = '12px';
+        wrap.style.padding = '10px 12px';
+        wrap.style.background = 'var(--background-secondary)';
+        wrap.style.borderRadius = '4px';
+        wrap.style.borderLeft = '3px solid var(--interactive-accent)';
+
+        wrap.createEl('h3', { text: 'Recommended: .mcpb bundle (Claude Desktop)' })
+            .style.marginTop = '0';
+
+        const desc = wrap.createEl('p', { cls: 'setting-item-description' });
+        desc.style.marginBottom = '6px';
+        desc.appendText(
+            'Drag-and-drop install for Claude Desktop. No JSON editing, no manual ' +
+            'path-quoting workarounds — Claude Desktop spawns the bundled Node ' +
+            'runtime directly. Port and token are entered in the install dialog.',
+        );
+
+        const list = wrap.createEl('ol');
+        list.style.margin = '6px 0 0 20px';
+        list.style.fontSize = '0.9em';
+        list.createEl('li').setText('Grab friday-mcp.mcpb from the plugin folder (next to main.js).');
+        list.createEl('li').setText('Open Claude Desktop → Settings → Extensions → Install Extension, or drag the file onto the Claude Desktop window.');
+        const li3 = list.createEl('li');
+        li3.appendText('Fill in the install dialog: ');
+        li3.createEl('code', { text: '127.0.0.1' });
+        li3.appendText(' / port ');
+        li3.createEl('code', { text: String(this.plugin.settings.mcpPort) });
+        li3.appendText(' / the bearer token above.');
+        list.createEl('li').setText('Restart Claude Desktop (fully quit from the tray).');
+
+        const note = wrap.createEl('p', { cls: 'setting-item-description' });
+        note.style.marginTop = '8px';
+        note.style.marginBottom = '0';
+        note.style.fontSize = '0.85em';
+        note.setText(
+            'If the .mcpb file is missing, the plugin maintainer can produce it with ' +
+            '`npm run pack-mcpb` in the source repo.',
+        );
+    }
+
+    /** Debounced MCP-server restart on port changes (avoids restarting on every keystroke). */
+    private mcpRestartDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private debouncedMcpRestart(): void {
+        if (this.mcpRestartDebounceTimer !== null) clearTimeout(this.mcpRestartDebounceTimer);
+        this.mcpRestartDebounceTimer = setTimeout(async () => {
+            this.mcpRestartDebounceTimer = null;
+            await this.plugin.saveSettings(false);
+            await this.plugin.applyMcpServerState();
+            // Refresh the section so the status + snippet ports update without a full re-render.
+            this.display();
+        }, SETTINGS_DEBOUNCE_MS);
+    }
+
+    /** Build the live "sample connector" panel with copy-pasteable snippets for
+     *  Claude Desktop (JSON config) and Claude Code (CLI + .mcp.json). Each snippet
+     *  has its own Copy button and reflects current host/port/token. */
+    private renderMcpConnectorSnippets(containerEl: HTMLElement): void {
+        const host = this.plugin.settings.mcpHost || '127.0.0.1';
+        const port = this.plugin.settings.mcpPort;
+        const token = this.plugin.settings.mcpToken;
+        const url = `http://${host}:${port}/mcp`;
+
+        const wrap = containerEl.createDiv({ cls: 'friday-mcp-snippets' });
+        wrap.style.marginTop = '12px';
+
+        const header = wrap.createEl('h3', { text: 'Alternative: manual client config' });
+        header.style.marginBottom = '4px';
+        wrap.createEl('p', {
+            text:
+                'For clients that don\'t support .mcpb bundles, or when you prefer hand-editing ' +
+                'the config. The URL and token below reflect the settings above — they update ' +
+                'live, so always copy from here after changing the port or regenerating the token.',
+            cls: 'setting-item-description',
+        });
+        const note = wrap.createEl('p', { cls: 'setting-item-description' });
+        note.style.fontSize = '0.85em';
+        note.style.marginTop = '0';
+        note.appendText(
+            'Note on Claude Desktop + Windows: the direct-HTTP form below may be rejected as ' +
+            '"not valid MCP" depending on your Claude Desktop version, and the mcp-remote ' +
+            'fallback hits a quoting bug when Node lives under "Program Files". The .mcpb ' +
+            'bundle above avoids both. The CLI/.mcp.json forms work fine for Claude Code.',
+        );
+
+        // ── Claude Desktop ────────────────────────────────────────
+        const desktopJson = JSON.stringify(
+            {
+                mcpServers: {
+                    friday: {
+                        type: 'http',
+                        url,
+                        headers: { Authorization: `Bearer ${token}` },
+                    },
+                },
+            },
+            null,
+            2,
+        );
+        this.renderSnippetBlock(
+            wrap,
+            'Claude Desktop — claude_desktop_config.json',
+            desktopJson,
+        );
+
+        // ── Claude Code CLI ──────────────────────────────────────
+        const claudeCodeCli =
+            `claude mcp add --transport http friday ${url} ` +
+            `--header "Authorization: Bearer ${token}"`;
+        this.renderSnippetBlock(
+            wrap,
+            'Claude Code — CLI shortcut',
+            claudeCodeCli,
+        );
+
+        // ── Claude Code .mcp.json ────────────────────────────────
+        const claudeCodeJson = JSON.stringify(
+            {
+                mcpServers: {
+                    friday: {
+                        type: 'http',
+                        url,
+                        headers: { Authorization: `Bearer ${token}` },
+                    },
+                },
+            },
+            null,
+            2,
+        );
+        this.renderSnippetBlock(
+            wrap,
+            'Claude Code — .mcp.json',
+            claudeCodeJson,
+        );
+    }
+
+    /** A single labeled <pre> code block with a Copy button. */
+    private renderSnippetBlock(parent: HTMLElement, label: string, body: string): void {
+        const block = parent.createDiv({ cls: 'friday-mcp-snippet' });
+        block.style.marginBottom = '12px';
+
+        const labelRow = block.createDiv();
+        labelRow.style.display = 'flex';
+        labelRow.style.justifyContent = 'space-between';
+        labelRow.style.alignItems = 'center';
+        labelRow.style.marginBottom = '4px';
+
+        labelRow.createEl('strong', { text: label });
+
+        const copyBtn = labelRow.createEl('button', { text: 'Copy' });
+        copyBtn.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(body);
+            new Notice(`Copied "${label}".`);
+        });
+
+        const pre = block.createEl('pre');
+        pre.style.background = 'var(--background-secondary)';
+        pre.style.padding = '8px';
+        pre.style.borderRadius = '4px';
+        pre.style.overflowX = 'auto';
+        pre.style.fontSize = '0.85em';
+        pre.style.margin = '0';
+        pre.createEl('code', { text: body });
     }
 
     /** Team-management section: person-page folder + one-shot generator from

@@ -2,7 +2,7 @@ import { TaskItem, TaskStatus, ItemCategory, PluginData, Priority, PluginSetting
 import { TaskStore } from './taskStore';
 import { TaskWriter } from './taskWriter';
 import { DailyNoteService } from './dailyNoteService';
-import { isOverdue, todayStart, formatDateISO, isToday } from '../utils/dateUtils';
+import { isOverdue, todayStart, formatDateISO, formatDateDMY, isToday } from '../utils/dateUtils';
 import { MIGRATED_FROM_REGEX } from '../constants';
 
 export type MigrationAction = 'forward' | 'reschedule' | 'cancel' | 'done';
@@ -136,6 +136,21 @@ export class MigrationService {
             .sort((a, b) => a.dueDate!.getTime() - b.dueDate!.getTime());
     }
 
+    /** Stamp `@due today` on a set of source tasks. Shared between the
+     *  morning-review "Forward" action and the picker's "Add Selected to Today"
+     *  button — both paths now schedule rather than physically copy.
+     *  Does NOT mark the morning migration done (so picking from the picker
+     *  doesn't suppress the rest of the review). Returns the number actually
+     *  updated. */
+    async scheduleForToday(tasks: TaskItem[]): Promise<number> {
+        const todayRaw = formatDateDMY(new Date());
+        let count = 0;
+        for (const task of tasks) {
+            if (await this.writer.updateDueDate(task, todayRaw)) count++;
+        }
+        return count;
+    }
+
     async executeMigrations(decisions: MigrationDecision[]): Promise<MigrationResult> {
         const result: MigrationResult = { forwarded: 0, rescheduled: 0, cancelled: 0, completed: 0 };
 
@@ -148,21 +163,18 @@ export class MigrationService {
 
             switch (decision.action) {
                 case 'forward': {
-                    // Mark parent as migrated
-                    await this.writer.setStatus(task, TaskStatus.Migrated);
-                    // Mark open children as migrated
-                    if (openChildren.length > 0) {
-                        await this.writer.setStatusBatch(openChildren, TaskStatus.Migrated);
-                    }
-                    // Get all children (including completed) for migration block
-                    const allChildren = task.childrenIds
-                        .map(id => this.store.getTaskById(id))
-                        .filter((c): c is TaskItem => c !== undefined);
-                    if (allChildren.length > 0) {
-                        await this.dailyNotes.addMigratedTaskWithChildren(task, allChildren, new Date());
-                    } else {
-                        await this.dailyNotes.addMigratedTask(task, new Date());
-                    }
+                    // "Forward" used to write a copy of the task into today's daily note
+                    // under `## Migrated Tasks` and mark the original `[>]` migrated.
+                    // That created two-way-sync complexity and polluted daily notes with
+                    // duplicates of work that lives in Topics or project pages.
+                    //
+                    // Current behavior: leave the source task in place, just stamp its
+                    // `@due` to today so it surfaces in the Daily dashboard's "Due Today"
+                    // bucket via the existing aggregation pipeline. No copy, no migrated
+                    // marker, no daily-note write. Children ride along by parent linkage
+                    // — they're not independently re-dated. Delegates to scheduleForToday
+                    // so the picker path stays in sync with the per-task button path.
+                    await this.scheduleForToday([task]);
                     result.forwarded++;
                     break;
                 }

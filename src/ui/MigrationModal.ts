@@ -111,28 +111,29 @@ export class MigrationModal extends Modal {
             const addedFeedback = addSelectedContainer.createDiv({ cls: 'friday-picker-feedback' });
 
             addSelectedBtn.addEventListener('click', async () => {
+                // "Add Selected" no longer copies tasks into today's daily note —
+                // it just stamps `@due today` on each picked source task / open
+                // point. The Daily dashboard then aggregates them via the normal
+                // due-date bucketing. Keeps the daily note clean and the source
+                // task as the single point of truth.
                 const allItems = [...this.reviewData.availableTasks, ...this.reviewData.availableOpenPoints];
                 const itemMap = new Map(allItems.map(t => [t.id, t]));
-                let added = 0;
+                const picked: TaskItem[] = [];
 
                 for (const id of this.selectedTasks) {
                     const task = itemMap.get(id);
-                    if (task) {
-                        await this.dailyNotes.addMigratedTask(task, new Date());
-                        added++;
-                    }
+                    if (task) picked.push(task);
                 }
-
                 for (const id of this.selectedOpenPoints) {
                     const op = itemMap.get(id);
-                    if (op) {
-                        await this.dailyNotes.addMigratedTask(op, new Date());
-                        added++;
-                    }
+                    if (op) picked.push(op);
                 }
 
+                if (picked.length === 0) return;
+                const added = await this.migrationService.scheduleForToday(picked);
+
                 if (added > 0) {
-                    addedFeedback.textContent = `Added ${added} item(s) to today's daily note`;
+                    addedFeedback.textContent = `Scheduled ${added} item(s) for today`;
                     addSelectedBtn.disabled = true;
                     this.selectedTasks.clear();
                     this.selectedOpenPoints.clear();

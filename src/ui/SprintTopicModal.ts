@@ -184,16 +184,35 @@ export class SprintTopicModal extends Modal {
 				.onChange(value => { this.priority = value as Priority; })
 			);
 
-		// Assignee dropdown — sourced from settings.teamMembers ("logged team").
-		// Only rendered when at least one team member is configured OR the topic already
-		// has an assignee, so the feature stays invisible to users not using team tracking.
+		// Assignee dropdown — "Me" + logged team members.
+		// Rendered when there's anyone to pick from: an active team list, a
+		// configured `jiraEmail` so we know who "Me" is, or an already-assigned
+		// topic we don't want to silently nuke on edit. Solo users without a
+		// team still get the dropdown so they can self-assign — useful for
+		// later filtering / reporting.
 		const teamMembers: TeamMember[] = this.settings?.teamMembers ?? [];
 		const activeMembers: TeamMember[] = teamMembers.filter(m => m.active);
-		if (activeMembers.length > 0 || this.assignee) {
+		const myEmail = this.settings?.jiraEmail?.trim() ?? '';
+		if (activeMembers.length > 0 || this.assignee || myEmail) {
 			const options: Record<string, string> = { '': '— Unassigned —' };
+
+			// "Me" sits at the top with a person glyph. Backed by settings.jiraEmail
+			// so it stores the same value as the JIRA assignee match — that way the
+			// JIRA dashboard's "Mine" lens and the topic's assignee stay coherent.
+			if (myEmail) {
+				const myMember = teamMembers.find(m => m.email === myEmail);
+				const myLabel = myMember
+					? `\u{1F464} Me (${myMember.nickname || myMember.fullName || myMember.email})`
+					: '\u{1F464} Me';
+				options[myEmail] = myLabel;
+			}
+
 			for (const m of activeMembers) {
+				// Skip the entry that's already shown as "Me" — don't duplicate yourself.
+				if (m.email === myEmail) continue;
 				options[m.email] = m.nickname || m.fullName || m.email;
 			}
+
 			// If the current assignee isn't in the active list (inactive or removed),
 			// inject a synthetic option so editing doesn't silently clear the value.
 			if (this.assignee && !(this.assignee in options)) {
@@ -205,7 +224,7 @@ export class SprintTopicModal extends Modal {
 			}
 			new Setting(contentEl)
 				.setName('Assignee')
-				.setDesc('Team member who owns this topic (from configured team)')
+				.setDesc('Who owns this topic. "Me" maps to your configured JIRA email.')
 				.addDropdown(dropdown => dropdown
 					.addOptions(options)
 					.setValue(this.assignee)
@@ -215,7 +234,7 @@ export class SprintTopicModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('Impact')
-			.setDesc('Strategic impact — drives Impact/Effort and Eisenhower matrices')
+			.setDesc('Strategic impact — drives the Impact / Effort matrix and list-view sort order')
 			.addDropdown(dropdown => dropdown
 				.addOptions({
 					'': 'None',
@@ -246,7 +265,7 @@ export class SprintTopicModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('Due date')
-			.setDesc('Optional — drives Eisenhower urgency')
+			.setDesc('Optional — surfaces overdue / urgent cues in the topics table.')
 			.addText(text => {
 				text.inputEl.type = 'date';
 				text.setValue(this.dueDate);

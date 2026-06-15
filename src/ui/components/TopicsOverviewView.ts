@@ -5,13 +5,22 @@ import { SprintTopicService } from '../../services/sprintTopicService';
 import { JiraService } from '../../services/jiraService';
 import { renderTopicCard } from './TopicCard';
 
-/** A list section's drop behavior. Backlog clears sprint; status sections set status
+/** A board section's drop behavior. Backlog clears sprint; status sections set status
  *  (and auto-assign to the active sprint when dragged from backlog). */
 type SectionDropAction =
 	| { kind: 'setStatus'; status: TopicStatus }
 	| { kind: 'moveToBacklog' };
 
-type SubMode = 'list' | 'impactEffort' | 'eisenhower';
+/**
+ * Topics view sub-modes:
+ *   list         — flat table (Topic / JIRA / Assignee / Due). Best for quick scan.
+ *   board        — kanban-style columns (Backlog / Open / In Progress / Done) with drag-drop.
+ *   impactEffort — 2×2 strategy matrix.
+ *
+ * Eisenhower (urgent/important matrix) was removed in favor of these three —
+ * it duplicated impact/dueDate semantics without adding action, and nobody used it.
+ */
+type SubMode = 'list' | 'board' | 'impactEffort';
 type ScopeFilter = 'all' | 'active' | 'backlog' | 'archived';
 
 const PRIORITY_ORDER: Record<string, number> = {
@@ -70,8 +79,8 @@ export class TopicsOverviewView {
 
 		const modeGroup = header.createDiv({ cls: 'friday-topics-modeswitch' });
 		this.renderModeButton(modeGroup, 'list', 'List');
+		this.renderModeButton(modeGroup, 'board', 'Board');
 		this.renderModeButton(modeGroup, 'impactEffort', 'Impact / Effort');
-		this.renderModeButton(modeGroup, 'eisenhower', 'Eisenhower');
 
 		const scopeGroup = header.createDiv({ cls: 'friday-topics-scope' });
 		this.renderScopeButton(scopeGroup, 'all', 'All');
@@ -100,13 +109,13 @@ export class TopicsOverviewView {
 
 		switch (this.subMode) {
 			case 'list':
-				this.renderList(body, filtered);
+				this.renderTable(body, filtered);
+				break;
+			case 'board':
+				this.renderBoard(body, filtered);
 				break;
 			case 'impactEffort':
 				this.renderImpactEffort(body, filtered);
-				break;
-			case 'eisenhower':
-				this.renderEisenhower(body, filtered);
 				break;
 		}
 	}
@@ -224,9 +233,146 @@ export class TopicsOverviewView {
 		return filtered;
 	}
 
-	// ── List sub-mode ─────────────────────────────────────────────
+	// ── List sub-mode (flat table) ────────────────────────────────
 
-	private renderList(parent: HTMLElement, topics: SprintTopic[]): void {
+	/** Flat table view — one row per topic, columns: Topic / JIRA / Assignee / Due.
+	 *  Status shows as a colored dot before the title (●). Done rows are dimmed,
+	 *  overdue due-dates highlight red. This is the default sub-mode — best for
+	 *  quick scanning across the full backlog without losing JIRA / owner context. */
+	private renderTable(parent: HTMLElement, topics: SprintTopic[]): void {
+		const sorted = [...topics].sort((a, b) => this.sortByPriorityImpact(a, b));
+		const jiraLookup = this.makeJiraLookup();
+		const assigneeLookup = this.makeAssigneeLookup();
+		const myEmail = this.settings.jiraEmail?.trim() ?? '';
+
+		const table = parent.createEl('table', { cls: 'friday-topics-table' });
+		const thead = table.createEl('thead');
+		const headRow = thead.createEl('tr');
+		for (const label of ['Topic', 'JIRA', 'Assignee', 'Due']) {
+			headRow.createEl('th', { text: label });
+		}
+
+		const tbody = table.createEl('tbody');
+		for (const topic of sorted) {
+			const row = tbody.createEl('tr', { cls: 'friday-topics-table-row' });
+			if (topic.status === 'done') row.addClass('is-done');
+			if (topic.blocked) row.addClass('is-blocked');
+
+			// Title cell with status dot + (optional) blocked / inactive-sprint indicators.
+			const titleCell = row.createEl('td', { cls: 'friday-topics-table-title' });
+			const dot = titleCell.createSpan({
+				cls: `friday-topics-table-statusdot is-${topic.status}`,
+				text: '●',
+			});
+			dot.setAttribute('title', this.statusLabel(topic.status));
+			if (topic.blocked) {
+				titleCell.createSpan({ cls: 'friday-topics-table-blocked', text: '\u{1F6D1}' })
+					.setAttribute('title', 'Blocked');
+			}
+			const titleLink = titleCell.createEl('a', {
+				cls: 'friday-topics-table-titlelink',
+				text: topic.title,
+			});
+			titleLink.addEventListener('click', (e) => {
+				e.preventDefault();
+				this.onTopicClick(topic);
+			});
+
+			// Inline "Edit" affordance — pencil-like, opens the modal without leaving the table.
+			const editBtn = titleCell.createEl('button', {
+				cls: 'friday-topics-table-edit',
+				text: '✎',
+			});
+			editBtn.setAttribute('title', 'Edit topic details');
+			editBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				this.onEditTopic(topic);
+			});
+
+			// JIRA cell — one badge per key, each a clickable link if JIRA service
+			// is enabled and we have the issue cached. Otherwise renders the key as
+			// a plain badge so the user still sees what's linked.
+			const jiraCell = row.createEl('td', { cls: 'friday-topics-table-jira' });
+			if (topic.jira.length === 0) {
+				jiraCell.createSpan({ cls: 'friday-muted', text: '—' });
+			} else {
+				for (const key of topic.jira) {
+					const info = jiraLookup ? jiraLookup(key) : undefined;
+					const url = info?.info?.issueUrl;
+					if (url) {
+						const link = jiraCell.createEl('a', {
+							cls: 'friday-topics-table-jirakey',
+							text: key,
+							href: url,
+						});
+						link.setAttribute('target', '_blank');
+						link.setAttribute('rel', 'noopener');
+					} else {
+						jiraCell.createSpan({ cls: 'friday-topics-table-jirakey', text: key });
+					}
+				}
+			}
+
+			// Assignee — "Me" tag when the email matches `settings.jiraEmail`, otherwise
+			// the team member's nickname / full name, otherwise the bare email, otherwise em-dash.
+			const assigneeCell = row.createEl('td', { cls: 'friday-topics-table-assignee' });
+			if (!topic.assignee) {
+				assigneeCell.createSpan({ cls: 'friday-muted', text: '—' });
+			} else if (myEmail && topic.assignee === myEmail) {
+				assigneeCell.createSpan({
+					cls: 'friday-topics-table-assignee-me',
+					text: '\u{1F464} Me',
+				});
+			} else {
+				const lookup = assigneeLookup ? assigneeLookup(topic.assignee) : null;
+				const label = lookup?.label ?? topic.assignee;
+				const span = assigneeCell.createSpan({
+					cls: 'friday-topics-table-assignee-name',
+					text: label,
+				});
+				if (lookup?.isInactive) {
+					span.addClass('is-inactive');
+					span.setAttribute('title', 'Inactive team member');
+				}
+			}
+
+			// Due — ISO date with overdue highlight when in the past and topic not done.
+			const dueCell = row.createEl('td', { cls: 'friday-topics-table-due' });
+			if (!topic.dueDate) {
+				dueCell.createSpan({ cls: 'friday-muted', text: '—' });
+			} else {
+				const span = dueCell.createSpan({ text: topic.dueDate });
+				if (topic.status !== 'done' && this.isOverdue(topic.dueDate)) {
+					span.addClass('is-overdue');
+					span.setAttribute('title', 'Overdue');
+				}
+			}
+		}
+
+		// Kick off prefetch so the next render hydrates any missing JIRA URLs.
+		this.prefetchJiraKeys(topics);
+	}
+
+	private statusLabel(status: TopicStatus): string {
+		switch (status) {
+			case 'open': return 'Open';
+			case 'in-progress': return 'In Progress';
+			case 'done': return 'Done';
+		}
+	}
+
+	/** True when an ISO YYYY-MM-DD due date is strictly before today (local). */
+	private isOverdue(dueIso: string): boolean {
+		const due = new Date(dueIso);
+		if (isNaN(due.getTime())) return false;
+		const today = new Date();
+		today.setHours(0, 0, 0, 0);
+		return due < today;
+	}
+
+	// ── Board sub-mode (kanban) ───────────────────────────────────
+
+	private renderBoard(parent: HTMLElement, topics: SprintTopic[]): void {
 		// Topics with no sprint are their own "Backlog" group; the rest are split by status.
 		// Each topic appears in exactly one section. All sections are drop targets:
 		//   Backlog → drop clears the topic's sprint assignment (status preserved)
@@ -376,70 +522,6 @@ export class TopicsOverviewView {
 			cls: 'friday-topicmx-inbox',
 			topics: inbox,
 		});
-	}
-
-	// ── Eisenhower sub-mode ───────────────────────────────────────
-
-	private renderEisenhower(parent: HTMLElement, topics: SprintTopic[]): void {
-		const q1: SprintTopic[] = [];
-		const q2: SprintTopic[] = [];
-		const q3: SprintTopic[] = [];
-		const q4: SprintTopic[] = [];
-		const unscheduled: SprintTopic[] = [];
-
-		for (const topic of topics) {
-			if (!topic.dueDate) {
-				unscheduled.push(topic);
-				continue;
-			}
-			const urgent = this.isUrgent(topic);
-			const important = this.isImportant(topic);
-			if (urgent && important) q1.push(topic);
-			else if (!urgent && important) q2.push(topic);
-			else if (urgent && !important) q3.push(topic);
-			else q4.push(topic);
-		}
-
-		const quadrants: Quadrant[] = [
-			{ key: 'q1', title: '\u{1F525} Do Now', subtitle: 'Urgent & Important', cls: 'friday-topicmx-q1', topics: q1 },
-			{ key: 'q2', title: '\u{1F3AF} Plan Deep Work', subtitle: 'Important, Not Urgent', cls: 'friday-topicmx-q2', topics: q2 },
-			{ key: 'q3', title: '\u{1F91D} Coordinate', subtitle: 'Urgent, Not Important', cls: 'friday-topicmx-q3', topics: q3 },
-			{ key: 'q4', title: '\u{1F4E6} Batch Later', subtitle: 'Not Urgent, Not Important', cls: 'friday-topicmx-q4', topics: q4 },
-		];
-
-		const axisRow = parent.createDiv({ cls: 'friday-topicmx-axis-labels' });
-		axisRow.createDiv();
-		axisRow.createDiv({ cls: 'friday-topicmx-axis-label', text: 'Urgent' });
-		axisRow.createDiv({ cls: 'friday-topicmx-axis-label', text: 'Not Urgent' });
-
-		const grid = parent.createDiv({ cls: 'friday-topicmx-grid' });
-		for (const q of quadrants) {
-			this.renderQuadrant(grid, q);
-		}
-
-		this.renderQuadrant(parent, {
-			key: 'unscheduled',
-			title: 'Unscheduled',
-			subtitle: 'No due date — needs scheduling',
-			cls: 'friday-topicmx-inbox',
-			topics: unscheduled,
-		});
-	}
-
-	private isUrgent(topic: SprintTopic): boolean {
-		if (!topic.dueDate) return false;
-		const due = new Date(topic.dueDate);
-		if (isNaN(due.getTime())) return false;
-		const now = new Date();
-		now.setHours(0, 0, 0, 0);
-		const diffDays = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-		return diffDays <= this.settings.urgencyThresholdDays;
-	}
-
-	/** Important = impact {critical, high} when set; else fallback to priority {high, medium}. */
-	private isImportant(topic: SprintTopic): boolean {
-		if (topic.impact) return HIGH_IMPACT_SET.has(topic.impact);
-		return topic.priority === Priority.High || topic.priority === Priority.Medium;
 	}
 
 	// ── Shared helpers ────────────────────────────────────────────

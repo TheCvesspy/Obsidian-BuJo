@@ -2470,11 +2470,7 @@
 .friday-topicmx-fillins { border-top: 3px solid var(--color-yellow, #d9a200); }
 .friday-topicmx-timesinks { border-top: 3px solid var(--color-red, #e03e3e); }
 
-/* Eisenhower quadrant accents */
-.friday-topicmx-q1 { border-top: 3px solid var(--color-red, #e03e3e); }
-.friday-topicmx-q2 { border-top: 3px solid var(--interactive-accent, #4a8af4); }
-.friday-topicmx-q3 { border-top: 3px solid var(--color-yellow, #d9a200); }
-.friday-topicmx-q4 { border-top: 3px solid var(--text-muted, #999); }
+/* Eisenhower quadrant accents removed — sub-mode dropped from Topics view. */
 
 .friday-topicmx-inbox {
     margin-top: 8px;
@@ -2522,6 +2518,143 @@
     flex-direction: column;
     gap: 4px;
     flex: 1;
+}
+
+/* ── Topics list (flat table sub-mode) ─────────────────────────────── */
+
+.friday-topics-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+.friday-topics-table thead th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    position: sticky;
+    top: 0;
+    background: var(--background-primary);
+    z-index: 1;
+}
+
+.friday-topics-table tbody td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--background-modifier-border-hover, var(--background-modifier-border));
+    vertical-align: middle;
+}
+
+.friday-topics-table-row:hover td {
+    background: var(--background-modifier-hover);
+}
+
+.friday-topics-table-row.is-done {
+    color: var(--text-muted);
+}
+.friday-topics-table-row.is-done .friday-topics-table-titlelink {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+
+.friday-topics-table-row.is-blocked .friday-topics-table-titlelink {
+    /* Blocked topics get a subtle red tint on the title so the row pops without
+     * relying on the 🛑 emoji alone (accessibility / colorblind friendly cue). */
+    color: var(--color-red, #e03e3e);
+}
+
+.friday-topics-table-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 240px;
+}
+
+.friday-topics-table-statusdot {
+    font-size: 14px;
+    line-height: 1;
+}
+.friday-topics-table-statusdot.is-open { color: var(--text-muted); }
+.friday-topics-table-statusdot.is-in-progress { color: var(--interactive-accent, #4a8af4); }
+.friday-topics-table-statusdot.is-done { color: var(--color-green, #08b94e); }
+
+.friday-topics-table-titlelink {
+    color: var(--text-normal);
+    text-decoration: none;
+    flex: 1;
+    cursor: pointer;
+}
+.friday-topics-table-titlelink:hover {
+    text-decoration: underline;
+}
+
+.friday-topics-table-edit {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    padding: 0 6px;
+    cursor: pointer;
+    font-size: 12px;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 80ms ease;
+}
+.friday-topics-table-row:hover .friday-topics-table-edit {
+    opacity: 1;
+}
+.friday-topics-table-edit:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border);
+    color: var(--text-normal);
+}
+
+.friday-topics-table-jira {
+    white-space: nowrap;
+}
+
+.friday-topics-table-jirakey {
+    display: inline-block;
+    font-family: var(--font-monospace);
+    font-size: 11px;
+    padding: 1px 6px;
+    margin-right: 4px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 3px;
+    color: var(--text-normal);
+    text-decoration: none;
+}
+a.friday-topics-table-jirakey:hover {
+    background: var(--background-modifier-hover);
+    text-decoration: none;
+}
+
+.friday-topics-table-assignee-me {
+    font-weight: 600;
+    color: var(--interactive-accent, #4a8af4);
+}
+
+.friday-topics-table-assignee-name.is-inactive {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.friday-topics-table-due {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.friday-topics-table-due .is-overdue {
+    color: var(--color-red, #e03e3e);
+    font-weight: 600;
+}
+
+.friday-topics-table-blocked {
+    font-size: 12px;
 }
 
 /* Metadata chips row on topic cards (used in overview / matrix views) */

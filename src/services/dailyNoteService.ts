@@ -63,7 +63,10 @@ export class DailyNoteService {
 		return file;
 	}
 
-	/** Add a task to the daily note under ## Tasks heading */
+	/** Add a task to the daily note under ## Tasks heading.
+	 *  Still used by the MCP `tasks_add_to_daily` tool and a couple of other
+	 *  user-initiated capture paths. Morning migration no longer calls this —
+	 *  it just stamps `@due today` on the source task instead. */
 	async addTaskToDaily(task: TaskItem, date: Date): Promise<void> {
 		const file = await this.getOrCreateDailyNote(date);
 		const taskLine = this.buildTaskLine(task);
@@ -72,25 +75,11 @@ export class DailyNoteService {
 		);
 	}
 
-	/** Add a migrated task to the daily note under ## Migrated Tasks heading */
-	async addMigratedTask(task: TaskItem, date: Date): Promise<void> {
-		const file = await this.getOrCreateDailyNote(date);
-		const taskLine = this.buildTaskLine(task);
-		await this.vault.process(file, content =>
-			this.insertAfterHeading(content, '## Migrated Tasks', taskLine),
-		);
-	}
-
-	/** Add a migrated parent task with its children as a block under ## Migrated Tasks */
-	async addMigratedTaskWithChildren(parent: TaskItem, children: TaskItem[], date: Date): Promise<void> {
-		const file = await this.getOrCreateDailyNote(date);
-		const parentLine = this.buildTaskLine(parent);
-		const childLines = children.map(child => '\t' + this.buildChildTaskLine(child));
-		const block = [parentLine, ...childLines].join('\n');
-		await this.vault.process(file, content =>
-			this.insertAfterHeading(content, '## Migrated Tasks', block),
-		);
-	}
+	// addMigratedTask / addMigratedTaskWithChildren removed (2026-06).
+	// Forwarding from the morning review used to copy tasks into today's daily
+	// note under `## Migrated Tasks`; that's now a no-op — the dashboard
+	// aggregates from across the vault by due date. If you need the old behavior
+	// back, restore from git history.
 
 	/** Add a raw task line to the daily note under ## Tasks heading */
 	async addRawTaskLine(taskLine: string, date: Date): Promise<void> {

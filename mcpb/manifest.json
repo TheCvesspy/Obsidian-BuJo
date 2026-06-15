@@ -1,0 +1,52 @@
+{
+	"manifest_version": "0.3",
+	"name": "friday-mcp",
+	"display_name": "Friday (Obsidian)",
+	"version": "2.1.0",
+	"description": "Talk to the Friday Obsidian plugin from Claude: list/edit tasks, manage sprint topics, query daily plan.",
+	"long_description": "A thin stdio→HTTP bridge to the MCP server embedded in the Friday Obsidian plugin. Forwards JSON-RPC tool calls from Claude Desktop to the plugin's localhost server, which performs the actual vault reads/writes via the plugin's service layer. Obsidian must be running with the Friday plugin loaded and its MCP server enabled.",
+	"author": {
+		"name": "Quill of the Weavers"
+	},
+	"server": {
+		"type": "node",
+		"entry_point": "server/index.js",
+		"mcp_config": {
+			"command": "node",
+			"args": ["${__dirname}/server/index.js"],
+			"env": {
+				"FRIDAY_MCP_HOST": "${user_config.host}",
+				"FRIDAY_MCP_PORT": "${user_config.port}",
+				"FRIDAY_MCP_TOKEN": "${user_config.token}"
+			}
+		}
+	},
+	"user_config": {
+		"host": {
+			"type": "string",
+			"title": "Plugin host",
+			"description": "Where the Friday plugin's MCP server is listening. Leave as 127.0.0.1 unless you reconfigured it to bind elsewhere.",
+			"default": "127.0.0.1",
+			"required": true
+		},
+		"port": {
+			"type": "number",
+			"title": "Plugin port",
+			"description": "The port set in Friday's Settings → MCP Server. Default 27225.",
+			"default": 27225,
+			"min": 1024,
+			"max": 65535,
+			"required": true
+		},
+		"token": {
+			"type": "string",
+			"title": "Bearer token",
+			"description": "Copy from Friday's Settings → MCP Server → Bearer token. Required on every request.",
+			"sensitive": true,
+			"required": true
+		}
+	},
+	"compatibility": {
+		"platforms": ["darwin", "win32", "linux"]
+	}
+}

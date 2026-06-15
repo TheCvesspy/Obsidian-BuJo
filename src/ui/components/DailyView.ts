@@ -30,16 +30,23 @@ export class DailyView {
 			tasks = tasks.filter(t => t.text.toLowerCase().includes(q));
 		}
 
-		// Single-pass bucketing
+		// Single-pass bucketing.
+		//
+		// History notes:
+		//   - "Unscheduled" used to be a bucket here; it's now a dedicated top-level tab.
+		//   - "Carried Over" used to be a bucket too, populated by the old forward-as-copy
+		//     migration flow that wrote `(from [[source]])` lines into today's daily note.
+		//     That copy step is gone — forwarding now just stamps `@due today` on the
+		//     source — so there's no Carried Over bucket either. Legacy carried-over
+		//     copies from old daily notes still show up in "Daily Log" (they ARE in
+		//     today's daily note); they just don't get a separate section.
 		const overdue: TaskItem[] = [];
-		const carriedOver: TaskItem[] = [];
 		const dailyLog: TaskItem[] = [];
 		const dueToday: TaskItem[] = [];
-		const unscheduled: TaskItem[] = [];
 		const upcoming: TaskItem[] = [];
 		let pendingCount = 0;
 
-		// Today's daily note path — tasks here are shown in Carried Over / Daily Log
+		// Today's daily note path — tasks here are shown in Daily Log.
 		const todayDailyPath = this.settings.dailyNotePath
 			? `${this.settings.dailyNotePath}/${formatDateISO(today)}.md`
 			: null;
@@ -49,22 +56,18 @@ export class DailyView {
 				// Past due date — overdue
 				overdue.push(t);
 				pendingCount++;
-			} else if (t.migratedFrom && todayDailyPath && t.sourcePath === todayDailyPath) {
-				// Migrated into today's daily note from a previous day
-				carriedOver.push(t);
-				if (t.status === TaskStatus.Open) pendingCount++;
 			} else if (todayDailyPath && t.sourcePath === todayDailyPath) {
-				// Written directly in today's daily note
+				// Anything in today's daily note (directly written via QuickCapture / Add Task,
+				// or a leftover legacy carried-over copy) lands in Daily Log.
 				dailyLog.push(t);
 				if (t.status === TaskStatus.Open) pendingCount++;
 			} else if (t.dueDate && t.dueDate.toDateString() === todayStr) {
+				// Tasks scheduled for today via @due — the natural aggregation surface
+				// that "Forward" feeds into now.
 				dueToday.push(t);
 				if (t.status === TaskStatus.Open) pendingCount++;
-			} else if (t.status === TaskStatus.Open && !t.dueDate) {
-				unscheduled.push(t);
-				pendingCount++;
 			} else if (t.status === TaskStatus.Open && t.dueDate) {
-				// Future due date — upcoming
+				// Future due date — upcoming.
 				upcoming.push(t);
 				pendingCount++;
 			}
@@ -75,13 +78,12 @@ export class DailyView {
 		header.createSpan({ text: `Daily Log — ${formatDateDisplay(today)}` });
 		header.createSpan({ cls: 'friday-pending-count', text: ` (${pendingCount} pending)` });
 
-		// Sections
+		// Sections. The dashboard aggregates from across the vault using @due — no
+		// daily-note copies needed. Unscheduled and Carried Over used to live here.
 		const sections: [string, TaskItem[]][] = [
 			['Overdue', overdue],
-			['Carried Over', carriedOver],
-			['Daily Log', dailyLog],
 			['Due Today', dueToday],
-			['Unscheduled', unscheduled],
+			['Daily Log', dailyLog],
 			['Upcoming', upcoming],
 		];
 

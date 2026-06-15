@@ -21,6 +21,7 @@ import { TopicsOverviewView } from './components/TopicsOverviewView';
 import { OverviewView } from './components/OpenPointsView';
 import { InboxView } from './components/InboxView';
 import { OverdueView } from './components/OverdueView';
+import { UnscheduledView } from './components/UnscheduledView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { SyntaxReferenceModal } from './components/SyntaxReference';
@@ -289,6 +290,11 @@ export class FridayView extends ItemView {
 			}
 			case FridayViewMode.Overdue: {
 				const view = new OverdueView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
+				view.render();
+				break;
+			}
+			case FridayViewMode.Unscheduled: {
+				const view = new UnscheduledView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.currentGroupMode, this.searchQuery, this.collapsedGroups);
 				view.render();
 				break;
 			}

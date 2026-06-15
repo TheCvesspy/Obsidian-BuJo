@@ -6,6 +6,111 @@ All notable changes to the Friday Obsidian plugin (formerly *BuJo*) are tracked 
 
 ### Changed
 
+- **Morning migration stops copying tasks into the daily note.** "Forward" used to mark the source `[>]` migrated and write a duplicate `- [ ] task (from [[source]])` line under `## Migrated Tasks` in today's daily note. That created two artifacts for one piece of work, polluted daily notes with second-hand copies of tasks that lived in Topics / project pages, and required a two-way-sync mechanism to keep the checkbox state in lockstep. Now Forward just **sets `@due` to today on the source task** — the Daily dashboard picks it up through its existing "Due Today" bucket via normal aggregation. The source task stays in its original location, single point of truth, no duplicates. The picker's "Add Selected to Today" button (and the MCP-driven equivalents) follow the same rule: pick a task or open point, get `@due today` stamped on the source.
+
+  **What changes downstream**
+  - `MigrationService.executeMigrations` `forward` case: delegates to a new `scheduleForToday(tasks)` helper that just calls `TaskWriter.updateDueDate(task, DD-MM-YYYY)` per task. No more `addMigratedTask` / `addMigratedTaskWithChildren` calls, no more `[>]` status mutation on the source.
+  - `MigrationModal` "Add Selected to Today" button: same code path. Picker results route through `scheduleForToday` instead of writing copies. Feedback text changes from "Added N item(s) to today's daily note" to "Scheduled N item(s) for today".
+  - Children: no longer separately copied or status-mutated. They ride along by parent linkage — the parent's new `@due today` is enough for the dashboard to surface the whole subtree.
+  - `DailyView` (the Daily tab in the Friday dashboard): the **Carried Over** section is gone. It was populated by the now-absent forwarded copies; legacy carried-over entries from old daily notes (pre-change) fall into **Daily Log** instead, since they're physically in today's note. Section order is now: Overdue → Due Today → Daily Log → Upcoming.
+  - `DailyNoteService.addMigratedTask` and `addMigratedTaskWithChildren` removed (no remaining callers). `addTaskToDaily` / `addRawTaskLine` / `addRawInboxLine` stay — they back QuickCapture, the Add Task bar, and the `tasks_add_to_daily` MCP tool, all of which represent the user **explicitly writing new content** into today's note (not a duplication of existing content).
+  - Two-way sync (`TaskWriter.syncOriginalStatus`, `VaultScanner.detectAndSyncStatusChanges`) is kept in place — legacy users still have carried-over copies in old daily notes from before this change, and ticking those should continue to mirror back to the originals. Will be removable once that legacy data drains.
+  - `MigrationService.deduplicateDailyTasks` likewise stays as a legacy-data safeguard — no new duplicates will be created, but old ones still need to be collapsed when surfaced in the review.
+
+  **What stays the same** — Reschedule (per-task date picker), Done, and Cancel actions are unchanged. The morning review still surfaces "Yesterday's Incomplete", "Overdue", and "Due Today" sections, drawing from the same aggregation pipeline. The `lastMigrationDate` stamp still gates the auto-open behavior.
+
+### Files
+
+- `src/services/migrationService.ts` — new `scheduleForToday(tasks)` helper; `forward` case rewritten to use it.
+- `src/ui/MigrationModal.ts` — "Add Selected to Today" handler routes through `scheduleForToday`.
+- `src/services/dailyNoteService.ts` — `addMigratedTask` / `addMigratedTaskWithChildren` deleted (callers updated).
+- `src/ui/components/DailyView.ts` — Carried Over bucket and section removed; section order updated.
+
+### Added
+
+- **"Me" option in the topic assignee dropdown** (`SprintTopicModal`). Maps to `settings.jiraEmail` — the same identity the JIRA Dashboard "Mine" lens uses — so self-assignment and JIRA matching stay coherent. Sits at the top of the assignee dropdown with a 👤 glyph; when the user's own email is also configured as a team member, the dropdown collapses the two into a single `👤 Me (nickname)` entry rather than offering two paths to the same value. Surfaces even when no team is configured, so solo users can self-assign for later filtering. ([src/ui/SprintTopicModal.ts](src/ui/SprintTopicModal.ts))
+
+### Changed
+
+- **Topics view restructured around a flat table.** The kanban sub-mode that used to be called "List" is renamed to **Board**, and a new **List** sub-mode (now the default) renders topics as a compact 4-column table: *Topic / JIRA / Assignee / Due*. Status shows as a coloured dot in the title cell (grey = open, blue = in progress, green = done) and done rows strike-through. Blocked topics get a 🛑 marker plus a subtle red tint on the title. JIRA keys render as monospaced badges — when the JIRA module is enabled and the issue is cached, each badge becomes a real link to the live issue. Assignee shows as `👤 Me` when it matches `settings.jiraEmail`, the team member's nickname / full name otherwise, italicised muted text for inactive members. Due dates use tabular numerics and highlight red when overdue (and the topic isn't done). Every row has a hover-only ✎ edit affordance that opens the topic modal without leaving the table.
+
+  Why: the kanban already gave a great status overview but was hostile to "who owns this / what's the JIRA / when is it due" scanning across a backlog of dozens of topics. The new table is the lens for those questions; the board is still one click away.
+
+- **Eisenhower (Urgent / Important) sub-mode removed from the Topics view.** It duplicated semantics already carried by `impact` (drives Impact / Effort) and `dueDate` (drives the table's overdue cue) without giving the user an action surface different from those two — and observation: nobody used it. The `impact`, `dueDate`, and `urgencyThresholdDays` fields are unchanged; only the matrix rendering is gone. Setting descriptions and modal hints that referenced "Eisenhower" are reworded to point at the surfaces that still exist (Impact / Effort matrix, table overdue highlights). Tabs in the Topics view header now read: **List · Board · Impact / Effort**.
+
+### Files
+
+- `src/ui/SprintTopicModal.ts` — "Me" option in the assignee dropdown; dedup against teamMembers when the user's email matches an active member; modal hints reworded.
+- `src/ui/components/TopicsOverviewView.ts` — `SubMode` type changed (`list | board | impactEffort`); default sub-mode is `list`; new `renderTable` (~110 lines) for the flat table; old `renderList` renamed to `renderBoard`; `renderEisenhower` / `isUrgent` / `isImportant` deleted.
+- `src/settings.ts` — urgency-threshold description reworded.
+- `styles.css` — new `.friday-topics-table-*` rule block; deleted `.friday-topicmx-q1..q4` (Eisenhower quadrant accents).
+
+### Changed
+
+- **View tab order reshuffled in the Friday main view.** Topics moves from the middle of the strip up to position 2, immediately after Daily — it's now the second-most-used view (the strategic-prioritization landing pad) and was buried before. New order: Daily → Topics → Weekly → Monthly → Calendar → Unscheduled → Sprint → Inbox → Overdue → Overview → Analytics. The default-view dropdown in settings mirrors the same order so the two stay coherent.
+- **"Unscheduled" promoted from inline section to its own top-level tab** (between Calendar and Sprint). It used to be one of six sections inside the Daily view's single-pass bucketing pass, which was fine when the un-dated backlog was small but dominated the page once it grew past ~10 items. Pulling it out as a dedicated tab lets the user scope group-mode (by page / priority / due-date) and search to just the un-dated pile, the same way Overdue already worked.
+
+### Files
+
+- `src/types.ts` — `FridayViewMode.Unscheduled` enum entry.
+- `src/ui/components/UnscheduledView.ts` — new component, mirrors `OverdueView` (group mode, search, collapse state); pulls from `TaskStore.getUnscheduledTasks()`.
+- `src/ui/FridayView.ts` — `UnscheduledView` import + `case FridayViewMode.Unscheduled` route inserted next to Overdue.
+- `src/ui/components/ViewSwitcher.ts` — tab list rewritten; new commentary documents the rationale for the flow.
+- `src/ui/components/DailyView.ts` — `unscheduled` bucket + `Unscheduled` section dropped; only the upcoming/overdue/etc. buckets remain. Open root tasks without a due date now silently skip the daily-view classification and surface in the dedicated tab instead.
+- `src/settings.ts` — default-view dropdown order matches the new switcher, with `Unscheduled` added as a selectable default.
+
+### Added
+
+- **MCPB bundle (`friday-mcp.mcpb`)** — drag-and-drop installable for Claude Desktop. Bypasses the Windows quoting bug that breaks plain `npx mcp-remote` configs (where `C:\Program Files\nodejs\npx.cmd` gets word-split on the space) by using Claude Desktop's own bundled Node runtime — no shell wrapper, no PATH resolution at the OS level. Port + bearer token are entered in the install dialog and surfaced to the bundle via env vars, so users never edit `claude_desktop_config.json` by hand.
+
+  **What's in the bundle**
+  - `manifest.json` (MCPB schema v0.3) — declares server entry point and three `user_config` fields (`host` defaulting to `127.0.0.1`, `port` defaulting to `27225`, `token` flagged `sensitive`). Claude Desktop renders these as a form during install and stores the token in the OS keychain.
+  - `server/index.js` — ~140-line stdio↔HTTP bridge using only Node built-ins (`http`, `readline`). Reads newline-delimited JSON-RPC from stdin, forwards via `POST /mcp` with `Authorization: Bearer ${token}` to the plugin's embedded HTTP server, writes the response back as a single stdout line. Notifications (no `id`) get acknowledged with a 202 from the plugin and produce no stdout output, matching MCP wire semantics. `ECONNREFUSED` is translated into a clear JSON-RPC error message ("Could not reach Friday plugin at … Open Obsidian, enable the Friday plugin, then turn on Settings → MCP Server.") so the user sees what's wrong instead of a cryptic transport-disconnect in Claude Desktop's log.
+
+  **Build pipeline**
+  - New `mcpb/` source directory with the manifest + bridge.
+  - `npm run pack-mcpb` invokes the official `@anthropic-ai/mcpb` CLI (added as devDep) to validate the manifest against the v0.3 schema and write `friday-mcp.mcpb` at the repo root. Manifest validation is enforced at pack time — invalid bundles fail the build instead of silently shipping. Released bundles need to be copied alongside `main.js` into the user's `<vault>/.obsidian/plugins/obsidian-task-bujo/` so the settings tab can point users at it.
+  - `pack-mcpb` is intentionally not folded into the standard `build` script — the bundle changes far less often than `main.js`, and most plugin-dev iterations don't need to re-pack it.
+
+  **Settings UI changes** ([src/settings.ts](src/settings.ts))
+  - New "Recommended: .mcpb bundle (Claude Desktop)" panel above the existing JSON-snippet block, with a 4-step install checklist and a live reference to the current port value so the user can copy the right numbers into the install dialog.
+  - The "Sample Claude connector" section is renamed "Alternative: manual client config" and gains a Windows caveat explaining when the direct-HTTP / mcp-remote forms can fail and why the .mcpb is the safer path. The CLI / `.mcp.json` forms remain perfectly fine for Claude Code regardless.
+
+### Files
+
+- **New:** `mcpb/manifest.json`, `mcpb/server/index.js`, `mcpb-pack.mjs`.
+- **Modified:** `package.json` (new `pack-mcpb` script, `@anthropic-ai/mcpb` devDep), `src/settings.ts` (new bundle panel + Windows caveat on the JSON snippets), `CHANGELOG.md` (this entry).
+
+- **Embedded MCP server (`Settings → MCP Server`).** Opt-in HTTP server that exposes Friday's task and topic operations to MCP-aware clients (Claude Desktop, Claude Code, Claude in Chrome). Off by default. Desktop-only — silently no-ops on mobile where Node's `http` module isn't available.
+
+  **Architecture**
+  - Hand-rolled JSON-RPC over Node's built-in `http` module. No new runtime dependencies — the MCP wire format (`initialize`, `tools/list`, `tools/call`, `notifications/*`) is implemented directly. Single `POST /mcp` endpoint per request, no SSE / session state.
+  - Bound to `127.0.0.1` by default. Configurable port (default `27225` — picked to avoid `27124` used by the popular Local REST API plugin). A `mcpHost` setting also exists in `data.json` for power users who need LAN access, but it's intentionally not surfaced in the UI to keep the section tight.
+  - Bearer-token auth on every request. Token is auto-generated on first enable (24 random bytes → URL-safe base64). The settings UI offers Copy and Regenerate buttons — regeneration warns that existing clients need to be updated.
+  - Lifecycle: `applyMcpServerState()` starts/stops the server idempotently. Called from `onLayoutReady`, the settings toggle, and the (debounced) port input. `onunload` fires a stop so the socket is released before the next reload.
+
+  **Settings UI**
+  - Live status line: `● Running on http://127.0.0.1:27225` / `● Stopped` / `● Error: Port 27225 is already in use.` so the user sees the state without opening the console.
+  - **Sample Claude connector** panel — three copy-pasteable snippets that always reflect current host/port/token (host/port change or token regen updates them immediately, so there's no risk of pasting a stale config):
+    - Claude Desktop `claude_desktop_config.json` (`mcpServers.friday` with `type: "http"`, `url`, `Authorization: Bearer …`).
+    - Claude Code CLI shortcut (`claude mcp add --transport http friday … --header "Authorization: Bearer …"`).
+    - Claude Code `.mcp.json` (same shape as Claude Desktop).
+
+  **Tools exposed (initial scope)**
+  - *Tasks* — `tasks_list` (filter by today / overdue / unscheduled / week / all, with optional page substring + status), `tasks_search` (substring across text + sourcePath), `tasks_set_status` (open / done / cancelled / migrated / scheduled), `tasks_set_due_date` (natural-language or DD-MM / DD-MM-YYYY — reuses the same `parseDueDate` the UI calls), `tasks_add_to_daily` (creates the daily note if missing, writes under `## Tasks` or `## Inbox`).
+  - *Sprints* — `sprints_list`, `sprint_create`, `sprint_complete` (auto-starts next sprint if the setting is on).
+  - *Topics* — `topics_list` (scope by sprintId / `"active"` / `"backlog"` / `"all"`), `topic_get`, `topic_create` (full constructor surface incl. JIRA keys, impact, effort, dueDate, assignee, waitingOn, linked pages), `topic_update` (one or more frontmatter fields at a time, pass `null` to clear impact/effort/dueDate/assignee/waitingOn), `topic_assign_to_sprint` (accepts real ID, `"active"`, or `"backlog"`).
+  - Each tool is a thin adapter — no business logic in the MCP layer. Every operation routes through the existing service methods (`TaskStore`, `TaskWriter`, `DailyNoteService`, `SprintService`, `SprintTopicService`), so writes go through the same atomic `vault.process` paths as the UI does. Task IDs are the existing `${sourcePath}:${lineNumber}` strings — stable within a session but invalidated by edits above the task line, so tools that take a `taskId` document re-listing when in doubt.
+
+  **Out of scope for this first cut** — daily migration tools, team & 1:1s, JIRA bridge, analytics, standalone (Obsidian-not-running) mode, MCP resources/prompts. The plumbing is set up so adding more tools later is a one-file change in `src/mcp/tools/`.
+
+### Files
+
+- **New:** `src/mcp/server.ts` (HTTP transport, JSON-RPC dispatch, bearer auth, lifecycle, token generator), `src/mcp/tool.ts` (shared tool types + small arg-validation helpers used instead of pulling in zod), `src/mcp/tools/tasks.ts` (5 task tools), `src/mcp/tools/topics.ts` (8 sprint/topic tools).
+- **Modified:** `src/types.ts` (added `mcpEnabled`, `mcpHost`, `mcpPort`, `mcpToken` to `PluginSettings` with safe defaults), `src/main.ts` (instantiate `McpServer`, register tools, `applyMcpServerState`, gate on `Platform.isDesktop`, stop on unload), `src/settings.ts` (new MCP Server section with enable toggle, port input, status line, token row with Copy / Regenerate, sample connector snippets for Claude Desktop / Claude Code CLI / `.mcp.json`).
+
+### Changed
+
 - **Topics view → List sub-mode now renders as a 4-column kanban (Backlog \| Open \| In Progress \| Done) instead of stacked rows.** The four sections previously stacked top-to-bottom with their cards laid out in a wrapping `auto-fill` grid; with longer backlogs this pushed Done off-screen and the multi-row card grids made it hard to scan a single status. The same four sections now render side-by-side as columns, with cards stacked vertically inside each — matching the existing Sprint Kanban shape so the two views feel consistent. All existing semantics carry over unchanged: scope chips, assignee filter, sort order (impact → priority → title), and drag-and-drop (status set on drop, auto-assign-to-active-sprint when leaving Backlog, blocked-cleared on Done, `moveToBacklog` on backlog drop). Empty-Backlog suppression under the *Active sprint* scope still applies. As a side fix, the "No topics" empty-state placeholder is now rendered **inside** each column's drop zone (previously it sat outside, so empty columns silently rejected drops).
 
 ### Files

@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice } from 'obsidian';
+import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice, Platform } from 'obsidian';
 import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, FridayViewMode } from './types';
 import { VIEW_TYPE_FRIDAY, VIEW_TYPE_JIRA_DASHBOARD, VIEW_TYPE_TEAM_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
 import { FridaySettingTab } from './settings';
@@ -29,6 +29,9 @@ import { QuickCaptureModal } from './ui/QuickCaptureModal';
 import { DueDateModal } from './ui/DueDateModal';
 import { SyntaxReferenceModal } from './ui/components/SyntaxReference';
 import { getWeekId } from './utils/dateUtils';
+import { McpServer, generateMcpToken, noticeForError } from './mcp/server';
+import { taskTools } from './mcp/tools/tasks';
+import { topicTools } from './mcp/tools/topics';
 
 export default class FridayPlugin extends Plugin {
 	data: PluginData;
@@ -49,6 +52,7 @@ export default class FridayPlugin extends Plugin {
 	jiraDashboardService: JiraDashboardService;
 	jiraTeamService: JiraTeamService;
 	teamMemberService: TeamMemberService;
+	mcpServer: McpServer;
 	private statusBarEl: HTMLElement;
 
 	async onload(): Promise<void> {
@@ -102,6 +106,23 @@ export default class FridayPlugin extends Plugin {
 		this.jiraDashboardService = new JiraDashboardService(() => this.settings);
 		this.jiraTeamService = new JiraTeamService(() => this.settings);
 		this.teamMemberService = new TeamMemberService(this.app.vault, this.scanner, () => this.settings);
+
+		// Embedded MCP server — opt-in via settings, desktop only. The tool layer is wired
+		// up here so the same instance handles every tool call without re-binding state on
+		// each request. The server starts/stops based on settings; tools are static.
+		this.mcpServer = new McpServer();
+		this.mcpServer.setTools([
+			...taskTools({
+				store: this.store,
+				writer: this.writer,
+				dailyNoteService: this.dailyNoteService,
+				getSettings: () => this.settings,
+			}),
+			...topicTools({
+				sprintService: this.sprintService,
+				sprintTopicService: this.sprintTopicService,
+			}),
+		]);
 
 		this.scanner.onChange(() => {
 			this.store.setTasks(this.scanner.getAllTasks());
@@ -386,7 +407,33 @@ export default class FridayPlugin extends Plugin {
 			await this.autoGenerateTeamPagesIfNeeded();
 			this.checkMigration();
 			this.checkWeeklyReview();
+			await this.applyMcpServerState();
 		});
+	}
+
+	/** Start/stop the MCP server based on current settings. Idempotent — safe to call
+	 *  from onload, after settings changes, and from manual UI buttons. No-op on mobile
+	 *  (Node's http module is unavailable there). */
+	async applyMcpServerState(): Promise<void> {
+		if (!Platform.isDesktop) return;
+		if (this.settings.mcpEnabled) {
+			if (!this.settings.mcpToken) {
+				this.settings.mcpToken = generateMcpToken();
+				await this.saveData(this.data);
+			}
+			try {
+				await this.mcpServer.start({
+					mcpHost: this.settings.mcpHost,
+					mcpPort: this.settings.mcpPort,
+					mcpToken: this.settings.mcpToken,
+				});
+			} catch {
+				// Server posted an error status; surface it once via Notice.
+				noticeForError(this.mcpServer.getStatus());
+			}
+		} else {
+			await this.mcpServer.stop();
+		}
 	}
 
 	/** One-shot: if the user has a populated `teamMembers[]` list from the JIRA
@@ -617,5 +664,8 @@ export default class FridayPlugin extends Plugin {
 		this.app.workspace.detachLeavesOfType(VIEW_TYPE_JIRA_DASHBOARD);
 		this.app.workspace.detachLeavesOfType(VIEW_TYPE_TEAM_DASHBOARD);
 		this.scanner.destroy();
+		// Fire-and-forget — Obsidian doesn't await onunload, but we still want the
+		// listening socket released so the next reload can rebind the same port.
+		void this.mcpServer?.stop();
 	}
 }

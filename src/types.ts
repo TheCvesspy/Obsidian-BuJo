@@ -38,6 +38,7 @@ export enum FridayViewMode {
 	Overview = 'overview',
 	Overdue = 'overdue',
 	Inbox = 'inbox',
+	Unscheduled = 'unscheduled',
 	Analytics = 'analytics',
 }
 
@@ -295,6 +296,20 @@ export interface PluginSettings {
 	/** Which JIRA Dashboard tab is active. Sticky so a relaunch lands back on the
 	 *  last-used view. 'team' is silently coerced to 'mine' when team tracking is off. */
 	jiraDashboardActiveTab: 'mine' | 'team';
+
+	// ─── MCP Server ──────────────────────────────────────────────
+	// Embedded HTTP MCP server that exposes a subset of plugin operations
+	// (tasks, sprints, topics) to MCP-aware clients like Claude Desktop / Claude Code.
+	// Off by default — opt-in. Desktop-only; no-ops on mobile.
+
+	/** Master switch for the embedded MCP server */
+	mcpEnabled: boolean;
+	/** Bind address (default 127.0.0.1). Change only if you need LAN access. */
+	mcpHost: string;
+	/** TCP port for the MCP server. Default 27225 (avoids 27124 used by Local REST API). */
+	mcpPort: number;
+	/** Bearer token required on every MCP request. Generated on first enable. */
+	mcpToken: string;
 }
 
 /** A configured team member. Email is the JIRA identity (used in `assignee = "email"`
@@ -429,6 +444,11 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	jiraTeamEnabled: false,
 	teamMembers: [],
 	jiraDashboardActiveTab: 'mine',
+	// MCP server — OFF until explicitly enabled in settings
+	mcpEnabled: false,
+	mcpHost: '127.0.0.1',
+	mcpPort: 27225,
+	mcpToken: '',
 };
 
 /** Snapshot of weekly analytics for historical tracking */
