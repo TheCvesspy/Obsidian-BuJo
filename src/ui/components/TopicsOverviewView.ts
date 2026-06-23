@@ -1,27 +1,23 @@
 import { Notice } from 'obsidian';
-import { PluginSettings, Sprint, SprintTopic, TopicStatus, Priority, TopicImpact, TopicEffort } from '../../types';
-import { SprintService } from '../../services/sprintService';
+import { PluginSettings, SprintTopic, TopicStatus, Priority, TopicImpact, TopicEffort } from '../../types';
 import { SprintTopicService } from '../../services/sprintTopicService';
 import { JiraService } from '../../services/jiraService';
+import { deriveTopicBlock, toJiraSignal } from '../../services/topicStatus';
+import { buildTopicIndex, TopicIndex, criticalPath } from '../../services/topicGraph';
+import { getWeekStartConfigurable, getWeekId, formatWeekId } from '../../utils/dateUtils';
 import { renderTopicCard } from './TopicCard';
-
-/** A board section's drop behavior. Backlog clears sprint; status sections set status
- *  (and auto-assign to the active sprint when dragged from backlog). */
-type SectionDropAction =
-	| { kind: 'setStatus'; status: TopicStatus }
-	| { kind: 'moveToBacklog' };
 
 /**
  * Topics view sub-modes:
  *   list         — flat table (Topic / JIRA / Assignee / Due). Best for quick scan.
- *   board        — kanban-style columns (Backlog / Open / In Progress / Done) with drag-drop.
+ *   board        — Kanban columns (Backlog / To Do / In Progress / Done) with drag-drop.
  *   impactEffort — 2×2 strategy matrix.
  *
  * Eisenhower (urgent/important matrix) was removed in favor of these three —
  * it duplicated impact/dueDate semantics without adding action, and nobody used it.
  */
-type SubMode = 'list' | 'board' | 'impactEffort';
-type ScopeFilter = 'all' | 'active' | 'backlog' | 'archived';
+export type TopicsSubMode = 'list' | 'board' | 'impactEffort' | 'roadmap';
+type ScopeFilter = 'all' | 'backlog' | 'archived';
 
 const PRIORITY_ORDER: Record<string, number> = {
 	[Priority.High]: 0,
@@ -48,17 +44,28 @@ interface Quadrant {
 	topics: SprintTopic[];
 }
 
+interface RoadmapItem {
+	topic: SprintTopic;
+	startMs: number;
+	endMs: number;
+}
+
+const ROADMAP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 export class TopicsOverviewView {
 	private el: HTMLElement;
-	private subMode: SubMode = 'list';
+	private subMode: TopicsSubMode = 'board';
+	private roadmapZoom: 'week' | 'month' = 'week';
+	private roadmapGroupBy: 'assignee' | 'status' = 'assignee';
 	private scope: ScopeFilter = 'all';
 	/** 'all' | 'unassigned' | team member email. Persists across re-renders of this view instance. */
 	private assigneeFilter: string = 'all';
+	/** Dependency index over all topics, rebuilt at the start of each render. */
+	private depIndex: TopicIndex | null = null;
 
 	constructor(
 		private container: HTMLElement,
 		private topics: SprintTopic[],
-		private sprintService: SprintService,
 		private topicService: SprintTopicService,
 		private settings: PluginSettings,
 		private onTopicClick: (topic: SprintTopic) => void,
@@ -67,26 +74,30 @@ export class TopicsOverviewView {
 		private isDragging: { value: boolean },
 		private searchQuery: string = '',
 		private jiraService: JiraService | null = null,
+		initialSubMode: TopicsSubMode = 'board',
+		private onSubModeChange?: (mode: TopicsSubMode) => void,
 	) {
 		this.el = container.createDiv({ cls: 'friday-topics-overview' });
+		this.subMode = initialSubMode;
 	}
 
 	render(): void {
 		this.el.empty();
+		this.depIndex = buildTopicIndex(this.topics);
 
 		// Header toolbar: sub-mode toggle + scope filter + new topic
 		const header = this.el.createDiv({ cls: 'friday-topics-header' });
 
 		const modeGroup = header.createDiv({ cls: 'friday-topics-modeswitch' });
-		this.renderModeButton(modeGroup, 'list', 'List');
 		this.renderModeButton(modeGroup, 'board', 'Board');
+		this.renderModeButton(modeGroup, 'list', 'List');
+		this.renderModeButton(modeGroup, 'roadmap', 'Roadmap');
 		this.renderModeButton(modeGroup, 'impactEffort', 'Impact / Effort');
 
 		const scopeGroup = header.createDiv({ cls: 'friday-topics-scope' });
 		this.renderScopeButton(scopeGroup, 'all', 'All');
-		this.renderScopeButton(scopeGroup, 'active', 'Active sprint');
 		this.renderScopeButton(scopeGroup, 'backlog', 'Backlog');
-		this.renderScopeButton(scopeGroup, 'archived', 'Archived');
+		this.renderScopeButton(scopeGroup, 'archived', 'Done');
 
 		this.renderAssigneeFilter(header);
 
@@ -117,10 +128,13 @@ export class TopicsOverviewView {
 			case 'impactEffort':
 				this.renderImpactEffort(body, filtered);
 				break;
+			case 'roadmap':
+				this.renderRoadmap(body, filtered);
+				break;
 		}
 	}
 
-	private renderModeButton(parent: HTMLElement, mode: SubMode, label: string): void {
+	private renderModeButton(parent: HTMLElement, mode: TopicsSubMode, label: string): void {
 		const btn = parent.createEl('button', {
 			cls: 'friday-topics-modebtn',
 			text: label,
@@ -128,6 +142,7 @@ export class TopicsOverviewView {
 		if (mode === this.subMode) btn.addClass('friday-topics-modebtn-active');
 		btn.addEventListener('click', () => {
 			this.subMode = mode;
+			this.onSubModeChange?.(mode);
 			this.render();
 		});
 	}
@@ -191,18 +206,12 @@ export class TopicsOverviewView {
 	}
 
 	private applyFilters(topics: SprintTopic[]): SprintTopic[] {
-		const activeSprint: Sprint | null = this.sprintService.getActiveSprint();
-		const activeId = activeSprint?.id ?? null;
-
 		let filtered = topics.filter(t => {
 			switch (this.scope) {
-				case 'active':
-					return activeId !== null && t.sprintId === activeId;
 				case 'backlog':
-					return !t.sprintId;
+					return t.status === 'backlog';
 				case 'archived':
-					// Archived = done with no sprint (matches archiveTopic / cancelTopic behavior)
-					return t.status === 'done' && !t.sprintId;
+					return t.status === 'done';
 				case 'all':
 				default:
 					return true;
@@ -355,7 +364,8 @@ export class TopicsOverviewView {
 
 	private statusLabel(status: TopicStatus): string {
 		switch (status) {
-			case 'open': return 'Open';
+			case 'backlog': return 'Backlog';
+			case 'open': return 'To Do';
 			case 'in-progress': return 'In Progress';
 			case 'done': return 'Done';
 		}
@@ -373,41 +383,42 @@ export class TopicsOverviewView {
 	// ── Board sub-mode (kanban) ───────────────────────────────────
 
 	private renderBoard(parent: HTMLElement, topics: SprintTopic[]): void {
-		// Topics with no sprint are their own "Backlog" group; the rest are split by status.
-		// Each topic appears in exactly one section. All sections are drop targets:
-		//   Backlog → drop clears the topic's sprint assignment (status preserved)
-		//   Open/In Progress/Done → drop sets status (and auto-assigns to active sprint if the
-		//   dragged topic came from Backlog).
-		const backlog = topics.filter(t => !t.sprintId);
-		const assigned = topics.filter(t => !!t.sprintId);
-
-		const sections: { label: string; cls: string; topics: SprintTopic[]; dropAction: SectionDropAction }[] = [
-			{ label: 'Backlog', cls: 'friday-topics-list-backlog', topics: backlog, dropAction: { kind: 'moveToBacklog' } },
-			{ label: 'Open', cls: '', topics: assigned.filter(t => t.status === 'open'), dropAction: { kind: 'setStatus', status: 'open' } },
-			{ label: 'In Progress', cls: '', topics: assigned.filter(t => t.status === 'in-progress'), dropAction: { kind: 'setStatus', status: 'in-progress' } },
-			{ label: 'Done', cls: '', topics: assigned.filter(t => t.status === 'done'), dropAction: { kind: 'setStatus', status: 'done' } },
+		// Pure status-driven Kanban: each column is a TopicStatus. Every topic appears in
+		// exactly one column, and every column is a drop target that sets that status.
+		const sections: { label: string; cls: string; status: TopicStatus }[] = [
+			{ label: 'Backlog', cls: 'friday-topics-list-backlog', status: 'backlog' },
+			{ label: 'To Do', cls: '', status: 'open' },
+			{ label: 'In Progress', cls: '', status: 'in-progress' },
+			{ label: 'Done', cls: '', status: 'done' },
 		];
 
-		// Sections render side-by-side as columns (Backlog | Open | In Progress | Done).
 		const board = parent.createDiv({ cls: 'friday-topics-list-board' });
 
-		for (const { label, cls, topics: group, dropAction } of sections) {
-			// Omit empty Backlog entirely if the current scope already hides backlog topics —
-			// showing "Backlog (0)" alongside "Active sprint" filter is noise.
-			if (group.length === 0 && label === 'Backlog' && this.scope === 'active') continue;
+		for (const { label, cls, status } of sections) {
+			const group = topics.filter(t => t.status === status);
+			const limit = this.settings.wipLimits?.[status] ?? null;
+			const overWip = limit !== null && group.length > limit;
 
-			const sectionCls = cls
+			let sectionCls = cls
 				? `friday-topics-list-section ${cls}`
 				: 'friday-topics-list-section';
+			if (overWip) sectionCls += ' is-over-wip';
 			const section = board.createDiv({ cls: sectionCls });
 
 			const headerEl = section.createDiv({ cls: 'friday-topics-list-header' });
 			headerEl.createSpan({ text: label });
-			headerEl.createSpan({ cls: 'friday-topics-list-count', text: `${group.length}` });
+			const countEl = headerEl.createSpan({
+				cls: 'friday-topics-list-count',
+				text: limit !== null ? `${group.length} / ${limit}` : `${group.length}`,
+			});
+			if (overWip) {
+				countEl.addClass('is-over-wip');
+				countEl.setAttribute('title', `Over WIP limit (${limit})`);
+			}
 
-			// Card grid is the drop zone — every section accepts drops
+			// Card grid is the drop zone — every column accepts drops
 			const cardGrid = section.createDiv({ cls: 'friday-topics-list-grid' });
-			this.wireDropZone(cardGrid, dropAction);
+			this.wireDropZone(cardGrid, status);
 
 			if (group.length === 0) {
 				// Empty placeholder lives inside the drop zone so empty columns still accept drops.
@@ -417,14 +428,13 @@ export class TopicsOverviewView {
 
 			const sorted = [...group].sort((a, b) => this.sortByPriorityImpact(a, b));
 			for (const topic of sorted) {
-				// All cards are draggable — you can move freely between backlog and status sections
 				this.renderOverviewCard(cardGrid, topic, { draggable: true });
 			}
 		}
 	}
 
-	/** Wire dragover/drop handlers on a section. The action decides what happens on drop. */
-	private wireDropZone(zone: HTMLElement, action: SectionDropAction): void {
+	/** Wire dragover/drop handlers on a column. Dropping sets the topic's status. */
+	private wireDropZone(zone: HTMLElement, targetStatus: TopicStatus): void {
 		zone.addEventListener('dragover', (e) => {
 			e.preventDefault();
 			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
@@ -446,29 +456,23 @@ export class TopicsOverviewView {
 			}
 
 			try {
-				if (action.kind === 'moveToBacklog') {
-					// No-op if already in backlog
-					if (!topic.sprintId) return;
-					await this.topicService.moveTopicToBacklog(filePath);
-				} else {
-					// Status section: set the target status, and auto-assign to the active sprint
-					// if the topic was in backlog (you can't be "In Progress" without a sprint).
-					const targetStatus = action.status;
-					if (!topic.sprintId) {
-						const active = this.sprintService.getActiveSprint();
-						if (!active) {
-							new Notice('No active sprint — cannot move topic out of backlog. Create a sprint first.');
-							return;
+				if (topic.status !== targetStatus) {
+					await this.topicService.setTopicStatus(filePath, targetStatus);
+					// WIP limits warn but never block (Kanban convention). Count uses the
+					// pre-drop snapshot of the target column + 1 for the incoming card.
+					const limit = this.settings.wipLimits?.[targetStatus] ?? null;
+					if (limit !== null) {
+						const incoming = this.topics.filter(
+							t => t.status === targetStatus && t.filePath !== filePath,
+						).length + 1;
+						if (incoming > limit) {
+							new Notice(`Heads up: "${this.statusLabel(targetStatus)}" is over its WIP limit (${incoming} / ${limit}).`);
 						}
-						await this.topicService.assignTopicToSprint(filePath, active.id);
 					}
-					if (topic.status !== targetStatus) {
-						await this.topicService.setTopicStatus(filePath, targetStatus);
-					}
-					// If a blocked topic is moved to done, auto-clear blocked (mirrors SprintView)
-					if (topic.blocked && targetStatus === 'done') {
-						await this.topicService.setTopicBlocked(filePath, false);
-					}
+				}
+				// Moving a blocked topic to Done auto-clears the blocked flag.
+				if (topic.blocked && targetStatus === 'done') {
+					await this.topicService.setTopicBlocked(filePath, false);
 				}
 			} finally {
 				this.isDragging.value = false;
@@ -562,6 +566,12 @@ export class TopicsOverviewView {
 			},
 			jiraLookup,
 			assigneeLookup,
+			deriveBlock: this.makeDeriveBlock(),
+			dependencyLookup: (t) => ({
+				blockedBy: this.depIndex?.blockersOf(t) ?? [],
+				blocks: this.depIndex?.blocks(t) ?? [],
+			}),
+			onDependencyClick: (t) => this.onTopicClick(t),
 			nudgeThresholdDays: this.settings.nudgeThresholdDays,
 		});
 
@@ -603,6 +613,21 @@ export class TopicsOverviewView {
 		}
 	}
 
+	/** Build the derived-block resolver for cards: manual flag OR JIRA signal OR dependency.
+	 *  `blockersOf` is a stub here; real topic-dependency resolution is wired in T2. */
+	private makeDeriveBlock() {
+		const svc = this.jiraService;
+		const jiraSignal = svc && svc.isEnabled()
+			? (key: string) => toJiraSignal(svc.getCached(key))
+			: undefined;
+		const index = this.depIndex;
+		return (topic: SprintTopic) => deriveTopicBlock({
+			topic,
+			blockersOf: (t) => index ? index.blockersOf(t) : [],
+			jiraSignal,
+		});
+	}
+
 	/** Build a per-key JIRA lookup function for TopicCard. Returns undefined when disabled. */
 	private makeJiraLookup() {
 		const svc = this.jiraService;
@@ -624,6 +649,168 @@ export class TopicsOverviewView {
 			if (!m) return null;
 			return { label: m.nickname || m.fullName || m.email, isInactive: !m.active };
 		};
+	}
+
+	// ── Roadmap sub-mode (time-based, due-date driven) ────────────
+
+	private renderRoadmap(parent: HTMLElement, topics: SprintTopic[]): void {
+		const controls = parent.createDiv({ cls: 'friday-roadmap-controls' });
+		this.renderRoadmapToggle(controls, 'Zoom', [
+			{ key: 'week', label: 'Week' },
+			{ key: 'month', label: 'Month' },
+		], this.roadmapZoom, (k) => { this.roadmapZoom = k as 'week' | 'month'; this.render(); });
+		this.renderRoadmapToggle(controls, 'Group', [
+			{ key: 'assignee', label: 'Assignee' },
+			{ key: 'status', label: 'Status' },
+		], this.roadmapGroupBy, (k) => { this.roadmapGroupBy = k as 'assignee' | 'status'; this.render(); });
+
+		const dated: RoadmapItem[] = [];
+		const undated: SprintTopic[] = [];
+		for (const t of topics) {
+			const span = this.computeTopicSpan(t);
+			if (span) dated.push({ topic: t, startMs: span.startMs, endMs: span.endMs });
+			else undated.push(t);
+		}
+
+		if (dated.length === 0) {
+			parent.createDiv({ cls: 'friday-empty', text: 'No topics with a due date to place on the roadmap.' });
+		} else {
+			this.renderRoadmapChart(parent, dated);
+		}
+
+		if (undated.length > 0) {
+			const bucket = parent.createDiv({ cls: 'friday-roadmap-undated' });
+			bucket.createEl('h4', { text: `No date (${undated.length})` });
+			const list = bucket.createDiv({ cls: 'friday-roadmap-undated-list' });
+			for (const t of [...undated].sort((a, b) => this.sortByPriorityImpact(a, b))) {
+				const chip = list.createSpan({ cls: 'friday-roadmap-undated-chip', text: t.title });
+				chip.addEventListener('click', () => this.onTopicClick(t));
+			}
+		}
+	}
+
+	private renderRoadmapToggle(
+		parent: HTMLElement,
+		label: string,
+		options: { key: string; label: string }[],
+		current: string,
+		onPick: (key: string) => void,
+	): void {
+		const group = parent.createDiv({ cls: 'friday-roadmap-toggle' });
+		group.createSpan({ cls: 'friday-roadmap-toggle-label', text: `${label}:` });
+		for (const opt of options) {
+			const btn = group.createEl('button', { cls: 'friday-topics-modebtn', text: opt.label });
+			if (opt.key === current) btn.addClass('friday-topics-modebtn-active');
+			btn.addEventListener('click', () => onPick(opt.key));
+		}
+	}
+
+	/** A topic's time span [start → due]. start = startedAt when earlier than due, else due
+	 *  (a point marker). Null when the topic has no due date (→ the "No date" bucket). */
+	private computeTopicSpan(topic: SprintTopic): { startMs: number; endMs: number } | null {
+		if (!topic.dueDate) return null;
+		const endMs = new Date(topic.dueDate + 'T00:00:00').getTime();
+		if (isNaN(endMs)) return null;
+		let startMs = endMs;
+		if (topic.startedAt) {
+			const s = new Date(topic.startedAt + 'T00:00:00').getTime();
+			if (!isNaN(s) && s < endMs) startMs = s;
+		}
+		return { startMs, endMs };
+	}
+
+	private renderRoadmapChart(parent: HTMLElement, dated: RoadmapItem[]): void {
+		const now = new Date();
+		const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+		const DAY = 86400000;
+		const minMs = Math.min(todayMs, ...dated.map(d => d.startMs)) - 2 * DAY;
+		const maxMs = Math.max(todayMs, ...dated.map(d => d.endMs)) + 2 * DAY;
+		const span = Math.max(maxMs - minMs, DAY);
+		const pct = (ms: number) => ((ms - minMs) / span) * 100;
+		const unit: 'week' | 'month' = (this.roadmapZoom === 'month' || span / (7 * DAY) > 26) ? 'month' : 'week';
+
+		const chart = parent.createDiv({ cls: 'friday-roadmap-chart' });
+
+		const axis = chart.createDiv({ cls: 'friday-roadmap-axis' });
+		for (const tick of this.buildTicks(minMs, maxMs, unit)) {
+			const tx = pct(tick.ms);
+			if (tx < 0 || tx > 100) continue;
+			const tickEl = axis.createDiv({ cls: 'friday-roadmap-tick' });
+			tickEl.style.left = `${tx}%`;
+			tickEl.createSpan({ cls: 'friday-roadmap-tick-label', text: tick.label });
+		}
+		const todayLine = axis.createDiv({ cls: 'friday-roadmap-today' });
+		todayLine.style.left = `${pct(todayMs)}%`;
+		todayLine.setAttribute('title', 'Today');
+
+		const critical = new Set(criticalPath(this.topics));
+		const deriveBlock = this.makeDeriveBlock();
+
+		for (const [groupLabel, items] of this.groupForRoadmap(dated)) {
+			const lane = chart.createDiv({ cls: 'friday-roadmap-lane' });
+			lane.createDiv({ cls: 'friday-roadmap-lane-header', text: groupLabel });
+			for (const { topic, startMs, endMs } of items) {
+				const row = lane.createDiv({ cls: 'friday-roadmap-row' });
+				const labelEl = row.createDiv({ cls: 'friday-roadmap-row-label' });
+				if (topic.blockedBy.length > 0) {
+					const glyph = labelEl.createSpan({ text: '⛓ ' });
+					const blockers = (this.depIndex?.blockersOf(topic) ?? []).map(b => b.title).join(', ');
+					glyph.setAttribute('title', blockers ? `Blocked by: ${blockers}` : 'Has dependencies');
+				}
+				labelEl.createSpan({ text: topic.title });
+
+				const track = row.createDiv({ cls: 'friday-roadmap-track' });
+				const left = pct(startMs);
+				const width = Math.max(pct(endMs) - left, 1.5);
+				const bar = track.createDiv({ cls: 'friday-roadmap-bar' });
+				bar.style.left = `${left}%`;
+				bar.style.width = `${width}%`;
+				if (deriveBlock(topic).state === 'blocked') bar.addClass('is-blocked');
+				if (topic.status === 'done') bar.addClass('is-done');
+				if (topic.status !== 'done' && this.isOverdue(topic.dueDate!)) bar.addClass('is-overdue');
+				if (critical.has(topic.filePath)) bar.addClass('is-critical');
+				bar.setAttribute('title', `${topic.title} · due ${topic.dueDate}`);
+				bar.addEventListener('click', () => this.onTopicClick(topic));
+			}
+		}
+	}
+
+	private buildTicks(minMs: number, maxMs: number, unit: 'week' | 'month'): { ms: number; label: string }[] {
+		const ticks: { ms: number; label: string }[] = [];
+		if (unit === 'week') {
+			let d = getWeekStartConfigurable(new Date(minMs), this.settings.weekStartDay ?? 1);
+			while (d.getTime() <= maxMs) {
+				ticks.push({ ms: d.getTime(), label: formatWeekId(getWeekId(d)) });
+				const next = new Date(d);
+				next.setDate(next.getDate() + 7);
+				d = next;
+			}
+		} else {
+			let d = new Date(new Date(minMs).getFullYear(), new Date(minMs).getMonth(), 1);
+			while (d.getTime() <= maxMs) {
+				ticks.push({ ms: d.getTime(), label: `${ROADMAP_MONTHS[d.getMonth()]} '${String(d.getFullYear()).slice(2)}` });
+				d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+			}
+		}
+		return ticks;
+	}
+
+	private groupForRoadmap(dated: RoadmapItem[]): Map<string, RoadmapItem[]> {
+		const groups = new Map<string, RoadmapItem[]>();
+		const keyFor = (t: SprintTopic): string => {
+			if (this.roadmapGroupBy === 'status') return this.statusLabel(t.status);
+			if (!t.assignee) return 'Unassigned';
+			const m = (this.settings.teamMembers ?? []).find(x => x.email === t.assignee);
+			return m ? (m.nickname || m.fullName || t.assignee) : t.assignee;
+		};
+		for (const item of dated) {
+			const k = keyFor(item.topic);
+			const arr = groups.get(k) ?? [];
+			arr.push(item);
+			groups.set(k, arr);
+		}
+		for (const arr of groups.values()) arr.sort((a, b) => a.startMs - b.startMs);
+		return groups;
 	}
 
 	destroy(): void {

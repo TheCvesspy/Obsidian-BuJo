@@ -32,7 +32,6 @@ export class SprintTopicService {
 		jira: string | null,
 		priority: Priority,
 		linkedPages: string[],
-		sprintId: string,
 		impact: TopicImpact | null = null,
 		effort: TopicEffort | null = null,
 		dueDate: string | null = null,
@@ -50,18 +49,18 @@ export class SprintTopicService {
 		}
 
 		// Null-valued keys are omitted by serializeFrontmatter — keeps YAML clean.
-		// sprintHistory mirrors the initial sprint assignment (empty if backlog).
+		// New topics start in the Backlog column; statusSince stamps the flow clock.
+		const today = new Date().toISOString().slice(0, 10);
 		const frontmatter = serializeFrontmatter({
-			status: 'open',
+			status: 'backlog',
 			jira: jira || null,
 			priority: priority === Priority.None ? 'none' : priority,
 			blocked: false,
-			sprint: sprintId || null,
 			sortOrder: 999,
 			impact,
 			effort,
 			dueDate,
-			sprintHistory: sprintId || null,
+			statusSince: today,
 			assignee,
 			waitingOn,
 			lastNudged,
@@ -73,16 +72,15 @@ export class SprintTopicService {
 			: '';
 
 		// Frontmatter fields recognized by the plugin:
-		//   status: open | in-progress | done
+		//   status: backlog | open | in-progress | done
 		//   priority: none | low | medium | high
 		//   blocked: true | false
-		//   sprint: <sprint-id> (empty for backlog)
 		//   sortOrder: <number> (Kanban column ordering)
 		//   impact: critical | high | medium | low  (Impact/Effort + Eisenhower matrix)
 		//   effort: xs | s | m | l | xl             (Impact/Effort matrix)
 		//   dueDate: YYYY-MM-DD                     (Eisenhower urgency)
+		//   statusSince / startedAt / doneAt: YYYY-MM-DD (Kanban flow timestamps)
 		//   jira: <ticket>
-		//   sprintHistory: <id1>,<id2>,...          (cumulative — every sprint this topic was in)
 		const content = `${frontmatter}\n# ${title}\n\n## Linked Pages\n${linkedSection}\n\n## Tasks\n\n## Notes\n`;
 
 		await this.vault.create(filePath, content);
@@ -149,14 +147,85 @@ export class SprintTopicService {
 		return newFm + '\n' + body;
 	}
 
-	/** Set the status of a topic (open, in-progress, done) */
+	/** Set the status (Kanban column) of a topic, stamping flow timestamps atomically:
+	 *  - statusSince = today on every move (aging-WIP clock)
+	 *  - startedAt = today the first time it enters in-progress (never overwritten)
+	 *  - doneAt = today on entering done; cleared if the topic is reopened out of done */
 	async setTopicStatus(filePath: string, status: TopicStatus): Promise<void> {
-		await this.updateTopicFrontmatter(filePath, { status });
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return;
+		const today = new Date().toISOString().slice(0, 10);
+		await this.vault.process(file, content => {
+			const fm = parseFrontmatter(content);
+			const updates: Partial<Record<string, string | number | boolean | null>> = {
+				status,
+				statusSince: today,
+			};
+			if (status === 'in-progress' && !fm['startedAt']) updates.startedAt = today;
+			if (status === 'done') updates.doneAt = today;
+			else if (fm['doneAt']) updates.doneAt = null;
+			this.applyFrontmatterUpdates(fm, updates);
+			return this.rebuildWithFrontmatter(content, fm);
+		});
 	}
 
 	/** Set the blocked flag on a topic */
 	async setTopicBlocked(filePath: string, blocked: boolean): Promise<void> {
 		await this.updateTopicFrontmatter(filePath, { blocked });
+	}
+
+	/** Add `blockerPath` to a topic's blockedBy list (this topic becomes blocked-by it).
+	 *  Rejects self-links, unknown blockers, and cycles. Atomic via vault.process. */
+	async addDependency(filePath: string, blockerPath: string): Promise<{ ok: boolean; reason?: string }> {
+		if (filePath === blockerPath) return { ok: false, reason: 'A topic cannot block itself.' };
+		const all = await this.getAllTopics();
+		if (!all.some(t => t.filePath === blockerPath)) {
+			return { ok: false, reason: 'Blocker topic not found.' };
+		}
+		if (this.wouldCycle(all, filePath, blockerPath)) {
+			return { ok: false, reason: 'That would create a circular dependency.' };
+		}
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return { ok: false, reason: 'Topic file not found.' };
+		await this.vault.process(file, content => {
+			const fm = parseFrontmatter(content);
+			const existing = (fm['blockedBy'] || '').split('\n').map(s => s.trim()).filter(Boolean);
+			if (!existing.includes(blockerPath)) existing.push(blockerPath);
+			this.applyFrontmatterUpdates(fm, { blockedBy: existing.length > 0 ? existing.join('\n') : null });
+			return this.rebuildWithFrontmatter(content, fm);
+		});
+		return { ok: true };
+	}
+
+	/** Remove `blockerPath` from a topic's blockedBy list. Atomic. */
+	async removeDependency(filePath: string, blockerPath: string): Promise<void> {
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return;
+		await this.vault.process(file, content => {
+			const fm = parseFrontmatter(content);
+			const next = (fm['blockedBy'] || '')
+				.split('\n').map(s => s.trim()).filter(Boolean)
+				.filter(p => p !== blockerPath);
+			this.applyFrontmatterUpdates(fm, { blockedBy: next.length > 0 ? next.join('\n') : null });
+			return this.rebuildWithFrontmatter(content, fm);
+		});
+	}
+
+	/** True if making `filePath` blocked-by `blockerPath` would close a cycle — i.e. the
+	 *  blocker is already (transitively) blocked by `filePath`. DFS over blockedBy edges. */
+	private wouldCycle(all: SprintTopic[], filePath: string, blockerPath: string): boolean {
+		const byPath = new Map(all.map(t => [t.filePath, t]));
+		const seen = new Set<string>();
+		const stack = [blockerPath];
+		while (stack.length > 0) {
+			const cur = stack.pop()!;
+			if (cur === filePath) return true;
+			if (seen.has(cur)) continue;
+			seen.add(cur);
+			const t = byPath.get(cur);
+			if (t) for (const dep of t.blockedBy) stack.push(dep);
+		}
+		return false;
 	}
 
 	/** Set the strategic impact on a topic (null clears the field) */
@@ -179,64 +248,42 @@ export class SprintTopicService {
 		await this.updateTopicFrontmatter(filePath, { sortOrder });
 	}
 
-	/** Carry a topic forward to a new sprint (sprint-close flow). Adds to history. */
-	async carryForwardTopic(filePath: string, newSprintId: string): Promise<void> {
-		await this.assignTopicToSprint(filePath, newSprintId);
-	}
+	/** One-time migration from the sprint model to Kanban. For each topic file: if it has
+	 *  no `sprint` and isn't already in-progress/done, move it to the Backlog column; then
+	 *  strip the now-dead `sprint:` / `sprintHistory:` keys. Idempotent — files with nothing
+	 *  to change are left untouched. Returns the number of files actually rewritten. */
+	async migrateToKanban(): Promise<number> {
+		const folder = this.vault.getAbstractFileByPath(this.getTopicsFolderPath());
+		if (!(folder instanceof TFolder)) return 0;
 
-	/** Move a topic to the backlog (clear sprint assignment). Status and history preserved. */
-	async moveTopicToBacklog(filePath: string): Promise<void> {
-		await this.assignTopicToSprint(filePath, '');
-	}
+		let changed = 0;
+		for (const child of folder.children) {
+			if (!(child instanceof TFile) || child.extension !== 'md') continue;
+			let didChange = false;
+			await this.vault.process(child, content => {
+				const fm = parseFrontmatter(content);
+				const hadSprintKeys = 'sprint' in fm || 'sprintHistory' in fm;
+				const hasSprint = !!(fm['sprint'] && fm['sprint'].trim());
+				const status = (fm['status'] || '').toLowerCase();
 
-	/** Assign a topic to a specific sprint (or pass '' to move to backlog).
-	 *  Appends the previous sprint (if any) AND the new sprint to sprintHistory —
-	 *  the old one may be missing on legacy topics that were assigned before history
-	 *  tracking existed, so we defensively capture it here. History is cumulative:
-	 *  moving to backlog does NOT remove anything.
-	 *
-	 *  Entirely inside one vault.process call so reading oldSprint/history and writing
-	 *  the merged result is atomic against any concurrent external edit. */
-	async assignTopicToSprint(filePath: string, sprintId: string): Promise<void> {
-		const file = this.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return;
-
-		await this.vault.process(file, content => {
-			const fm = parseFrontmatter(content);
-			const oldSprint = (fm['sprint'] || '').trim();
-			const existing = (fm['sprintHistory'] || '')
-				.split(',')
-				.map(s => s.trim())
-				.filter(Boolean);
-
-			const merged: string[] = [...existing];
-			const seen = new Set(existing);
-			for (const s of [oldSprint, sprintId]) {
-				if (s && !seen.has(s)) {
-					merged.push(s);
-					seen.add(s);
+				const updates: Partial<Record<string, string | number | boolean | null>> = {
+					sprint: null,
+					sprintHistory: null,
+				};
+				if (!hasSprint && status !== 'done' && status !== 'in-progress') {
+					updates.status = 'backlog';
 				}
-			}
 
-			this.applyFrontmatterUpdates(fm, {
-				sprint: sprintId,
-				sprintHistory: merged.length > 0 ? merged.join(',') : null,
+				const needsStatus = updates.status !== undefined;
+				if (!hadSprintKeys && !needsStatus) return content; // nothing to do
+
+				didChange = true;
+				this.applyFrontmatterUpdates(fm, updates);
+				return this.rebuildWithFrontmatter(content, fm);
 			});
-			return this.rebuildWithFrontmatter(content, fm);
-		});
-	}
-
-	/** Archive a topic (mark done, clear sprint). History is preserved — go through
-	 *  assignTopicToSprint so the departing sprint is captured into sprintHistory. */
-	async archiveTopic(filePath: string): Promise<void> {
-		await this.assignTopicToSprint(filePath, '');
-		await this.updateTopicFrontmatter(filePath, { status: 'done' });
-	}
-
-	/** Cancel a topic (mark done, clear sprint). Same history semantics as archiveTopic. */
-	async cancelTopic(filePath: string): Promise<void> {
-		await this.assignTopicToSprint(filePath, '');
-		await this.updateTopicFrontmatter(filePath, { status: 'done' });
+			if (didChange) changed++;
+		}
+		return changed;
 	}
 
 	/** Get all topics from the topics folder */
@@ -253,12 +300,6 @@ export class SprintTopicService {
 			}
 		}
 		return topics;
-	}
-
-	/** Get topics assigned to a specific sprint */
-	async getTopicsForSprint(sprintId: string): Promise<SprintTopic[]> {
-		const all = await this.getAllTopics();
-		return all.filter(t => t.sprintId === sprintId);
 	}
 
 	/** Recursively create folder hierarchy */

@@ -196,16 +196,17 @@ export class JiraService {
 		}
 
 		try {
+			const flaggedField = (s.jiraFlaggedFieldId || 'customfield_10021').trim();
 			const resp = await requestUrl(this.buildRequest(
 				s,
-				`/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee`,
+				`/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee,${flaggedField},issuelinks`,
 			));
 			if (resp.status < 200 || resp.status >= 300) {
 				this.cache.set(key, { kind: 'error', message: `HTTP ${resp.status}`, fetchedAt: Date.now() });
 				this.bumpVersion();
 				return null;
 			}
-			const info = this.parseIssue(validKey, resp.json, s.jiraBaseUrl);
+			const info = this.parseIssue(validKey, resp.json, s.jiraBaseUrl, flaggedField);
 			this.cache.set(key, { kind: 'fresh', info });
 			this.bumpVersion();
 			return info;
@@ -232,7 +233,7 @@ export class JiraService {
 		};
 	}
 
-	private parseIssue(key: string, json: any, baseUrl: string): JiraIssueInfo {
+	private parseIssue(key: string, json: any, baseUrl: string, flaggedField: string): JiraIssueInfo {
 		const fields = json?.fields ?? {};
 		const statusObj = fields.status ?? {};
 		const statusName: string = statusObj.name ?? 'Unknown';
@@ -245,12 +246,32 @@ export class JiraService {
 		const assigneeObj = fields.assignee;
 		const assignee: string | null = assigneeObj?.displayName ?? null;
 
+		// Flagged (impediment): present as a non-empty array or an object when set.
+		let flagged = false;
+		const flaggedRaw = fields[flaggedField] ?? fields.customfield_10021 ?? fields.flagged;
+		if (Array.isArray(flaggedRaw) && flaggedRaw.length > 0) flagged = true;
+		else if (flaggedRaw && typeof flaggedRaw === 'object') flagged = true;
+
+		// Inward "is blocked by" issue links → the issues blocking this one. Tolerant of a
+		// missing issuelinks field (some field allowlists strip it) — defaults to [].
+		const blockingLinks: Array<{ key: string; done: boolean }> = [];
+		const issuelinks = Array.isArray(fields.issuelinks) ? fields.issuelinks : [];
+		for (const link of issuelinks) {
+			const inward = String(link?.type?.inward ?? '').toLowerCase();
+			if (inward.includes('blocked by') && link?.inwardIssue?.key) {
+				const cat = link.inwardIssue.fields?.status?.statusCategory?.key ?? 'unknown';
+				blockingLinks.push({ key: link.inwardIssue.key, done: cat === 'done' });
+			}
+		}
+
 		return {
 			key,
 			summary: fields.summary ?? '',
 			status: statusName,
 			statusCategory,
 			assignee,
+			flagged,
+			blockingLinks,
 			issueUrl: `${baseUrl.replace(/\/+$/, '')}/browse/${key}`,
 			fetchedAt: Date.now(),
 		};

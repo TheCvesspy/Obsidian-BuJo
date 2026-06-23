@@ -1,9 +1,8 @@
 import { ItemView, WorkspaceLeaf, MarkdownView } from 'obsidian';
-import { FridayViewMode, GroupMode, TaskItem, TaskStatus, PluginSettings, PluginData, Sprint, SprintTopic, WeeklySnapshot, MonthlySnapshot, StoreEventCallback } from '../types';
+import { FridayViewMode, GroupMode, TaskItem, TaskStatus, PluginSettings, PluginData, SprintTopic, WeeklySnapshot, MonthlySnapshot, StoreEventCallback } from '../types';
 import { VIEW_TYPE_FRIDAY, REFRESH_DEBOUNCE_MS } from '../constants';
 import { TaskStore } from '../services/taskStore';
 import { TaskWriter } from '../services/taskWriter';
-import { SprintService } from '../services/sprintService';
 import { SprintTopicService } from '../services/sprintTopicService';
 import { MigrationService } from '../services/migrationService';
 import { AnalyticsService } from '../services/analyticsService';
@@ -16,8 +15,7 @@ import { Toolbar } from './components/Toolbar';
 import { DailyView } from './components/DailyView';
 import { WeeklyView } from './components/WeeklyView';
 import { MonthlyView } from './components/MonthlyView';
-import { SprintView } from './components/SprintView';
-import { TopicsOverviewView } from './components/TopicsOverviewView';
+import { TopicsOverviewView, TopicsSubMode } from './components/TopicsOverviewView';
 import { OverviewView } from './components/OpenPointsView';
 import { InboxView } from './components/InboxView';
 import { OverdueView } from './components/OverdueView';
@@ -26,9 +24,7 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { SyntaxReferenceModal } from './components/SyntaxReference';
 import { AddTaskBar } from './components/AddTaskBar';
-import { SprintModal } from './SprintModal';
 import { SprintTopicModal } from './SprintTopicModal';
-import { SprintCloseModal } from './SprintCloseModal';
 import { TaskItemRowCallbacks } from './components/TaskItemRow';
 import { SubtaskConfirmModal } from './SubtaskConfirmModal';
 
@@ -38,6 +34,9 @@ export class FridayView extends ItemView {
 	private searchQuery: string = '';
 	private contentContainer: HTMLElement;
 	private toolbar: Toolbar | null = null;
+	private viewSwitcher: ViewSwitcher | null = null;
+	/** Persisted Topics sub-mode so it survives view rebuilds (board / list / roadmap / matrix). */
+	private topicsSubMode: TopicsSubMode = 'board';
 	private storeCallback: StoreEventCallback | null = null;
 	private jiraCallback: (() => void) | null = null;
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -50,7 +49,6 @@ export class FridayView extends ItemView {
 		leaf: WorkspaceLeaf,
 		private store: TaskStore,
 		private writer: TaskWriter,
-		private sprintService: SprintService,
 		private sprintTopicService: SprintTopicService,
 		private scanner: VaultScanner,
 		private migrationService: MigrationService,
@@ -85,7 +83,7 @@ export class FridayView extends ItemView {
 		containerEl.empty();
 		containerEl.addClass('friday-container');
 
-		new ViewSwitcher(containerEl, this.currentMode, {
+		this.viewSwitcher = new ViewSwitcher(containerEl, this.currentMode, {
 			onViewChange: (mode: FridayViewMode) => {
 				this.currentMode = mode;
 				// Update toolbar for new view mode
@@ -209,7 +207,7 @@ export class FridayView extends ItemView {
 	private refresh(): void {
 		// Skip rebuild if data hasn't changed. Folds JiraService version too so JIRA cache
 		// updates (fresh fetches, errors, or clears on settings change) re-render the view.
-		const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.store.version}|${this.jiraService.version}`;
+		const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.topicsSubMode}|${this.store.version}|${this.jiraService.version}`;
 		if (fingerprint === this.lastViewFingerprint) return;
 		this.lastViewFingerprint = fingerprint;
 
@@ -247,43 +245,20 @@ export class FridayView extends ItemView {
 				view.render();
 				break;
 			}
-			case FridayViewMode.Sprint: {
-				const activeSprint = this.sprintService.getActiveSprint();
-				const topics = activeSprint
-					? this.scanner.getAllTopics().filter(t => t.sprintId === activeSprint.id)
-					: [];
-				const view = new SprintView(
-					this.contentContainer,
-					this.store,
-					this.sprintService,
-					this.sprintTopicService,
-					topics,
-					this.settings,
-					() => this.onNewSprint(),
-					(sprint: Sprint) => this.onEndSprint(sprint),
-					() => this.onNewTopic(),
-					(topic: SprintTopic) => this.onTopicClick(topic),
-					(sprint: Sprint) => this.onEditSprint(sprint),
-					this.isDragging,
-					this.searchQuery,
-					this.jiraService,
-				);
-				view.render();
-				break;
-			}
 			case FridayViewMode.Topics: {
 				const view = new TopicsOverviewView(
 					this.contentContainer,
 					this.scanner.getAllTopics(),
-					this.sprintService,
 					this.sprintTopicService,
 					this.settings,
 					(topic: SprintTopic) => this.onTopicClick(topic),
 					(topic: SprintTopic) => this.onEditTopicDetails(topic),
-					() => this.onNewBacklogTopic(),
+					() => this.onNewTopic(),
 					this.isDragging,
 					this.searchQuery,
 					this.jiraService,
+					this.topicsSubMode,
+					(m) => { this.topicsSubMode = m; },
 				);
 				view.render();
 				break;
@@ -316,6 +291,7 @@ export class FridayView extends ItemView {
 					this.settings,
 					this.getData().weeklyHistory,
 					this.onSaveSnapshot,
+					this.scanner.getAllTopics(),
 				);
 				view.render();
 				break;
@@ -323,57 +299,16 @@ export class FridayView extends ItemView {
 		}
 	}
 
-	private onNewSprint(): void {
-		new SprintModal(this.app, this.sprintService, this.settings, (_sprint: Sprint) => {
-			this.refresh();
-		}).open();
-	}
-
-	private onEditSprint(sprint: Sprint): void {
-		new SprintModal(this.app, this.sprintService, this.settings, (_sprint: Sprint) => {
-			this.refresh();
-		}, sprint).open();
-	}
-
-	private onEndSprint(sprint: Sprint): void {
-		const topics = this.scanner.getAllTopics().filter(t => t.sprintId === sprint.id);
-		new SprintCloseModal(
-			this.app,
-			sprint,
-			topics,
-			this.sprintService,
-			this.sprintTopicService,
-			() => this.refresh(),
-		).open();
-	}
-
+	/** Create a new topic (lands in the Backlog column). */
 	private onNewTopic(): void {
-		// Pre-fill with the active sprint (if any), but the Sprint picker in the modal
-		// lets users override to Backlog or another sprint.
-		const activeSprint = this.sprintService.getActiveSprint();
 		new SprintTopicModal(
 			this.app,
 			this.sprintTopicService,
-			activeSprint?.id ?? '',
 			(_topic: SprintTopic) => this.refresh(),
 			undefined,
-			this.sprintService,
 			undefined,
 			this.settings,
-		).open();
-	}
-
-	/** Create a topic without auto-assigning it to a sprint (backlog mode). */
-	private onNewBacklogTopic(): void {
-		new SprintTopicModal(
-			this.app,
-			this.sprintTopicService,
-			'', // empty sprintId → backlog topic
-			(_topic: SprintTopic) => this.refresh(),
-			undefined,
-			this.sprintService,
-			undefined,
-			this.settings,
+			this.scanner.getAllTopics(),
 		).open();
 	}
 
@@ -382,12 +317,11 @@ export class FridayView extends ItemView {
 		new SprintTopicModal(
 			this.app,
 			this.sprintTopicService,
-			topic.sprintId ?? '',
 			(_topic: SprintTopic) => this.refresh(),
 			topic,
-			this.sprintService,
 			undefined,
 			this.settings,
+			this.scanner.getAllTopics(),
 		).open();
 	}
 
@@ -398,6 +332,15 @@ export class FridayView extends ItemView {
 		const leaf = this.app.workspace.getLeaf(false);
 		await leaf.openFile(file as any);
 		this.app.workspace.revealLeaf(leaf);
+	}
+
+	/** Programmatically switch the active view mode (used by palette commands). */
+	setViewMode(mode: FridayViewMode, topicsSubMode?: TopicsSubMode): void {
+		this.currentMode = mode;
+		if (topicsSubMode) this.topicsSubMode = topicsSubMode;
+		this.viewSwitcher?.setMode(mode);
+		this.toolbar?.setViewMode(mode);
+		this.refresh();
 	}
 
 	async onClose(): Promise<void> {

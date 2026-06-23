@@ -1182,6 +1182,176 @@
     white-space: nowrap;
 }
 
+/* Derived block (from a linked JIRA issue or a topic dependency) — amber vs. manual red.
+   Hover the badge for the reasons. */
+.friday-kanban-card-blocked.friday-kanban-card-blocked-derived {
+    background: var(--color-orange, #e68a00);
+}
+
+/* Dependency chips (⛓ Blocked by …) */
+.friday-kanban-card-deps {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+.friday-kanban-card-dep-chip.friday-clickable {
+    cursor: pointer;
+    text-decoration: underline dotted;
+}
+.friday-kanban-card-dep-chip.is-done {
+    color: var(--text-faint, #999);
+    text-decoration: line-through;
+}
+
+/* ─── Roadmap (timeline) sub-mode ─── */
+.friday-roadmap-controls {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+    align-items: center;
+}
+.friday-roadmap-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.friday-roadmap-toggle-label {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.friday-roadmap-chart {
+    position: relative;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 8px;
+    overflow: hidden;
+}
+.friday-roadmap-axis {
+    position: relative;
+    height: 18px;
+    margin-left: 160px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 6px;
+}
+.friday-roadmap-tick {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: var(--text-faint, #999);
+    white-space: nowrap;
+}
+.friday-roadmap-today {
+    position: absolute;
+    top: 0;
+    height: 600px;
+    width: 2px;
+    background: var(--interactive-accent, #4a8af4);
+    opacity: 0.5;
+    z-index: 1;
+}
+.friday-roadmap-lane-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 6px 0 2px;
+}
+.friday-roadmap-row {
+    display: flex;
+    align-items: center;
+    height: 24px;
+}
+.friday-roadmap-row-label {
+    width: 160px;
+    flex-shrink: 0;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 8px;
+}
+.friday-roadmap-track {
+    position: relative;
+    flex: 1;
+    height: 100%;
+}
+.friday-roadmap-bar {
+    position: absolute;
+    top: 5px;
+    height: 14px;
+    background: var(--interactive-accent, #4a8af4);
+    border-radius: 4px;
+    cursor: pointer;
+    min-width: 6px;
+}
+.friday-roadmap-bar.is-blocked { background: var(--color-orange, #e68a00); }
+.friday-roadmap-bar.is-done { background: var(--color-green, #08b94e); opacity: 0.5; }
+.friday-roadmap-bar.is-overdue { outline: 2px solid var(--color-red, #e03e3e); }
+.friday-roadmap-bar.is-critical { box-shadow: 0 0 0 2px var(--text-accent, #a060f0); }
+.friday-roadmap-undated {
+    margin-top: 12px;
+}
+.friday-roadmap-undated-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.friday-roadmap-undated-chip {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--background-modifier-hover);
+    cursor: pointer;
+}
+
+/* ─── Team status roll-up ─── */
+.friday-team-status { margin-bottom: 16px; }
+.friday-team-status-header { display: flex; align-items: center; gap: 8px; }
+.friday-team-status-header h3 { margin: 0; }
+.friday-team-status-meta { font-size: 11px; color: var(--text-muted); flex: 1; }
+.friday-team-status-section { margin-top: 8px; }
+.friday-team-status-section h4 { margin: 4px 0; font-size: 12px; text-transform: uppercase; color: var(--text-muted); }
+.friday-team-status-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 13px; }
+.friday-team-status-owner { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--background-modifier-hover); white-space: nowrap; }
+.friday-team-status-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friday-team-status-detail { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.friday-team-status-detail.is-overdue { color: var(--color-red, #e03e3e); }
+
+/* ─── Team workload trend (M2) ─── */
+.friday-team-trend { margin: 12px 0; }
+.friday-team-trend h4 { margin: 4px 0; font-size: 12px; text-transform: uppercase; color: var(--text-muted); }
+.friday-team-trend-row { display: flex; align-items: center; gap: 8px; height: 28px; }
+.friday-team-trend-name { width: 120px; flex-shrink: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friday-team-trend-spark { display: flex; align-items: flex-end; gap: 2px; height: 24px; flex: 1; }
+.friday-team-trend-bar { width: 6px; background: var(--interactive-accent, #4a8af4); border-radius: 1px 1px 0 0; min-height: 1px; }
+.friday-team-trend-delta { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.friday-load-chip { font-size: 11px; padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+.friday-load-light { background: var(--background-modifier-hover); color: var(--text-muted); }
+.friday-load-balanced { background: var(--color-green, #08b94e); color: #fff; }
+.friday-load-heavy { background: var(--color-yellow, #e0b400); color: #1a1a1a; }
+.friday-load-overloaded { background: var(--color-red, #e03e3e); color: #fff; }
+.friday-load-out { background: var(--background-modifier-border); color: var(--text-faint, #999); }
+.friday-team-capacity-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.friday-team-capacity-table th, .friday-team-capacity-table td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--background-modifier-border); }
+
+/* ─── Team dashboard: richer cards, drill-down, toolbar (D-series) ─── */
+.friday-team-toolbar { display: flex; align-items: center; gap: 6px; margin: 6px 0 10px; flex-wrap: wrap; }
+.friday-team-toolbar-label { font-size: 11px; color: var(--text-muted); }
+.friday-team-toolbar-toggle { font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+.friday-team-focus { font-size: 12px; color: var(--text-muted); font-style: italic; margin: 2px 0; }
+.friday-team-stats { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.friday-team-blockbadge { font-size: 11px; color: var(--color-red, #e03e3e); font-weight: 600; }
+.friday-team-driving { font-size: 12px; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friday-team-drill { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--background-modifier-border); }
+.friday-team-drill.is-open { display: block; }
+.friday-team-drill-sec { margin-bottom: 6px; }
+.friday-team-drill-h { font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 2px; }
+.friday-team-drill-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 1px 0; }
+.friday-team-drill-col { font-size: 10px; color: var(--text-faint, #999); min-width: 78px; }
+.friday-team-drill-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friday-team-drill-flag { color: var(--color-red, #e03e3e); }
+
 .friday-kanban-card-jira-row {
     display: flex;
     flex-wrap: wrap;
@@ -1755,6 +1925,65 @@
     color: var(--text-muted);
     margin-top: 4px;
     white-space: nowrap;
+}
+
+/* ─── Flow metrics (Kanban) ─── */
+
+.friday-analytics-flow {
+    margin-top: 16px;
+}
+
+.friday-analytics-aging {
+    margin-top: 12px;
+}
+
+.friday-analytics-aging-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.friday-analytics-aging-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: var(--background-secondary);
+}
+
+.friday-analytics-aging-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.friday-analytics-aging-col {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.friday-analytics-aging-days {
+    font-weight: 700;
+    color: var(--color-orange, #e68a00);
+    min-width: 36px;
+    text-align: right;
+}
+
+/* ─── Topic switcher / generic pickers ─── */
+
+.friday-switcher-title {
+    font-weight: 500;
+}
+.friday-switcher-hint,
+.friday-picker-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.friday-picker-hint {
+    margin-left: 8px;
 }
 
 /* ─── Weekly Review Modal ─── */
@@ -2413,6 +2642,16 @@
     padding: 1px 8px;
 }
 
+/* WIP-limit breach: flag the column and its count pill. The board still accepts the drop. */
+.friday-topics-list-section.is-over-wip {
+    border-color: var(--color-red, #e5534b);
+}
+.friday-topics-list-count.is-over-wip {
+    background: var(--color-red, #e5534b);
+    color: var(--text-on-accent, #fff);
+    font-weight: 700;
+}
+
 .friday-topics-list-grid {
     display: flex;
     flex-direction: column;
@@ -2579,6 +2818,7 @@
     font-size: 14px;
     line-height: 1;
 }
+.friday-topics-table-statusdot.is-backlog { color: var(--text-faint, #999); }
 .friday-topics-table-statusdot.is-open { color: var(--text-muted); }
 .friday-topics-table-statusdot.is-in-progress { color: var(--interactive-accent, #4a8af4); }
 .friday-topics-table-statusdot.is-done { color: var(--color-green, #08b94e); }

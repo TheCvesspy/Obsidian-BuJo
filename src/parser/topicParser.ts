@@ -124,6 +124,7 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 	// Map frontmatter values
 	const statusRaw = fm['status']?.toLowerCase();
 	const status: TopicStatus =
+		statusRaw === 'backlog' ? 'backlog' :
 		statusRaw === 'in-progress' ? 'in-progress' :
 		statusRaw === 'done' ? 'done' : 'open';
 
@@ -157,6 +158,15 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 	const dueDateRaw = fm['dueDate']?.trim();
 	const dueDate = dueDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw) ? dueDateRaw : null;
 
+	// Kanban flow timestamps (ISO YYYY-MM-DD). Absent on legacy topics — left null.
+	const parseIsoDate = (v: string | undefined): string | null => {
+		const t = v?.trim();
+		return t && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+	};
+	const statusSince = parseIsoDate(fm['statusSince']);
+	const startedAt = parseIsoDate(fm['startedAt']);
+	const doneAt = parseIsoDate(fm['doneAt']);
+
 	const assigneeRaw = fm['assignee']?.trim();
 	const assignee = assigneeRaw ? assigneeRaw : null;
 
@@ -168,18 +178,6 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 
 	const refsRaw = fm['refs'] ?? '';
 	const refs = parseRefsField(refsRaw);
-
-	// sprintHistory is stored as comma-separated IDs. Legacy topics with no history field
-	// but an active sprint assignment get an in-memory backfill of [sprintId] so they
-	// display something immediately — the stored history is still empty until next write.
-	const sprintHistoryRaw = fm['sprintHistory']?.trim() ?? '';
-	let sprintHistory = sprintHistoryRaw
-		? sprintHistoryRaw.split(',').map(s => s.trim()).filter(Boolean)
-		: [];
-	const sprintId = fm['sprint'] || null;
-	if (sprintHistory.length === 0 && sprintId) {
-		sprintHistory = [sprintId];
-	}
 
 	// JIRA keys: extract every PROJ-123 match from the raw `jira:` value so that
 	// `jira: PROJ-1, PROJ-2`, `jira: PROJ-1; PROJ-2`, and even `jira: PROJ-1` all work.
@@ -196,6 +194,13 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 		}
 	}
 
+	// Topic dependencies: file paths this topic is blocked-by. Stored as a folded scalar
+	// (newline-separated) so paths may safely contain commas. Tolerates a single inline value.
+	const blockedByRaw = fm['blockedBy']?.trim() ?? '';
+	const blockedBy = blockedByRaw
+		? blockedByRaw.split('\n').map(s => s.trim()).filter(Boolean)
+		: [];
+
 	return {
 		filePath,
 		title,
@@ -203,7 +208,6 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 		jira,
 		priority,
 		blocked,
-		sprintId,
 		sortOrder,
 		linkedPages,
 		taskTotal,
@@ -211,11 +215,14 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 		impact,
 		effort,
 		dueDate,
-		sprintHistory,
+		statusSince,
+		startedAt,
+		doneAt,
 		assignee,
 		waitingOn,
 		lastNudged,
 		refs,
+		blockedBy,
 	};
 }
 

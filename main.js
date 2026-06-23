@@ -37,7 +37,7 @@ __export(main_exports, {
   default: () => FridayPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian33 = require("obsidian");
+var import_obsidian35 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_WORK_TYPES = [
@@ -58,10 +58,8 @@ var DEFAULT_SETTINGS = {
   folderStates: {},
   showCompletedTasks: true,
   defaultGroupMode: "byPage" /* ByPage */,
-  defaultViewMode: "daily" /* Daily */,
+  defaultViewMode: "topics" /* Topics */,
   dailyNotePath: "BuJo/Daily",
-  defaultSprintLength: 14,
-  autoStartNextSprint: true,
   migrationPromptOnStartup: true,
   taskHeadings: ["Tasks", "TODO", "Action Items"],
   openPointHeadings: ["Open Points", "Questions", "Discussion Points"],
@@ -72,12 +70,14 @@ var DEFAULT_SETTINGS = {
   weekStartDay: 1,
   monthlyNotePath: "BuJo/Monthly",
   sprintTopicsPath: "BuJo/Sprints/Topics",
-  sprintWorkDaysOnly: false,
   archiveFolderPath: "BuJo/Archive",
   archiveGroupBy: "month",
   urgencyThresholdDays: 2,
   nudgeThresholdDays: 7,
+  wipLimits: { backlog: null, open: null, "in-progress": 5, done: null },
+  agingWipThresholdDays: 7,
   teamFolderPath: "BuJo/Team",
+  defaultTargetConcurrentItems: 5,
   // JIRA module defaults — OFF until explicitly configured
   jiraEnabled: false,
   jiraBaseUrl: "",
@@ -87,6 +87,7 @@ var DEFAULT_SETTINGS = {
   jiraDashboardProjects: [],
   jiraDashboardTtlMinutes: 10,
   jiraSprintFieldId: "customfield_10020",
+  jiraFlaggedFieldId: "customfield_10021",
   jiraDashboardCollapsedSections: {},
   // Team tracking defaults — OFF until you add members + toggle on
   jiraTeamEnabled: false,
@@ -100,11 +101,13 @@ var DEFAULT_SETTINGS = {
 };
 var DEFAULT_PLUGIN_DATA = {
   settings: DEFAULT_SETTINGS,
-  sprints: [],
+  kanbanMigrationDone: false,
   lastMigrationDate: null,
   weeklyHistory: [],
   lastWeeklyReviewWeek: null,
-  monthlyHistory: []
+  monthlyHistory: [],
+  workloadHistory: [],
+  lastWorkloadSnapshotWeek: null
 };
 
 // src/constants.ts
@@ -502,7 +505,6 @@ var FridaySettingTab = class extends import_obsidian3.PluginSettingTab {
         ["monthly" /* Monthly */]: "Monthly",
         ["calendar" /* Calendar */]: "Calendar",
         ["unscheduled" /* Unscheduled */]: "Unscheduled",
-        ["sprint" /* Sprint */]: "Sprint",
         ["inbox" /* Inbox */]: "Inbox",
         ["overdue" /* Overdue */]: "Overdue",
         ["overview" /* Overview */]: "Overview",
@@ -556,34 +558,50 @@ var FridaySettingTab = class extends import_obsidian3.PluginSettingTab {
         this.debouncedSave(false);
       })
     );
-    containerEl.createEl("h2", { text: "Sprints" });
-    new import_obsidian3.Setting(containerEl).setName("Default sprint length").setDesc("Length of a sprint in days.").addText(
-      (text) => text.setPlaceholder("14").setValue(String(this.plugin.settings.defaultSprintLength)).onChange((value) => {
-        const parsed = parseInt(value, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          this.plugin.settings.defaultSprintLength = parsed;
-          this.debouncedSave(false);
-        }
-      })
-    );
-    new import_obsidian3.Setting(containerEl).setName("Sprint topics folder path").setDesc("Folder where sprint topic files are stored.").addText(
+    containerEl.createEl("h2", { text: "Topics" });
+    new import_obsidian3.Setting(containerEl).setName("Topics folder path").setDesc("Folder where topic files (the Kanban board) are stored.").addText(
       (text) => text.setPlaceholder("BuJo/Sprints/Topics").setValue(this.plugin.settings.sprintTopicsPath).onChange((value) => {
         this.plugin.settings.sprintTopicsPath = value.trim();
         this.debouncedSave(true);
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Auto-start next sprint").setDesc("Automatically start a new sprint when the current one ends.").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.autoStartNextSprint).onChange(async (value) => {
-        this.plugin.settings.autoStartNextSprint = value;
-        await this.plugin.saveSettings(false);
-      })
-    );
-    new import_obsidian3.Setting(containerEl).setName("Count work days only").setDesc("Sprint duration and remaining days count only Mon\u2013Fri (excludes weekends).").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.sprintWorkDaysOnly).onChange(async (value) => {
-        this.plugin.settings.sprintWorkDaysOnly = value;
-        await this.plugin.saveSettings(false);
-      })
-    );
+    new import_obsidian3.Setting(containerEl).setName("WIP limits").setDesc("Max topics per Kanban column before it warns. The board never blocks a move \u2014 it only flags the column and shows a notice. Leave a field blank for no limit.").setHeading();
+    const wipColumns = [
+      { status: "backlog", label: "Backlog" },
+      { status: "open", label: "To Do" },
+      { status: "in-progress", label: "In Progress" },
+      { status: "done", label: "Done" }
+    ];
+    for (const { status, label } of wipColumns) {
+      new import_obsidian3.Setting(containerEl).setName(label).addText((text) => {
+        var _a;
+        text.inputEl.type = "number";
+        text.inputEl.min = "0";
+        const current = (_a = this.plugin.settings.wipLimits) == null ? void 0 : _a[status];
+        text.setValue(current != null ? String(current) : "");
+        text.onChange((value) => {
+          if (!this.plugin.settings.wipLimits) {
+            this.plugin.settings.wipLimits = { backlog: null, open: null, "in-progress": null, done: null };
+          }
+          const parsed = parseInt(value, 10);
+          this.plugin.settings.wipLimits[status] = !isNaN(parsed) && parsed > 0 ? parsed : null;
+          this.debouncedSave(false);
+        });
+      });
+    }
+    new import_obsidian3.Setting(containerEl).setName("Aging WIP threshold (days)").setDesc("In Analytics \u2192 Flow, flag any non-done topic that has sat in its column at least this many days.").addText((text) => {
+      var _a;
+      text.inputEl.type = "number";
+      text.inputEl.min = "1";
+      text.setValue(String((_a = this.plugin.settings.agingWipThresholdDays) != null ? _a : 7));
+      text.onChange((value) => {
+        const parsed = parseInt(value, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          this.plugin.settings.agingWipThresholdDays = parsed;
+          this.debouncedSave(false);
+        }
+      });
+    });
     containerEl.createEl("h2", { text: "Archive" });
     new import_obsidian3.Setting(containerEl).setName("Archive folder path").setDesc("Folder where completed tasks are archived.").addText(
       (text) => text.setPlaceholder("BuJo/Archive").setValue(this.plugin.settings.archiveFolderPath).onChange((value) => {
@@ -719,6 +737,12 @@ var FridaySettingTab = class extends import_obsidian3.PluginSettingTab {
           this.debouncedSave(false);
         })
       );
+      new import_obsidian3.Setting(containerEl).setName("Flagged custom field ID").setDesc('JIRA custom field ID for the Flagged (impediment) field. Usually "customfield_10021". Drives JIRA-derived topic blocking.').addText(
+        (text) => text.setPlaceholder("customfield_10021").setValue(this.plugin.settings.jiraFlaggedFieldId).onChange((value) => {
+          this.plugin.settings.jiraFlaggedFieldId = value.trim();
+          this.debouncedSave(false);
+        })
+      );
       new import_obsidian3.Setting(containerEl).setName("Test connection").setDesc("Verify your credentials by calling /rest/api/3/myself.").addButton(
         (btn) => btn.setButtonText("Test connection").onClick(async () => {
           btn.setDisabled(true);
@@ -743,6 +767,19 @@ var FridaySettingTab = class extends import_obsidian3.PluginSettingTab {
           await this.plugin.saveSettings(false);
         })
       );
+      new import_obsidian3.Setting(containerEl).setName("Default capacity (target concurrent items)").setDesc('Used for members without a per-member target. Drives the workload "committed vs. capacity" band on the Team Dashboard.').addText((text) => {
+        var _a;
+        text.inputEl.type = "number";
+        text.inputEl.min = "1";
+        text.setValue(String((_a = this.plugin.settings.defaultTargetConcurrentItems) != null ? _a : 5));
+        text.onChange((value) => {
+          const n = parseInt(value, 10);
+          if (!isNaN(n) && n > 0) {
+            this.plugin.settings.defaultTargetConcurrentItems = n;
+            this.debouncedSave(false);
+          }
+        });
+      });
       this.renderTeamMembersList(containerEl);
     }
     this.renderTeamManagementSection(containerEl);
@@ -1078,6 +1115,37 @@ var FridaySettingTab = class extends import_obsidian3.PluginSettingTab {
       activeLabel.createSpan({ text: " Active" });
       activeCheck.addEventListener("change", async () => {
         this.plugin.settings.teamMembers[i].active = activeCheck.checked;
+        await this.plugin.saveSettings(false);
+      });
+      const capInput = controlsRow.createEl("input", {
+        cls: "friday-team-member-input friday-team-member-input-cap",
+        type: "number",
+        attr: {
+          placeholder: "Target",
+          min: "0",
+          title: "Target concurrent items (capacity). Blank = use default.",
+          value: members[i].targetConcurrentItems != null ? String(members[i].targetConcurrentItems) : ""
+        }
+      });
+      capInput.addEventListener("change", async () => {
+        const n = parseInt(capInput.value, 10);
+        this.plugin.settings.teamMembers[i].targetConcurrentItems = !isNaN(n) && n > 0 ? n : void 0;
+        await this.plugin.saveSettings(false);
+      });
+      const availInput = controlsRow.createEl("input", {
+        cls: "friday-team-member-input friday-team-member-input-avail",
+        type: "number",
+        attr: {
+          placeholder: "Avail %",
+          min: "0",
+          max: "100",
+          title: "Availability % (part-time / OOO). Blank = 100%.",
+          value: members[i].availabilityPercent != null ? String(members[i].availabilityPercent) : ""
+        }
+      });
+      availInput.addEventListener("change", async () => {
+        const n = parseInt(availInput.value, 10);
+        this.plugin.settings.teamMembers[i].availabilityPercent = !isNaN(n) && n >= 0 && n <= 100 ? n : void 0;
         await this.plugin.saveSettings(false);
       });
       const removeBtn = controlsRow.createEl("button", {
@@ -1647,7 +1715,7 @@ function parseTopicFile(content, filePath) {
     }
   }
   const statusRaw = (_c = fm["status"]) == null ? void 0 : _c.toLowerCase();
-  const status = statusRaw === "in-progress" ? "in-progress" : statusRaw === "done" ? "done" : "open";
+  const status = statusRaw === "backlog" ? "backlog" : statusRaw === "in-progress" ? "in-progress" : statusRaw === "done" ? "done" : "open";
   const priorityRaw = (_d = fm["priority"]) == null ? void 0 : _d.toLowerCase();
   const priority = priorityRaw === "high" ? "high" /* High */ : priorityRaw === "medium" ? "medium" /* Medium */ : priorityRaw === "low" ? "low" /* Low */ : "none" /* None */;
   const blockedRaw = (_e = fm["blocked"]) == null ? void 0 : _e.toLowerCase();
@@ -1660,6 +1728,13 @@ function parseTopicFile(content, filePath) {
   const effort = effortRaw === "xs" ? "xs" : effortRaw === "s" ? "s" : effortRaw === "m" ? "m" : effortRaw === "l" ? "l" : effortRaw === "xl" ? "xl" : null;
   const dueDateRaw = (_h = fm["dueDate"]) == null ? void 0 : _h.trim();
   const dueDate = dueDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw) ? dueDateRaw : null;
+  const parseIsoDate = (v) => {
+    const t = v == null ? void 0 : v.trim();
+    return t && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+  };
+  const statusSince = parseIsoDate(fm["statusSince"]);
+  const startedAt = parseIsoDate(fm["startedAt"]);
+  const doneAt = parseIsoDate(fm["doneAt"]);
   const assigneeRaw = (_i = fm["assignee"]) == null ? void 0 : _i.trim();
   const assignee = assigneeRaw ? assigneeRaw : null;
   const waitingOnRaw = (_j = fm["waitingOn"]) == null ? void 0 : _j.trim();
@@ -1668,13 +1743,7 @@ function parseTopicFile(content, filePath) {
   const lastNudged = lastNudgedRaw && /^\d{4}-\d{2}-\d{2}$/.test(lastNudgedRaw) ? lastNudgedRaw : null;
   const refsRaw = (_l = fm["refs"]) != null ? _l : "";
   const refs = parseRefsField(refsRaw);
-  const sprintHistoryRaw = (_n = (_m = fm["sprintHistory"]) == null ? void 0 : _m.trim()) != null ? _n : "";
-  let sprintHistory = sprintHistoryRaw ? sprintHistoryRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
-  const sprintId = fm["sprint"] || null;
-  if (sprintHistory.length === 0 && sprintId) {
-    sprintHistory = [sprintId];
-  }
-  const jiraRaw = (_o = fm["jira"]) != null ? _o : "";
+  const jiraRaw = (_m = fm["jira"]) != null ? _m : "";
   const seenKeys = /* @__PURE__ */ new Set();
   const jira = [];
   ISSUE_KEY_REGEX_G.lastIndex = 0;
@@ -1685,6 +1754,8 @@ function parseTopicFile(content, filePath) {
       jira.push(km[0]);
     }
   }
+  const blockedByRaw = (_o = (_n = fm["blockedBy"]) == null ? void 0 : _n.trim()) != null ? _o : "";
+  const blockedBy = blockedByRaw ? blockedByRaw.split("\n").map((s) => s.trim()).filter(Boolean) : [];
   return {
     filePath,
     title,
@@ -1692,7 +1763,6 @@ function parseTopicFile(content, filePath) {
     jira,
     priority,
     blocked,
-    sprintId,
     sortOrder,
     linkedPages,
     taskTotal,
@@ -1700,11 +1770,14 @@ function parseTopicFile(content, filePath) {
     impact,
     effort,
     dueDate,
-    sprintHistory,
+    statusSince,
+    startedAt,
+    doneAt,
     assignee,
     waitingOn,
     lastNudged,
-    refs
+    refs,
+    blockedBy
   };
 }
 function parseRefsField(raw) {
@@ -1775,6 +1848,7 @@ function parseTeamMemberPage(content, filePath, sessionPaths = []) {
   const jiraIdentity = (_c = trimOrNull(fm["jira_identity"])) != null ? _c : email;
   const startDate = parseISODate(trimOrNull(fm["start_date"]));
   const lastOneOnOne = computeLastSessionDate(sessionPaths);
+  const currentFocus = extractSectionFirstLine(content, "Current Focus");
   return {
     filePath,
     folderPath,
@@ -1786,8 +1860,26 @@ function parseTeamMemberPage(content, filePath, sessionPaths = []) {
     cadence,
     jiraIdentity,
     lastOneOnOne,
-    sessionPaths
+    sessionPaths,
+    currentFocus
   };
+}
+function extractSectionFirstLine(content, heading) {
+  const lines = content.split("\n");
+  let inSection = false;
+  for (const raw of lines) {
+    if (!inSection) {
+      if (new RegExp(`^##\\s+${heading}\\s*$`, "i").test(raw))
+        inSection = true;
+      continue;
+    }
+    if (/^##\s+/.test(raw))
+      break;
+    const stripped = raw.replace(/^\s*(?:[-*+]\s+|>\s*)?/, "").trim();
+    if (stripped.length > 0)
+      return stripped;
+  }
+  return null;
 }
 function parseOneOnOneSession(filePath) {
   const oneOnOneIdx = filePath.lastIndexOf("/1on1/");
@@ -2365,6 +2457,15 @@ function getWeekId(date) {
 function formatWeekId(weekId) {
   return `W${weekId}`;
 }
+function daysBetween(isoA, isoB) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoA) || !/^\d{4}-\d{2}-\d{2}$/.test(isoB))
+    return null;
+  const a = (/* @__PURE__ */ new Date(isoA + "T00:00:00")).getTime();
+  const b = (/* @__PURE__ */ new Date(isoB + "T00:00:00")).getTime();
+  if (isNaN(a) || isNaN(b))
+    return null;
+  return Math.round((b - a) / (24 * 60 * 60 * 1e3));
+}
 function getWeekStartConfigurable(date, weekStartDay) {
   const d = new Date(date);
   const day = d.getDay();
@@ -2502,12 +2603,6 @@ var TaskStore = class {
       const due = t.dueDate;
       return due >= start && due <= end;
     });
-  }
-  /** Tasks due within a sprint's date range */
-  getTasksForSprint(sprint) {
-    const start = new Date(sprint.startDate);
-    const end = new Date(sprint.endDate);
-    return this.getTasksForDateRange(start, end);
   }
   /** Open root tasks with due date before today */
   getOverdueTasks() {
@@ -2938,151 +3033,6 @@ var DailyNoteService = class {
   }
 };
 
-// src/utils/workDayUtils.ts
-function isWorkDay(date) {
-  const day = date.getDay();
-  return day !== 0 && day !== 6;
-}
-function workDaysRemaining(endDate) {
-  const today = /* @__PURE__ */ new Date();
-  today.setHours(0, 0, 0, 0);
-  const end = new Date(endDate);
-  end.setHours(0, 0, 0, 0);
-  if (end < today)
-    return 0;
-  let count = 0;
-  const current = new Date(today);
-  while (current <= end) {
-    if (isWorkDay(current)) {
-      count++;
-    }
-    current.setDate(current.getDate() + 1);
-  }
-  return count;
-}
-function addWorkDays(start, workDays) {
-  const result = new Date(start);
-  let added = 0;
-  while (added < workDays) {
-    result.setDate(result.getDate() + 1);
-    if (isWorkDay(result)) {
-      added++;
-    }
-  }
-  return result;
-}
-function totalWorkDays(start, end) {
-  const s = new Date(start);
-  s.setHours(0, 0, 0, 0);
-  const e = new Date(end);
-  e.setHours(0, 0, 0, 0);
-  if (e < s)
-    return 0;
-  let count = 0;
-  const current = new Date(s);
-  while (current <= e) {
-    if (isWorkDay(current)) {
-      count++;
-    }
-    current.setDate(current.getDate() + 1);
-  }
-  return count;
-}
-
-// src/services/sprintService.ts
-var SprintService = class {
-  constructor(getData, saveData) {
-    this.getData = getData;
-    this.saveData = saveData;
-  }
-  getSprints() {
-    return this.getData().sprints;
-  }
-  getActiveSprint() {
-    var _a;
-    return (_a = this.getData().sprints.find((s) => s.status === "active")) != null ? _a : null;
-  }
-  getCompletedSprints() {
-    return this.getData().sprints.filter((s) => s.status === "completed").sort((a, b) => b.endDate.localeCompare(a.endDate));
-  }
-  async createSprint(name, startDate, endDate) {
-    const data = this.getData();
-    const start = startDate != null ? startDate : this.formatDate(this.addDays(/* @__PURE__ */ new Date(), 1));
-    const end = endDate != null ? endDate : data.settings.sprintWorkDaysOnly ? this.formatDate(addWorkDays(this.parseDate(start), data.settings.defaultSprintLength)) : this.formatDate(this.addDays(this.parseDate(start), data.settings.defaultSprintLength));
-    const today = this.formatDate(/* @__PURE__ */ new Date());
-    const status = start <= today ? "active" : "planned";
-    const sprint = {
-      id: `sprint-${Date.now()}`,
-      name,
-      startDate: start,
-      endDate: end,
-      status
-    };
-    data.sprints.push(sprint);
-    await this.saveData();
-    return sprint;
-  }
-  async completeSprint(sprintId) {
-    const data = this.getData();
-    const sprint = data.sprints.find((s) => s.id === sprintId);
-    if (!sprint) {
-      throw new Error(`Sprint not found: ${sprintId}`);
-    }
-    sprint.status = "completed";
-    let newSprint = null;
-    if (data.settings.autoStartNextSprint) {
-      const nextStart = this.formatDate(this.addDays(this.parseDate(sprint.endDate), 1));
-      const nextEnd = data.settings.sprintWorkDaysOnly ? this.formatDate(addWorkDays(this.parseDate(nextStart), data.settings.defaultSprintLength)) : this.formatDate(this.addDays(this.parseDate(nextStart), data.settings.defaultSprintLength));
-      newSprint = {
-        id: `sprint-${Date.now()}`,
-        name: `Sprint`,
-        startDate: nextStart,
-        endDate: nextEnd,
-        status: nextStart <= this.formatDate(/* @__PURE__ */ new Date()) ? "active" : "planned"
-      };
-      data.sprints.push(newSprint);
-    }
-    await this.saveData();
-    return newSprint;
-  }
-  async updateSprint(sprintId, updates) {
-    const sprint = this.getData().sprints.find((s) => s.id === sprintId);
-    if (!sprint) {
-      throw new Error(`Sprint not found: ${sprintId}`);
-    }
-    Object.assign(sprint, updates);
-    await this.saveData();
-  }
-  async deleteSprint(sprintId) {
-    const data = this.getData();
-    const index = data.sprints.findIndex((s) => s.id === sprintId);
-    if (index === -1) {
-      throw new Error(`Sprint not found: ${sprintId}`);
-    }
-    data.sprints.splice(index, 1);
-    await this.saveData();
-  }
-  isDateInSprint(date, sprint) {
-    const d = this.formatDate(date);
-    return d >= sprint.startDate && d <= sprint.endDate;
-  }
-  formatDate(date) {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-  parseDate(dateStr) {
-    const [y, m, d] = dateStr.split("-").map(Number);
-    return new Date(y, m - 1, d);
-  }
-  addDays(date, days) {
-    const result = new Date(date);
-    result.setDate(result.getDate() + days);
-    return result;
-  }
-};
-
 // src/services/sprintTopicService.ts
 var import_obsidian7 = require("obsidian");
 var FRONTMATTER_REGEX2 = /^---\r?\n([\s\S]*?)\r?\n---/;
@@ -3103,23 +3053,23 @@ var SprintTopicService = class {
   /** Create a new topic file with frontmatter and template sections.
    *  `jira` may be a single key or a comma-separated list of keys — stored verbatim
    *  in the `jira:` frontmatter field; the parser extracts individual keys on read. */
-  async createTopic(title, jira, priority, linkedPages, sprintId, impact = null, effort = null, dueDate = null, assignee = null, waitingOn = null, lastNudged = null, refs = []) {
+  async createTopic(title, jira, priority, linkedPages, impact = null, effort = null, dueDate = null, assignee = null, waitingOn = null, lastNudged = null, refs = []) {
     const filePath = this.getTopicFilePath(title);
     const folderPath = filePath.substring(0, filePath.lastIndexOf("/"));
     if (folderPath && !(this.vault.getAbstractFileByPath(folderPath) instanceof import_obsidian7.TFolder)) {
       await this.ensureFolderExists(folderPath);
     }
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const frontmatter = serializeFrontmatter({
-      status: "open",
+      status: "backlog",
       jira: jira || null,
       priority: priority === "none" /* None */ ? "none" : priority,
       blocked: false,
-      sprint: sprintId || null,
       sortOrder: 999,
       impact,
       effort,
       dueDate,
-      sprintHistory: sprintId || null,
+      statusSince: today,
       assignee,
       waitingOn,
       lastNudged,
@@ -3189,13 +3139,91 @@ ${linkedSection}
     const body = content.replace(FRONTMATTER_REGEX2, "").trimStart();
     return newFm + "\n" + body;
   }
-  /** Set the status of a topic (open, in-progress, done) */
+  /** Set the status (Kanban column) of a topic, stamping flow timestamps atomically:
+   *  - statusSince = today on every move (aging-WIP clock)
+   *  - startedAt = today the first time it enters in-progress (never overwritten)
+   *  - doneAt = today on entering done; cleared if the topic is reopened out of done */
   async setTopicStatus(filePath, status) {
-    await this.updateTopicFrontmatter(filePath, { status });
+    const file = this.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian7.TFile))
+      return;
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    await this.vault.process(file, (content) => {
+      const fm = parseFrontmatter(content);
+      const updates = {
+        status,
+        statusSince: today
+      };
+      if (status === "in-progress" && !fm["startedAt"])
+        updates.startedAt = today;
+      if (status === "done")
+        updates.doneAt = today;
+      else if (fm["doneAt"])
+        updates.doneAt = null;
+      this.applyFrontmatterUpdates(fm, updates);
+      return this.rebuildWithFrontmatter(content, fm);
+    });
   }
   /** Set the blocked flag on a topic */
   async setTopicBlocked(filePath, blocked) {
     await this.updateTopicFrontmatter(filePath, { blocked });
+  }
+  /** Add `blockerPath` to a topic's blockedBy list (this topic becomes blocked-by it).
+   *  Rejects self-links, unknown blockers, and cycles. Atomic via vault.process. */
+  async addDependency(filePath, blockerPath) {
+    if (filePath === blockerPath)
+      return { ok: false, reason: "A topic cannot block itself." };
+    const all = await this.getAllTopics();
+    if (!all.some((t) => t.filePath === blockerPath)) {
+      return { ok: false, reason: "Blocker topic not found." };
+    }
+    if (this.wouldCycle(all, filePath, blockerPath)) {
+      return { ok: false, reason: "That would create a circular dependency." };
+    }
+    const file = this.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian7.TFile))
+      return { ok: false, reason: "Topic file not found." };
+    await this.vault.process(file, (content) => {
+      const fm = parseFrontmatter(content);
+      const existing = (fm["blockedBy"] || "").split("\n").map((s) => s.trim()).filter(Boolean);
+      if (!existing.includes(blockerPath))
+        existing.push(blockerPath);
+      this.applyFrontmatterUpdates(fm, { blockedBy: existing.length > 0 ? existing.join("\n") : null });
+      return this.rebuildWithFrontmatter(content, fm);
+    });
+    return { ok: true };
+  }
+  /** Remove `blockerPath` from a topic's blockedBy list. Atomic. */
+  async removeDependency(filePath, blockerPath) {
+    const file = this.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian7.TFile))
+      return;
+    await this.vault.process(file, (content) => {
+      const fm = parseFrontmatter(content);
+      const next = (fm["blockedBy"] || "").split("\n").map((s) => s.trim()).filter(Boolean).filter((p) => p !== blockerPath);
+      this.applyFrontmatterUpdates(fm, { blockedBy: next.length > 0 ? next.join("\n") : null });
+      return this.rebuildWithFrontmatter(content, fm);
+    });
+  }
+  /** True if making `filePath` blocked-by `blockerPath` would close a cycle — i.e. the
+   *  blocker is already (transitively) blocked by `filePath`. DFS over blockedBy edges. */
+  wouldCycle(all, filePath, blockerPath) {
+    const byPath = new Map(all.map((t) => [t.filePath, t]));
+    const seen = /* @__PURE__ */ new Set();
+    const stack = [blockerPath];
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      if (cur === filePath)
+        return true;
+      if (seen.has(cur))
+        continue;
+      seen.add(cur);
+      const t = byPath.get(cur);
+      if (t)
+        for (const dep of t.blockedBy)
+          stack.push(dep);
+    }
+    return false;
   }
   /** Set the strategic impact on a topic (null clears the field) */
   async setTopicImpact(filePath, impact) {
@@ -3213,55 +3241,42 @@ ${linkedSection}
   async updateSortOrder(filePath, sortOrder) {
     await this.updateTopicFrontmatter(filePath, { sortOrder });
   }
-  /** Carry a topic forward to a new sprint (sprint-close flow). Adds to history. */
-  async carryForwardTopic(filePath, newSprintId) {
-    await this.assignTopicToSprint(filePath, newSprintId);
-  }
-  /** Move a topic to the backlog (clear sprint assignment). Status and history preserved. */
-  async moveTopicToBacklog(filePath) {
-    await this.assignTopicToSprint(filePath, "");
-  }
-  /** Assign a topic to a specific sprint (or pass '' to move to backlog).
-   *  Appends the previous sprint (if any) AND the new sprint to sprintHistory —
-   *  the old one may be missing on legacy topics that were assigned before history
-   *  tracking existed, so we defensively capture it here. History is cumulative:
-   *  moving to backlog does NOT remove anything.
-   *
-   *  Entirely inside one vault.process call so reading oldSprint/history and writing
-   *  the merged result is atomic against any concurrent external edit. */
-  async assignTopicToSprint(filePath, sprintId) {
-    const file = this.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof import_obsidian7.TFile))
-      return;
-    await this.vault.process(file, (content) => {
-      const fm = parseFrontmatter(content);
-      const oldSprint = (fm["sprint"] || "").trim();
-      const existing = (fm["sprintHistory"] || "").split(",").map((s) => s.trim()).filter(Boolean);
-      const merged = [...existing];
-      const seen = new Set(existing);
-      for (const s of [oldSprint, sprintId]) {
-        if (s && !seen.has(s)) {
-          merged.push(s);
-          seen.add(s);
+  /** One-time migration from the sprint model to Kanban. For each topic file: if it has
+   *  no `sprint` and isn't already in-progress/done, move it to the Backlog column; then
+   *  strip the now-dead `sprint:` / `sprintHistory:` keys. Idempotent — files with nothing
+   *  to change are left untouched. Returns the number of files actually rewritten. */
+  async migrateToKanban() {
+    const folder = this.vault.getAbstractFileByPath(this.getTopicsFolderPath());
+    if (!(folder instanceof import_obsidian7.TFolder))
+      return 0;
+    let changed = 0;
+    for (const child of folder.children) {
+      if (!(child instanceof import_obsidian7.TFile) || child.extension !== "md")
+        continue;
+      let didChange = false;
+      await this.vault.process(child, (content) => {
+        const fm = parseFrontmatter(content);
+        const hadSprintKeys = "sprint" in fm || "sprintHistory" in fm;
+        const hasSprint = !!(fm["sprint"] && fm["sprint"].trim());
+        const status = (fm["status"] || "").toLowerCase();
+        const updates = {
+          sprint: null,
+          sprintHistory: null
+        };
+        if (!hasSprint && status !== "done" && status !== "in-progress") {
+          updates.status = "backlog";
         }
-      }
-      this.applyFrontmatterUpdates(fm, {
-        sprint: sprintId,
-        sprintHistory: merged.length > 0 ? merged.join(",") : null
+        const needsStatus = updates.status !== void 0;
+        if (!hadSprintKeys && !needsStatus)
+          return content;
+        didChange = true;
+        this.applyFrontmatterUpdates(fm, updates);
+        return this.rebuildWithFrontmatter(content, fm);
       });
-      return this.rebuildWithFrontmatter(content, fm);
-    });
-  }
-  /** Archive a topic (mark done, clear sprint). History is preserved — go through
-   *  assignTopicToSprint so the departing sprint is captured into sprintHistory. */
-  async archiveTopic(filePath) {
-    await this.assignTopicToSprint(filePath, "");
-    await this.updateTopicFrontmatter(filePath, { status: "done" });
-  }
-  /** Cancel a topic (mark done, clear sprint). Same history semantics as archiveTopic. */
-  async cancelTopic(filePath) {
-    await this.assignTopicToSprint(filePath, "");
-    await this.updateTopicFrontmatter(filePath, { status: "done" });
+      if (didChange)
+        changed++;
+    }
+    return changed;
   }
   /** Get all topics from the topics folder */
   async getAllTopics() {
@@ -3277,11 +3292,6 @@ ${linkedSection}
       }
     }
     return topics;
-  }
-  /** Get topics assigned to a specific sprint */
-  async getTopicsForSprint(sprintId) {
-    const all = await this.getAllTopics();
-    return all.filter((t) => t.sprintId === sprintId);
   }
   /** Recursively create folder hierarchy */
   async ensureFolderExists(folderPath) {
@@ -4226,16 +4236,17 @@ var JiraService = class {
       return null;
     }
     try {
+      const flaggedField = (s.jiraFlaggedFieldId || "customfield_10021").trim();
       const resp = await (0, import_obsidian10.requestUrl)(this.buildRequest(
         s,
-        `/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee`
+        `/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee,${flaggedField},issuelinks`
       ));
       if (resp.status < 200 || resp.status >= 300) {
         this.cache.set(key, { kind: "error", message: `HTTP ${resp.status}`, fetchedAt: Date.now() });
         this.bumpVersion();
         return null;
       }
-      const info = this.parseIssue(validKey, resp.json, s.jiraBaseUrl);
+      const info = this.parseIssue(validKey, resp.json, s.jiraBaseUrl, flaggedField);
       this.cache.set(key, { kind: "fresh", info });
       this.bumpVersion();
       return info;
@@ -4259,8 +4270,8 @@ var JiraService = class {
       throw: false
     };
   }
-  parseIssue(key, json, baseUrl) {
-    var _a, _b, _c, _d, _e, _f, _g;
+  parseIssue(key, json, baseUrl, flaggedField) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     const fields = (_a = json == null ? void 0 : json.fields) != null ? _a : {};
     const statusObj = (_b = fields.status) != null ? _b : {};
     const statusName = (_c = statusObj.name) != null ? _c : "Unknown";
@@ -4268,12 +4279,29 @@ var JiraService = class {
     const statusCategory = rawCategory === "new" || rawCategory === "indeterminate" || rawCategory === "done" ? rawCategory : "unknown";
     const assigneeObj = fields.assignee;
     const assignee = (_f = assigneeObj == null ? void 0 : assigneeObj.displayName) != null ? _f : null;
+    let flagged = false;
+    const flaggedRaw = (_h = (_g = fields[flaggedField]) != null ? _g : fields.customfield_10021) != null ? _h : fields.flagged;
+    if (Array.isArray(flaggedRaw) && flaggedRaw.length > 0)
+      flagged = true;
+    else if (flaggedRaw && typeof flaggedRaw === "object")
+      flagged = true;
+    const blockingLinks = [];
+    const issuelinks = Array.isArray(fields.issuelinks) ? fields.issuelinks : [];
+    for (const link of issuelinks) {
+      const inward = String((_j = (_i = link == null ? void 0 : link.type) == null ? void 0 : _i.inward) != null ? _j : "").toLowerCase();
+      if (inward.includes("blocked by") && ((_k = link == null ? void 0 : link.inwardIssue) == null ? void 0 : _k.key)) {
+        const cat = (_o = (_n = (_m = (_l = link.inwardIssue.fields) == null ? void 0 : _l.status) == null ? void 0 : _m.statusCategory) == null ? void 0 : _n.key) != null ? _o : "unknown";
+        blockingLinks.push({ key: link.inwardIssue.key, done: cat === "done" });
+      }
+    }
     return {
       key,
-      summary: (_g = fields.summary) != null ? _g : "",
+      summary: (_p = fields.summary) != null ? _p : "",
       status: statusName,
       statusCategory,
       assignee,
+      flagged,
+      blockingLinks,
       issueUrl: `${baseUrl.replace(/\/+$/, "")}/browse/${key}`,
       fetchedAt: Date.now()
     };
@@ -4906,14 +4934,14 @@ var TeamMemberService = class {
     const windowDays = CADENCE_DAYS[member.cadence];
     if (!member.lastOneOnOne) {
       if (member.startDate) {
-        const daysSinceStart = daysBetween(member.startDate, today);
+        const daysSinceStart = daysBetween2(member.startDate, today);
         if (daysSinceStart > windowDays) {
           return { state: "overdue", daysSince: daysSinceStart };
         }
       }
       return { state: "never", daysSince: null };
     }
-    const daysSince = daysBetween(member.lastOneOnOne, today);
+    const daysSince = daysBetween2(member.lastOneOnOne, today);
     if (daysSince > windowDays)
       return { state: "overdue", daysSince };
     if (daysSince > windowDays - DUE_SOON_BUFFER_DAYS)
@@ -4937,7 +4965,7 @@ var TeamMemberService = class {
   /** Create a new 1:1 session file at `{member}/1on1/YYYY-MM-DD.md` with the
    *  standard template. If the file already exists (e.g. re-opening today's 1:1)
    *  just returns the existing TFile — safe to call more than once. */
-  async startOneOnOne(member, date = /* @__PURE__ */ new Date()) {
+  async startOneOnOne(member, date = /* @__PURE__ */ new Date(), agenda) {
     const iso = formatDateISO(date);
     const sessionFolder = `${member.folderPath}/1on1`;
     const sessionPath = `${sessionFolder}/${iso}.md`;
@@ -4945,7 +4973,7 @@ var TeamMemberService = class {
     if (existing instanceof import_obsidian13.TFile)
       return existing;
     await ensureFolderExists(this.vault, sessionFolder);
-    const template = buildOneOnOneTemplate(member.name, iso);
+    const template = buildOneOnOneTemplate(member.name, iso, agenda);
     return await this.vault.create(sessionPath, template);
   }
   /** Create a canonical person page from a legacy `TeamMember` settings entry.
@@ -4970,7 +4998,7 @@ var TeamMemberService = class {
     return true;
   }
 };
-function daysBetween(from, to) {
+function daysBetween2(from, to) {
   const dayMs = 1e3 * 60 * 60 * 24;
   const fromMidnight = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
   const toMidnight = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
@@ -4980,13 +5008,17 @@ function todayAtMidnight() {
   const d = /* @__PURE__ */ new Date();
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
-function buildOneOnOneTemplate(memberName, iso) {
+function buildOneOnOneTemplate(memberName, iso, agenda) {
+  const prep = agenda && agenda.trim() ? `
+## Prep (auto)
+${agenda.trim()}
+` : "";
   return `---
 session_date: ${iso}
 ---
 
 # 1:1 with [[${memberName}]] \u2014 ${iso}
-
+${prep}
 ## Topics
 - 
 
@@ -5028,8 +5060,409 @@ function buildPersonPageTemplate(fullName, status, email) {
   return fmLines.join("\n") + body;
 }
 
+// src/utils/teamBucket.ts
+function bucketIssuesByMember(issues, members) {
+  const byEmail = /* @__PURE__ */ new Map();
+  const byName = /* @__PURE__ */ new Map();
+  for (const m of members) {
+    if (m.email)
+      byEmail.set(m.email.toLowerCase(), m);
+    if (m.fullName)
+      byName.set(m.fullName.toLowerCase().trim(), m);
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const m of members)
+    out.set(m.email, []);
+  for (const issue of issues) {
+    let member;
+    if (issue.assigneeEmail)
+      member = byEmail.get(issue.assigneeEmail.toLowerCase());
+    if (!member && issue.assignee)
+      member = byName.get(issue.assignee.toLowerCase().trim());
+    if (member)
+      out.get(member.email).push(issue);
+  }
+  return out;
+}
+
+// src/services/topicGraph.ts
+function buildTopicIndex(topics) {
+  var _a;
+  const byPath = /* @__PURE__ */ new Map();
+  for (const t of topics)
+    byPath.set(t.filePath, t);
+  const blocksMap = /* @__PURE__ */ new Map();
+  for (const t of topics) {
+    for (const dep of t.blockedBy) {
+      const arr = (_a = blocksMap.get(dep)) != null ? _a : [];
+      arr.push(t);
+      blocksMap.set(dep, arr);
+    }
+  }
+  return {
+    byPath,
+    blockersOf: (t) => t.blockedBy.map((p) => byPath.get(p)).filter((x) => !!x),
+    blocks: (t) => {
+      var _a2;
+      return (_a2 = blocksMap.get(t.filePath)) != null ? _a2 : [];
+    }
+  };
+}
+function criticalPath(topics) {
+  const idx = buildTopicIndex(topics);
+  const active = topics.filter((t) => t.status !== "done");
+  const memo = /* @__PURE__ */ new Map();
+  const visiting = /* @__PURE__ */ new Set();
+  const longestTo = (t) => {
+    const cached = memo.get(t.filePath);
+    if (cached)
+      return cached;
+    if (visiting.has(t.filePath))
+      return [t.filePath];
+    visiting.add(t.filePath);
+    let best = [];
+    for (const b of idx.blockersOf(t)) {
+      if (b.status === "done")
+        continue;
+      const chain = longestTo(b);
+      if (chain.length > best.length)
+        best = chain;
+    }
+    visiting.delete(t.filePath);
+    const result = [...best, t.filePath];
+    memo.set(t.filePath, result);
+    return result;
+  };
+  let longest = [];
+  for (const t of active) {
+    const chain = longestTo(t);
+    if (chain.length > longest.length)
+      longest = chain;
+  }
+  return longest.length > 1 ? longest : [];
+}
+
+// src/services/topicStatus.ts
+function deriveTopicBlock(input) {
+  const { topic, blockersOf, jiraSignal } = input;
+  const reasons = [];
+  const sources = { manual: false, jira: false, deps: false };
+  if (topic.blocked) {
+    sources.manual = true;
+    reasons.push("Manually blocked");
+  }
+  if (jiraSignal) {
+    for (const key of topic.jira) {
+      const sig = jiraSignal(key);
+      if (!sig)
+        continue;
+      if (sig.flagged) {
+        sources.jira = true;
+        reasons.push(`${key} flagged in JIRA`);
+      }
+      if (sig.blockedByOpen.length > 0) {
+        sources.jira = true;
+        reasons.push(`${key} blocked by ${sig.blockedByOpen.join(", ")}`);
+      }
+    }
+  }
+  const openBlockers = blockersOf(topic).filter((b) => b.status !== "done");
+  if (openBlockers.length > 0) {
+    sources.deps = true;
+    reasons.push(`Blocked by: ${openBlockers.map((b) => b.title).join(", ")}`);
+  }
+  const state = sources.manual || sources.jira || sources.deps ? "blocked" : "clear";
+  return { state, reasons, sources };
+}
+function toJiraSignal(info) {
+  if (!info)
+    return null;
+  return {
+    flagged: info.flagged,
+    blockedByOpen: info.blockingLinks.filter((l) => !l.done).map((l) => l.key)
+  };
+}
+
+// src/services/teamRollupService.ts
+var TeamRollupService = class {
+  constructor(getSettings, teamMemberService, teamJiraService, getAllTopics) {
+    this.getSettings = getSettings;
+    this.teamMemberService = teamMemberService;
+    this.teamJiraService = teamJiraService;
+    this.getAllTopics = getAllTopics;
+  }
+  buildRollup(now = /* @__PURE__ */ new Date()) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    const s = this.getSettings();
+    const todayIso = formatDateISO(now);
+    const activeMembers = ((_a = s.teamMembers) != null ? _a : []).filter((m) => m.active && m.email);
+    const jiraEnabled = this.teamJiraService.isEnabled();
+    const liveIssues = jiraEnabled ? this.teamJiraService.getIssues() : null;
+    const jiraIncluded = jiraEnabled && liveIssues !== null;
+    const issues = liveIssues != null ? liveIssues : [];
+    const byMember = bucketIssuesByMember(issues, activeMembers);
+    const topics = this.getAllTopics();
+    const index = buildTopicIndex(topics);
+    const isTopicBlocked = (t) => deriveTopicBlock({ topic: t, blockersOf: (x) => index.blockersOf(x) }).state === "blocked";
+    const pages = this.teamMemberService.getVisibleMembers();
+    const nameByEmail = new Map(activeMembers.map((m) => [m.email.toLowerCase(), m.nickname || m.fullName || m.email]));
+    const ownerName = (email) => {
+      var _a2;
+      return email ? (_a2 = nameByEmail.get(email.toLowerCase())) != null ? _a2 : email : null;
+    };
+    const members = [];
+    for (const m of activeMembers) {
+      const email = m.email;
+      const jissues = (_b = byMember.get(email)) != null ? _b : [];
+      const jiraBlocked = jissues.filter((i) => i.flagged).length;
+      const jiraInProgress = jissues.filter((i) => !i.flagged && i.statusCategory === "indeterminate").length;
+      const jiraOpen = jissues.filter((i) => !i.flagged && i.statusCategory !== "indeterminate" && i.statusCategory !== "done").length;
+      const jiraDone = jissues.filter((i) => i.statusCategory === "done").length;
+      const memberTopics = topics.filter((t) => t.assignee && t.assignee.toLowerCase() === email.toLowerCase());
+      const topicsOpen = memberTopics.filter((t) => t.status === "open").length;
+      const topicsInProgress = memberTopics.filter((t) => t.status === "in-progress").length;
+      const topicsDone = memberTopics.filter((t) => t.status === "done").length;
+      const topicsBlocked = memberTopics.filter((t) => t.status !== "done" && isTopicBlocked(t)).length;
+      const counts = {
+        jiraBlocked,
+        jiraInProgress,
+        jiraOpen,
+        jiraDone,
+        topicsBlocked,
+        topicsInProgress,
+        topicsOpen,
+        topicsDone
+      };
+      const committed = jiraBlocked + jiraInProgress + jiraOpen + topicsOpen + topicsInProgress;
+      const target = (_d = (_c = m.targetConcurrentItems) != null ? _c : s.defaultTargetConcurrentItems) != null ? _d : 5;
+      const avail = (_e = m.availabilityPercent) != null ? _e : 100;
+      const effectiveTarget = target * (avail / 100);
+      const ratio = effectiveTarget > 0 ? committed / effectiveTarget : null;
+      let band;
+      if (avail <= 0 || effectiveTarget <= 0)
+        band = "out";
+      else if (ratio === null)
+        band = "balanced";
+      else if (ratio <= 0.5)
+        band = "light";
+      else if (ratio <= 1)
+        band = "balanced";
+      else if (ratio <= 1.5)
+        band = "heavy";
+      else
+        band = "overloaded";
+      const load = { committed, target: effectiveTarget, ratio, band };
+      const page = pages.find((p) => p.email && p.email.toLowerCase() === email.toLowerCase());
+      let cadenceState = null;
+      let cadenceDays = null;
+      if (page) {
+        const sig = this.teamMemberService.computeCadenceSignal(page, now);
+        cadenceState = sig.state;
+        cadenceDays = sig.daysSince;
+      }
+      members.push({
+        email,
+        displayName: m.nickname || m.fullName || email,
+        onLeave: (page == null ? void 0 : page.status) === "on_leave",
+        cadenceState,
+        cadenceDays,
+        drivingJira: jissues.filter((i) => i.statusCategory === "indeterminate"),
+        drivingTopics: memberTopics.filter((t) => t.status === "in-progress"),
+        jiraIssues: jissues,
+        topics: memberTopics,
+        counts,
+        load
+      });
+    }
+    const topBlockers = [];
+    for (const issue of issues) {
+      if (issue.flagged) {
+        topBlockers.push({
+          kind: "jira",
+          ownerName: (_f = issue.assignee) != null ? _f : null,
+          title: issue.summary || issue.key,
+          ref: issue.key,
+          url: issue.issueUrl,
+          detail: "Flagged in JIRA"
+        });
+      }
+    }
+    const nudgeThreshold = (_g = s.nudgeThresholdDays) != null ? _g : 7;
+    for (const t of topics) {
+      if (t.status === "done")
+        continue;
+      if (isTopicBlocked(t)) {
+        topBlockers.push({
+          kind: "topic-blocked",
+          ownerName: ownerName(t.assignee),
+          title: t.title,
+          ref: t.filePath,
+          url: null,
+          detail: t.blocked ? "Manually blocked" : "Blocked by dependency"
+        });
+      }
+      if (t.waitingOn) {
+        const days = t.lastNudged ? daysBetween(t.lastNudged, todayIso) : null;
+        const stale = t.lastNudged === null || days !== null && days > nudgeThreshold;
+        if (stale) {
+          topBlockers.push({
+            kind: "topic-waiting",
+            ownerName: ownerName(t.assignee),
+            title: t.title,
+            ref: t.filePath,
+            url: null,
+            detail: `Waiting on ${t.waitingOn}${t.lastNudged ? ` \xB7 ${days}d` : " \xB7 never nudged"}`
+          });
+        }
+      }
+    }
+    const urgency = (_h = s.urgencyThresholdDays) != null ? _h : 2;
+    const atRisk = [];
+    for (const issue of issues) {
+      if (issue.statusCategory === "done" || !issue.dueDate)
+        continue;
+      const d = daysBetween(todayIso, issue.dueDate);
+      if (d !== null && d <= urgency) {
+        atRisk.push({ kind: "jira", ownerName: (_i = issue.assignee) != null ? _i : null, title: issue.summary || issue.key, ref: issue.key, url: issue.issueUrl, dueDate: issue.dueDate, daysUntilDue: d });
+      }
+    }
+    for (const t of topics) {
+      if (t.status === "done" || !t.dueDate)
+        continue;
+      const d = daysBetween(todayIso, t.dueDate);
+      if (d !== null && d <= urgency) {
+        atRisk.push({ kind: "topic", ownerName: ownerName(t.assignee), title: t.title, ref: t.filePath, url: null, dueDate: t.dueDate, daysUntilDue: d });
+      }
+    }
+    atRisk.sort((a, b) => a.daysUntilDue - b.daysUntilDue);
+    const overdueOneOnOnes = this.teamMemberService.getOverdueOneOnOnes(now).map((o) => ({ name: o.member.name, daysOverdue: o.daysOverdue }));
+    return { generatedAt: now.getTime(), jiraIncluded, members, topBlockers, atRisk, overdueOneOnOnes };
+  }
+};
+function buildOneOnOneAgenda(m) {
+  const lines = [];
+  const driving = [
+    ...m.drivingTopics.map((t) => `- ${t.title}`),
+    ...m.drivingJira.map((i) => `- ${i.key} \u2014 ${i.summary}`)
+  ];
+  if (driving.length > 0)
+    lines.push("**Currently driving**", ...driving, "");
+  const blocked = [
+    ...m.topics.filter((t) => t.status !== "done" && t.blocked).map((t) => `- ${t.title}`),
+    ...m.jiraIssues.filter((i) => i.flagged).map((i) => `- ${i.key} \u2014 ${i.summary}`)
+  ];
+  if (blocked.length > 0)
+    lines.push("**Blocked / flagged**", ...blocked, "");
+  const waiting = m.topics.filter((t) => t.status !== "done" && t.waitingOn).map((t) => `- ${t.title} (waiting on ${t.waitingOn})`);
+  if (waiting.length > 0)
+    lines.push("**Waiting on**", ...waiting, "");
+  return lines.join("\n").trim();
+}
+
+// src/services/teamDigestService.ts
+var import_obsidian14 = require("obsidian");
+var TeamDigestService = class {
+  constructor(vault, getSettings, rollupService, teamJiraService) {
+    this.vault = vault;
+    this.getSettings = getSettings;
+    this.rollupService = rollupService;
+    this.teamJiraService = teamJiraService;
+  }
+  getDigestPath(date) {
+    return `${this.getSettings().teamFolderPath}/Status/${formatDateISO(date)}.md`;
+  }
+  /** Refresh team JIRA if stale, build the roll-up, write the digest (overwrite if exists). */
+  async generateDigest(date = /* @__PURE__ */ new Date()) {
+    if (this.teamJiraService.isEnabled() && this.teamJiraService.isStale()) {
+      try {
+        await this.teamJiraService.refresh();
+      } catch (e) {
+      }
+    }
+    const rollup = this.rollupService.buildRollup(date);
+    const md = this.buildMarkdown(rollup, date);
+    const path = this.getDigestPath(date);
+    const folder = path.substring(0, path.lastIndexOf("/"));
+    if (folder && !(this.vault.getAbstractFileByPath(folder) instanceof import_obsidian14.TFolder)) {
+      try {
+        await this.vault.createFolder(folder);
+      } catch (e) {
+      }
+    }
+    const existing = this.vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian14.TFile) {
+      await this.vault.modify(existing, md);
+      return existing;
+    }
+    return await this.vault.create(path, md);
+  }
+  /** Pure: render a roll-up to markdown. Reused by the "Copy digest" button. */
+  buildMarkdown(r, date) {
+    var _a;
+    const lines = [];
+    lines.push("---");
+    lines.push("type: team-status");
+    lines.push(`generated: ${formatDateISO(date)}`);
+    lines.push(`jira_included: ${r.jiraIncluded}`);
+    lines.push("---");
+    lines.push("");
+    lines.push(`# Team status \u2014 ${formatDateDisplay(date)}`);
+    lines.push("");
+    if (!r.jiraIncluded) {
+      lines.push("> JIRA not included (module off or unavailable) \u2014 figures are topic-only.");
+      lines.push("");
+    }
+    lines.push("## Top blockers");
+    if (r.topBlockers.length === 0)
+      lines.push("- _None_");
+    else
+      for (const b of r.topBlockers) {
+        const owner = b.ownerName ? ` (${b.ownerName})` : "";
+        const ref = b.url ? `[${b.ref}](${b.url})` : b.ref;
+        lines.push(`- **${b.title}**${owner} \u2014 ${(_a = b.detail) != null ? _a : ""} \xB7 ${ref}`);
+      }
+    lines.push("");
+    lines.push("## At risk (due soon / overdue)");
+    if (r.atRisk.length === 0)
+      lines.push("- _None_");
+    else
+      for (const a of r.atRisk) {
+        const owner = a.ownerName ? ` (${a.ownerName})` : "";
+        const ref = a.url ? `[${a.ref}](${a.url})` : a.ref;
+        const when = a.daysUntilDue < 0 ? `${-a.daysUntilDue}d overdue` : `due in ${a.daysUntilDue}d`;
+        lines.push(`- **${a.title}**${owner} \u2014 ${when} (${a.dueDate}) \xB7 ${ref}`);
+      }
+    lines.push("");
+    lines.push("## Currently driving");
+    const driving = r.members.filter((m) => m.drivingJira.length + m.drivingTopics.length > 0);
+    if (driving.length === 0)
+      lines.push("- _Nothing in progress_");
+    else
+      for (const m of driving) {
+        const items = [...m.drivingTopics.map((t) => t.title), ...m.drivingJira.map((i) => i.key)];
+        lines.push(`- **${m.displayName}**: ${items.join(", ")}`);
+      }
+    lines.push("");
+    lines.push("## 1:1 cadence");
+    if (r.overdueOneOnOnes.length === 0)
+      lines.push("- _All on track_");
+    else
+      for (const o of r.overdueOneOnOnes)
+        lines.push(`- **${o.name}** \u2014 ${o.daysOverdue}d overdue`);
+    lines.push("");
+    lines.push("## Workload");
+    lines.push("| Member | Committed | Capacity | Band |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const m of r.members) {
+      lines.push(`| ${m.displayName} | ${m.load.committed} | ${m.load.target.toFixed(0)} | ${m.load.band} |`);
+    }
+    lines.push("");
+    return lines.join("\n");
+  }
+};
+
 // src/ui/FridayView.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/ui/components/ViewSwitcher.ts
 var ViewSwitcher = class {
@@ -5048,7 +5481,6 @@ var ViewSwitcher = class {
       { mode: "monthly" /* Monthly */, label: "Monthly" },
       { mode: "calendar" /* Calendar */, label: "Calendar" },
       { mode: "unscheduled" /* Unscheduled */, label: "Unscheduled" },
-      { mode: "sprint" /* Sprint */, label: "Sprint" },
       { mode: "inbox" /* Inbox */, label: "\u{1F4E5} Inbox" },
       { mode: "overdue" /* Overdue */, label: "Overdue" },
       { mode: "overview" /* Overview */, label: "Overview" },
@@ -5106,7 +5538,7 @@ var Toolbar = class {
         this.callbacks.onSearchChange(this.searchValue);
       }, SEARCH_DEBOUNCE_MS);
     });
-    const showGrouping = this.viewMode === "sprint" /* Sprint */ || this.viewMode === "overdue" /* Overdue */ || this.viewMode === "overview" /* Overview */;
+    const showGrouping = this.viewMode === "overdue" /* Overdue */ || this.viewMode === "overview" /* Overview */;
     if (showGrouping) {
       const groupContainer = this.el.createDiv({ cls: "friday-group-selector" });
       groupContainer.createSpan({ text: "Group:", cls: "friday-label" });
@@ -5203,7 +5635,7 @@ var GroupHeader = class {
 };
 
 // src/ui/icons.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian15 = require("obsidian");
 var PRIORITY_CLASSES = {
   high: "friday-priority-high",
   medium: "friday-priority-medium",
@@ -5254,6 +5686,13 @@ function createCadenceChip(state, label) {
   const chip = document.createElement("span");
   chip.addClass("friday-cadence-chip");
   chip.addClass(`friday-cadence-${state}`);
+  chip.textContent = label;
+  return chip;
+}
+function createLoadChip(band, label) {
+  const chip = document.createElement("span");
+  chip.addClass("friday-load-chip");
+  chip.addClass(`friday-load-${band}`);
   chip.textContent = label;
   return chip;
 }
@@ -5765,14 +6204,19 @@ var MonthlyView = class {
   }
 };
 
+// src/ui/components/TopicsOverviewView.ts
+var import_obsidian16 = require("obsidian");
+
 // src/ui/components/TopicCard.ts
 var STATUS_TRANSITIONS = {
-  "open": { left: null, right: "in-progress" },
+  "backlog": { left: null, right: "open" },
+  "open": { left: "backlog", right: "in-progress" },
   "in-progress": { left: "open", right: "done" },
   "done": { left: "in-progress", right: null }
 };
 var STATUS_LABELS = {
-  "open": "Open",
+  "backlog": "Backlog",
+  "open": "To Do",
   "in-progress": "In Progress",
   "done": "Done"
 };
@@ -5787,7 +6231,7 @@ function computeDaysSince(isoDate) {
   return Math.floor((today - then) / (24 * 60 * 60 * 1e3));
 }
 function renderTopicCard(container, topic, opts) {
-  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
   const card = container.createDiv({ cls: "friday-kanban-card" });
   if (opts.draggable) {
     card.draggable = true;
@@ -5819,14 +6263,23 @@ function renderTopicCard(container, topic, opts) {
       opts.onTitleClick(topic);
     });
   }
-  if (topic.blocked) {
+  const derived = (_a = opts.deriveBlock) == null ? void 0 : _a.call(opts, topic);
+  if (derived) {
+    if (derived.state === "blocked") {
+      const manualOnly = derived.reasons.length === 1 && derived.reasons[0] === "Manually blocked";
+      const badge = headerEl.createSpan({ cls: "friday-kanban-card-blocked", text: "BLOCKED" });
+      if (!manualOnly)
+        badge.addClass("friday-kanban-card-blocked-derived");
+      badge.setAttribute("title", derived.reasons.join(" \xB7 "));
+    }
+  } else if (topic.blocked) {
     headerEl.createSpan({ cls: "friday-kanban-card-blocked", text: "BLOCKED" });
   }
   for (const key of topic.jira) {
-    const lookup = (_a = opts.jiraLookup) == null ? void 0 : _a.call(opts, key);
-    const info = (_b = lookup == null ? void 0 : lookup.info) != null ? _b : null;
-    const loading = (_c = lookup == null ? void 0 : lookup.loading) != null ? _c : false;
-    const error = (_d = lookup == null ? void 0 : lookup.error) != null ? _d : null;
+    const lookup = (_b = opts.jiraLookup) == null ? void 0 : _b.call(opts, key);
+    const info = (_c = lookup == null ? void 0 : lookup.info) != null ? _c : null;
+    const loading = (_d = lookup == null ? void 0 : lookup.loading) != null ? _d : false;
+    const error = (_e = lookup == null ? void 0 : lookup.error) != null ? _e : null;
     const jiraRow = card.createDiv({ cls: "friday-kanban-card-jira-row" });
     const keyEl = jiraRow.createSpan({ cls: "friday-kanban-card-jira", text: key });
     if (info == null ? void 0 : info.issueUrl) {
@@ -5850,7 +6303,7 @@ function renderTopicCard(container, topic, opts) {
         text: info.status
       });
       statusEl.setAttribute("title", `JIRA status: ${info.status}`);
-      const assigneeLabel = (_e = info.assignee) != null ? _e : "Unassigned";
+      const assigneeLabel = (_f = info.assignee) != null ? _f : "Unassigned";
       const assigneeEl = jiraRow.createSpan({
         cls: "friday-jira-chip friday-jira-assignee",
         text: assigneeLabel
@@ -5878,8 +6331,8 @@ function renderTopicCard(container, topic, opts) {
     }
   }
   if (topic.assignee) {
-    const lookup = (_g = (_f = opts.assigneeLookup) == null ? void 0 : _f.call(opts, topic.assignee)) != null ? _g : null;
-    const label = (_h = lookup == null ? void 0 : lookup.label) != null ? _h : topic.assignee;
+    const lookup = (_h = (_g = opts.assigneeLookup) == null ? void 0 : _g.call(opts, topic.assignee)) != null ? _h : null;
+    const label = (_i = lookup == null ? void 0 : lookup.label) != null ? _i : topic.assignee;
     const chip = card.createDiv({ cls: "friday-kanban-card-assignee" });
     chip.setText(label);
     if (!lookup || lookup.isInactive) {
@@ -5889,10 +6342,10 @@ function renderTopicCard(container, topic, opts) {
   }
   if (topic.waitingOn) {
     const looksLikeEmail = topic.waitingOn.includes("@");
-    const lookup = looksLikeEmail ? (_j = (_i = opts.assigneeLookup) == null ? void 0 : _i.call(opts, topic.waitingOn)) != null ? _j : null : null;
-    const label = (_k = lookup == null ? void 0 : lookup.label) != null ? _k : topic.waitingOn;
+    const lookup = looksLikeEmail ? (_k = (_j = opts.assigneeLookup) == null ? void 0 : _j.call(opts, topic.waitingOn)) != null ? _k : null : null;
+    const label = (_l = lookup == null ? void 0 : lookup.label) != null ? _l : topic.waitingOn;
     const daysSinceNudge = computeDaysSince(topic.lastNudged);
-    const threshold = (_l = opts.nudgeThresholdDays) != null ? _l : 7;
+    const threshold = (_m = opts.nudgeThresholdDays) != null ? _m : 7;
     const suffix = topic.lastNudged === null ? " \xB7 never nudged" : daysSinceNudge !== null ? ` \xB7 ${daysSinceNudge}d` : "";
     const chip = card.createDiv({ cls: "friday-kanban-card-waiting" });
     chip.setText(`\u23F3 ${label}${suffix}`);
@@ -5900,6 +6353,25 @@ function renderTopicCard(container, topic, opts) {
     if (isStale)
       chip.addClass("friday-kanban-card-waiting-stale");
     chip.setAttribute("title", `Waiting on: ${label}${suffix}`);
+  }
+  const deps = (_n = opts.dependencyLookup) == null ? void 0 : _n.call(opts, topic);
+  if (deps && deps.blockedBy.length > 0) {
+    const row = card.createDiv({ cls: "friday-kanban-card-deps" });
+    row.createSpan({ cls: "friday-kanban-card-deps-label", text: "\u26D3 Blocked by: " });
+    deps.blockedBy.forEach((b, i) => {
+      if (i > 0)
+        row.createSpan({ text: ", " });
+      const chip = row.createSpan({ cls: "friday-kanban-card-dep-chip", text: b.title });
+      if (b.status === "done")
+        chip.addClass("is-done");
+      if (opts.onDependencyClick) {
+        chip.addClass("friday-clickable");
+        chip.addEventListener("click", (e) => {
+          e.stopPropagation();
+          opts.onDependencyClick(b);
+        });
+      }
+    });
   }
   if (topic.linkedPages.length > 0) {
     const linksText = topic.linkedPages.map((p) => `[[${p}]]`).join(", ");
@@ -5964,225 +6436,8 @@ function renderTopicCard(container, topic, opts) {
   return card;
 }
 
-// src/ui/components/SprintView.ts
-var COLUMNS = [
-  { status: "open", label: "Open" },
-  { status: "in-progress", label: "In Progress" },
-  { status: "done", label: "Done" }
-];
-var PRIORITY_ORDER = {
-  ["high" /* High */]: 0,
-  ["medium" /* Medium */]: 1,
-  ["low" /* Low */]: 2,
-  ["none" /* None */]: 3
-};
-var SprintView = class {
-  constructor(container, store, sprintService, topicService, topics, settings, onNewSprint, onEndSprint, onNewTopic, onTopicClick, onEditSprint, isDragging, searchQuery = "", jiraService = null) {
-    this.container = container;
-    this.store = store;
-    this.sprintService = sprintService;
-    this.topicService = topicService;
-    this.topics = topics;
-    this.settings = settings;
-    this.onNewSprint = onNewSprint;
-    this.onEndSprint = onEndSprint;
-    this.onNewTopic = onNewTopic;
-    this.onTopicClick = onTopicClick;
-    this.onEditSprint = onEditSprint;
-    this.isDragging = isDragging;
-    this.searchQuery = searchQuery;
-    this.jiraService = jiraService;
-    this.el = container.createDiv({ cls: "friday-sprint-view" });
-  }
-  render() {
-    this.el.empty();
-    const activeSprint = this.sprintService.getActiveSprint();
-    if (!activeSprint) {
-      this.renderNoSprint();
-      return;
-    }
-    this.renderSprint(activeSprint);
-  }
-  renderNoSprint() {
-    const empty = this.el.createDiv({ cls: "friday-sprint-empty" });
-    empty.createDiv({ text: "No active sprint" });
-    const btn = empty.createEl("button", {
-      cls: "friday-btn",
-      text: "Create Sprint"
-    });
-    btn.addEventListener("click", () => this.onNewSprint());
-  }
-  renderSprint(sprint) {
-    const startDate = new Date(sprint.startDate);
-    const endDate = new Date(sprint.endDate);
-    const today = /* @__PURE__ */ new Date();
-    let daysRemaining;
-    let dayLabel;
-    if (this.settings.sprintWorkDaysOnly) {
-      daysRemaining = workDaysRemaining(endDate);
-      dayLabel = "work days";
-    } else {
-      daysRemaining = Math.max(0, Math.ceil((endDate.getTime() - today.getTime()) / 864e5));
-      dayLabel = "d";
-    }
-    const header = this.el.createDiv({ cls: "friday-sprint-header" });
-    const headerInfo = header.createDiv({ cls: "friday-sprint-header-info" });
-    const nameEl = headerInfo.createSpan({ cls: "friday-sprint-name", text: sprint.name });
-    nameEl.setAttribute("title", "Click to edit sprint");
-    nameEl.style.cursor = "pointer";
-    nameEl.addEventListener("click", () => this.onEditSprint(sprint));
-    headerInfo.createSpan({
-      cls: "friday-sprint-dates",
-      text: ` ${startDate.toLocaleDateString()} \u2013 ${endDate.toLocaleDateString()}`
-    });
-    headerInfo.createSpan({
-      cls: "friday-sprint-remaining",
-      text: ` \xB7 ${daysRemaining} ${dayLabel} remaining`
-    });
-    const editBtn = headerInfo.createEl("button", {
-      cls: "friday-btn friday-sprint-edit-btn",
-      text: "Edit"
-    });
-    editBtn.setAttribute("title", "Edit sprint name and dates");
-    editBtn.addEventListener("click", () => this.onEditSprint(sprint));
-    const addTopicBtn = header.createEl("button", {
-      cls: "friday-btn",
-      text: "+ Topic"
-    });
-    addTopicBtn.addEventListener("click", () => this.onNewTopic());
-    let filteredTopics = this.topics;
-    if (this.searchQuery) {
-      const q = this.searchQuery.toLowerCase();
-      filteredTopics = filteredTopics.filter(
-        (t) => t.title.toLowerCase().includes(q) || t.jira.some((k) => k.toLowerCase().includes(q)) || t.linkedPages.some((p) => p.toLowerCase().includes(q))
-      );
-    }
-    this.prefetchJiraKeys(filteredTopics);
-    const board = this.el.createDiv({ cls: "friday-kanban" });
-    for (const col of COLUMNS) {
-      const columnTopics = filteredTopics.filter((t) => t.status === col.status).sort((a, b) => this.sortTopics(a, b));
-      this.renderColumn(board, col.status, col.label, columnTopics);
-    }
-    const actions = this.el.createDiv({ cls: "friday-sprint-actions" });
-    const endBtn = actions.createEl("button", {
-      cls: "friday-btn friday-btn-warning",
-      text: "End Sprint"
-    });
-    endBtn.addEventListener("click", () => this.onEndSprint(sprint));
-    const newBtn = actions.createEl("button", {
-      cls: "friday-btn",
-      text: "New Sprint"
-    });
-    newBtn.addEventListener("click", () => this.onNewSprint());
-  }
-  sortTopics(a, b) {
-    var _a, _b;
-    const aManual = a.sortOrder < 999;
-    const bManual = b.sortOrder < 999;
-    if (aManual || bManual) {
-      if (a.sortOrder !== b.sortOrder)
-        return a.sortOrder - b.sortOrder;
-    }
-    return ((_a = PRIORITY_ORDER[a.priority]) != null ? _a : 3) - ((_b = PRIORITY_ORDER[b.priority]) != null ? _b : 3);
-  }
-  renderColumn(board, status, label, topics) {
-    const column = board.createDiv({ cls: "friday-kanban-column" });
-    column.dataset.status = status;
-    const headerEl = column.createDiv({ cls: "friday-kanban-column-header" });
-    headerEl.createSpan({ text: label });
-    headerEl.createSpan({ cls: "friday-kanban-column-count", text: `${topics.length}` });
-    const body = column.createDiv({ cls: "friday-kanban-column-body" });
-    body.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      if (e.dataTransfer)
-        e.dataTransfer.dropEffect = "move";
-      body.addClass("friday-kanban-column-dragover");
-    });
-    body.addEventListener("dragleave", () => {
-      body.removeClass("friday-kanban-column-dragover");
-    });
-    body.addEventListener("drop", async (e) => {
-      var _a;
-      e.preventDefault();
-      body.removeClass("friday-kanban-column-dragover");
-      const filePath = (_a = e.dataTransfer) == null ? void 0 : _a.getData("text/plain");
-      if (!filePath)
-        return;
-      await this.topicService.setTopicStatus(filePath, status);
-      const topic = this.topics.find((t) => t.filePath === filePath);
-      if ((topic == null ? void 0 : topic.blocked) && status === "done") {
-        await this.topicService.setTopicBlocked(filePath, false);
-      }
-      this.isDragging.value = false;
-    });
-    const jiraLookup = this.makeJiraLookup();
-    const assigneeLookup = this.makeAssigneeLookup();
-    for (const topic of topics) {
-      renderTopicCard(body, topic, {
-        draggable: true,
-        isDragging: this.isDragging,
-        onTitleClick: (t) => this.onTopicClick(t),
-        onStatusChange: async (t, newStatus) => {
-          await this.topicService.setTopicStatus(t.filePath, newStatus);
-        },
-        onBlockedToggle: async (t) => {
-          await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
-        },
-        jiraLookup,
-        assigneeLookup,
-        nudgeThresholdDays: this.settings.nudgeThresholdDays
-      });
-    }
-    if (topics.length === 0) {
-      body.createDiv({ cls: "friday-kanban-empty", text: "No topics" });
-    }
-  }
-  /** Kick off a prefetch for every JIRA key on every visible topic. No-op if module disabled. */
-  prefetchJiraKeys(topics) {
-    if (!this.jiraService || !this.jiraService.isEnabled())
-      return;
-    const keys = [];
-    for (const t of topics) {
-      for (const k of t.jira)
-        keys.push(k);
-    }
-    if (keys.length > 0) {
-      void this.jiraService.prefetchMany(keys);
-    }
-  }
-  /** Build a per-key JIRA lookup function for TopicCard. Returns null-ish results when disabled. */
-  makeJiraLookup() {
-    const svc = this.jiraService;
-    if (!svc || !svc.isEnabled())
-      return void 0;
-    return (key) => ({
-      info: svc.getCached(key),
-      loading: svc.isLoading(key),
-      error: svc.getError(key)
-    });
-  }
-  /** Build a per-email assignee lookup resolving the "logged team" for display. */
-  makeAssigneeLookup() {
-    var _a;
-    const members = (_a = this.settings.teamMembers) != null ? _a : [];
-    if (members.length === 0)
-      return void 0;
-    const byEmail = new Map(members.map((m) => [m.email, m]));
-    return (email) => {
-      const m = byEmail.get(email);
-      if (!m)
-        return null;
-      return { label: m.nickname || m.fullName || m.email, isInactive: !m.active };
-    };
-  }
-  destroy() {
-    this.el.empty();
-  }
-};
-
 // src/ui/components/TopicsOverviewView.ts
-var import_obsidian15 = require("obsidian");
-var PRIORITY_ORDER2 = {
+var PRIORITY_ORDER = {
   ["high" /* High */]: 0,
   ["medium" /* Medium */]: 1,
   ["low" /* Low */]: 2,
@@ -6196,11 +6451,11 @@ var IMPACT_ORDER = {
 };
 var HIGH_IMPACT_SET = /* @__PURE__ */ new Set(["critical", "high"]);
 var SMALL_EFFORT_SET = /* @__PURE__ */ new Set(["xs", "s"]);
+var ROADMAP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 var TopicsOverviewView = class {
-  constructor(container, topics, sprintService, topicService, settings, onTopicClick, onEditTopic, onNewTopic, isDragging, searchQuery = "", jiraService = null) {
+  constructor(container, topics, topicService, settings, onTopicClick, onEditTopic, onNewTopic, isDragging, searchQuery = "", jiraService = null, initialSubMode = "board", onSubModeChange) {
     this.container = container;
     this.topics = topics;
-    this.sprintService = sprintService;
     this.topicService = topicService;
     this.settings = settings;
     this.onTopicClick = onTopicClick;
@@ -6209,24 +6464,31 @@ var TopicsOverviewView = class {
     this.isDragging = isDragging;
     this.searchQuery = searchQuery;
     this.jiraService = jiraService;
-    this.subMode = "list";
+    this.onSubModeChange = onSubModeChange;
+    this.subMode = "board";
+    this.roadmapZoom = "week";
+    this.roadmapGroupBy = "assignee";
     this.scope = "all";
     /** 'all' | 'unassigned' | team member email. Persists across re-renders of this view instance. */
     this.assigneeFilter = "all";
+    /** Dependency index over all topics, rebuilt at the start of each render. */
+    this.depIndex = null;
     this.el = container.createDiv({ cls: "friday-topics-overview" });
+    this.subMode = initialSubMode;
   }
   render() {
     this.el.empty();
+    this.depIndex = buildTopicIndex(this.topics);
     const header = this.el.createDiv({ cls: "friday-topics-header" });
     const modeGroup = header.createDiv({ cls: "friday-topics-modeswitch" });
-    this.renderModeButton(modeGroup, "list", "List");
     this.renderModeButton(modeGroup, "board", "Board");
+    this.renderModeButton(modeGroup, "list", "List");
+    this.renderModeButton(modeGroup, "roadmap", "Roadmap");
     this.renderModeButton(modeGroup, "impactEffort", "Impact / Effort");
     const scopeGroup = header.createDiv({ cls: "friday-topics-scope" });
     this.renderScopeButton(scopeGroup, "all", "All");
-    this.renderScopeButton(scopeGroup, "active", "Active sprint");
     this.renderScopeButton(scopeGroup, "backlog", "Backlog");
-    this.renderScopeButton(scopeGroup, "archived", "Archived");
+    this.renderScopeButton(scopeGroup, "archived", "Done");
     this.renderAssigneeFilter(header);
     const newBtn = header.createEl("button", { cls: "friday-btn", text: "+ Topic" });
     newBtn.addEventListener("click", () => this.onNewTopic());
@@ -6247,6 +6509,9 @@ var TopicsOverviewView = class {
       case "impactEffort":
         this.renderImpactEffort(body, filtered);
         break;
+      case "roadmap":
+        this.renderRoadmap(body, filtered);
+        break;
     }
   }
   renderModeButton(parent, mode, label) {
@@ -6257,7 +6522,9 @@ var TopicsOverviewView = class {
     if (mode === this.subMode)
       btn.addClass("friday-topics-modebtn-active");
     btn.addEventListener("click", () => {
+      var _a;
       this.subMode = mode;
+      (_a = this.onSubModeChange) == null ? void 0 : _a.call(this, mode);
       this.render();
     });
   }
@@ -6315,17 +6582,13 @@ var TopicsOverviewView = class {
     });
   }
   applyFilters(topics) {
-    var _a, _b, _c;
-    const activeSprint = this.sprintService.getActiveSprint();
-    const activeId = (_a = activeSprint == null ? void 0 : activeSprint.id) != null ? _a : null;
+    var _a, _b;
     let filtered = topics.filter((t) => {
       switch (this.scope) {
-        case "active":
-          return activeId !== null && t.sprintId === activeId;
         case "backlog":
-          return !t.sprintId;
+          return t.status === "backlog";
         case "archived":
-          return t.status === "done" && !t.sprintId;
+          return t.status === "done";
         case "all":
         default:
           return true;
@@ -6340,11 +6603,11 @@ var TopicsOverviewView = class {
     if (this.assigneeFilter === "unassigned") {
       filtered = filtered.filter((t) => !t.assignee);
     } else if (this.assigneeFilter === "mine") {
-      const me = (_b = this.settings.jiraEmail) == null ? void 0 : _b.trim();
+      const me = (_a = this.settings.jiraEmail) == null ? void 0 : _a.trim();
       if (me)
         filtered = filtered.filter((t) => t.assignee === me);
     } else if (this.assigneeFilter === "assigned-out") {
-      const me = (_c = this.settings.jiraEmail) == null ? void 0 : _c.trim();
+      const me = (_b = this.settings.jiraEmail) == null ? void 0 : _b.trim();
       if (me)
         filtered = filtered.filter((t) => !!t.assignee && t.assignee !== me);
     } else if (this.assigneeFilter !== "all") {
@@ -6457,8 +6720,10 @@ var TopicsOverviewView = class {
   }
   statusLabel(status) {
     switch (status) {
+      case "backlog":
+        return "Backlog";
       case "open":
-        return "Open";
+        return "To Do";
       case "in-progress":
         return "In Progress";
       case "done":
@@ -6476,25 +6741,34 @@ var TopicsOverviewView = class {
   }
   // ── Board sub-mode (kanban) ───────────────────────────────────
   renderBoard(parent, topics) {
-    const backlog = topics.filter((t) => !t.sprintId);
-    const assigned = topics.filter((t) => !!t.sprintId);
+    var _a, _b;
     const sections = [
-      { label: "Backlog", cls: "friday-topics-list-backlog", topics: backlog, dropAction: { kind: "moveToBacklog" } },
-      { label: "Open", cls: "", topics: assigned.filter((t) => t.status === "open"), dropAction: { kind: "setStatus", status: "open" } },
-      { label: "In Progress", cls: "", topics: assigned.filter((t) => t.status === "in-progress"), dropAction: { kind: "setStatus", status: "in-progress" } },
-      { label: "Done", cls: "", topics: assigned.filter((t) => t.status === "done"), dropAction: { kind: "setStatus", status: "done" } }
+      { label: "Backlog", cls: "friday-topics-list-backlog", status: "backlog" },
+      { label: "To Do", cls: "", status: "open" },
+      { label: "In Progress", cls: "", status: "in-progress" },
+      { label: "Done", cls: "", status: "done" }
     ];
     const board = parent.createDiv({ cls: "friday-topics-list-board" });
-    for (const { label, cls, topics: group, dropAction } of sections) {
-      if (group.length === 0 && label === "Backlog" && this.scope === "active")
-        continue;
-      const sectionCls = cls ? `friday-topics-list-section ${cls}` : "friday-topics-list-section";
+    for (const { label, cls, status } of sections) {
+      const group = topics.filter((t) => t.status === status);
+      const limit = (_b = (_a = this.settings.wipLimits) == null ? void 0 : _a[status]) != null ? _b : null;
+      const overWip = limit !== null && group.length > limit;
+      let sectionCls = cls ? `friday-topics-list-section ${cls}` : "friday-topics-list-section";
+      if (overWip)
+        sectionCls += " is-over-wip";
       const section = board.createDiv({ cls: sectionCls });
       const headerEl = section.createDiv({ cls: "friday-topics-list-header" });
       headerEl.createSpan({ text: label });
-      headerEl.createSpan({ cls: "friday-topics-list-count", text: `${group.length}` });
+      const countEl = headerEl.createSpan({
+        cls: "friday-topics-list-count",
+        text: limit !== null ? `${group.length} / ${limit}` : `${group.length}`
+      });
+      if (overWip) {
+        countEl.addClass("is-over-wip");
+        countEl.setAttribute("title", `Over WIP limit (${limit})`);
+      }
       const cardGrid = section.createDiv({ cls: "friday-topics-list-grid" });
-      this.wireDropZone(cardGrid, dropAction);
+      this.wireDropZone(cardGrid, status);
       if (group.length === 0) {
         cardGrid.createDiv({ cls: "friday-empty", text: "No topics" });
         continue;
@@ -6505,8 +6779,8 @@ var TopicsOverviewView = class {
       }
     }
   }
-  /** Wire dragover/drop handlers on a section. The action decides what happens on drop. */
-  wireDropZone(zone, action) {
+  /** Wire dragover/drop handlers on a column. Dropping sets the topic's status. */
+  wireDropZone(zone, targetStatus) {
     zone.addEventListener("dragover", (e) => {
       e.preventDefault();
       if (e.dataTransfer)
@@ -6517,7 +6791,7 @@ var TopicsOverviewView = class {
       zone.removeClass("friday-topics-list-dropzone-active");
     });
     zone.addEventListener("drop", async (e) => {
-      var _a;
+      var _a, _b, _c;
       e.preventDefault();
       zone.removeClass("friday-topics-list-dropzone-active");
       const filePath = (_a = e.dataTransfer) == null ? void 0 : _a.getData("text/plain");
@@ -6529,26 +6803,20 @@ var TopicsOverviewView = class {
         return;
       }
       try {
-        if (action.kind === "moveToBacklog") {
-          if (!topic.sprintId)
-            return;
-          await this.topicService.moveTopicToBacklog(filePath);
-        } else {
-          const targetStatus = action.status;
-          if (!topic.sprintId) {
-            const active = this.sprintService.getActiveSprint();
-            if (!active) {
-              new import_obsidian15.Notice("No active sprint \u2014 cannot move topic out of backlog. Create a sprint first.");
-              return;
+        if (topic.status !== targetStatus) {
+          await this.topicService.setTopicStatus(filePath, targetStatus);
+          const limit = (_c = (_b = this.settings.wipLimits) == null ? void 0 : _b[targetStatus]) != null ? _c : null;
+          if (limit !== null) {
+            const incoming = this.topics.filter(
+              (t) => t.status === targetStatus && t.filePath !== filePath
+            ).length + 1;
+            if (incoming > limit) {
+              new import_obsidian16.Notice(`Heads up: "${this.statusLabel(targetStatus)}" is over its WIP limit (${incoming} / ${limit}).`);
             }
-            await this.topicService.assignTopicToSprint(filePath, active.id);
           }
-          if (topic.status !== targetStatus) {
-            await this.topicService.setTopicStatus(filePath, targetStatus);
-          }
-          if (topic.blocked && targetStatus === "done") {
-            await this.topicService.setTopicBlocked(filePath, false);
-          }
+        }
+        if (topic.blocked && targetStatus === "done") {
+          await this.topicService.setTopicBlocked(filePath, false);
         }
       } finally {
         this.isDragging.value = false;
@@ -6631,6 +6899,15 @@ var TopicsOverviewView = class {
       },
       jiraLookup,
       assigneeLookup,
+      deriveBlock: this.makeDeriveBlock(),
+      dependencyLookup: (t) => {
+        var _a2, _b, _c, _d;
+        return {
+          blockedBy: (_b = (_a2 = this.depIndex) == null ? void 0 : _a2.blockersOf(t)) != null ? _b : [],
+          blocks: (_d = (_c = this.depIndex) == null ? void 0 : _c.blocks(t)) != null ? _d : []
+        };
+      },
+      onDependencyClick: (t) => this.onTopicClick(t),
       nudgeThresholdDays: this.settings.nudgeThresholdDays
     });
     const lastCard = parent.lastElementChild;
@@ -6650,8 +6927,8 @@ var TopicsOverviewView = class {
     const bImpact = b.impact ? IMPACT_ORDER[b.impact] : 99;
     if (aImpact !== bImpact)
       return aImpact - bImpact;
-    const aPrio = (_a = PRIORITY_ORDER2[a.priority]) != null ? _a : 3;
-    const bPrio = (_b = PRIORITY_ORDER2[b.priority]) != null ? _b : 3;
+    const aPrio = (_a = PRIORITY_ORDER[a.priority]) != null ? _a : 3;
+    const bPrio = (_b = PRIORITY_ORDER[b.priority]) != null ? _b : 3;
     if (aPrio !== bPrio)
       return aPrio - bPrio;
     return a.title.localeCompare(b.title);
@@ -6668,6 +6945,18 @@ var TopicsOverviewView = class {
     if (keys.length > 0) {
       void this.jiraService.prefetchMany(keys);
     }
+  }
+  /** Build the derived-block resolver for cards: manual flag OR JIRA signal OR dependency.
+   *  `blockersOf` is a stub here; real topic-dependency resolution is wired in T2. */
+  makeDeriveBlock() {
+    const svc = this.jiraService;
+    const jiraSignal = svc && svc.isEnabled() ? (key) => toJiraSignal(svc.getCached(key)) : void 0;
+    const index = this.depIndex;
+    return (topic) => deriveTopicBlock({
+      topic,
+      blockersOf: (t) => index ? index.blockersOf(t) : [],
+      jiraSignal
+    });
   }
   /** Build a per-key JIRA lookup function for TopicCard. Returns undefined when disabled. */
   makeJiraLookup() {
@@ -6693,6 +6982,171 @@ var TopicsOverviewView = class {
         return null;
       return { label: m.nickname || m.fullName || m.email, isInactive: !m.active };
     };
+  }
+  // ── Roadmap sub-mode (time-based, due-date driven) ────────────
+  renderRoadmap(parent, topics) {
+    const controls = parent.createDiv({ cls: "friday-roadmap-controls" });
+    this.renderRoadmapToggle(controls, "Zoom", [
+      { key: "week", label: "Week" },
+      { key: "month", label: "Month" }
+    ], this.roadmapZoom, (k) => {
+      this.roadmapZoom = k;
+      this.render();
+    });
+    this.renderRoadmapToggle(controls, "Group", [
+      { key: "assignee", label: "Assignee" },
+      { key: "status", label: "Status" }
+    ], this.roadmapGroupBy, (k) => {
+      this.roadmapGroupBy = k;
+      this.render();
+    });
+    const dated = [];
+    const undated = [];
+    for (const t of topics) {
+      const span = this.computeTopicSpan(t);
+      if (span)
+        dated.push({ topic: t, startMs: span.startMs, endMs: span.endMs });
+      else
+        undated.push(t);
+    }
+    if (dated.length === 0) {
+      parent.createDiv({ cls: "friday-empty", text: "No topics with a due date to place on the roadmap." });
+    } else {
+      this.renderRoadmapChart(parent, dated);
+    }
+    if (undated.length > 0) {
+      const bucket = parent.createDiv({ cls: "friday-roadmap-undated" });
+      bucket.createEl("h4", { text: `No date (${undated.length})` });
+      const list = bucket.createDiv({ cls: "friday-roadmap-undated-list" });
+      for (const t of [...undated].sort((a, b) => this.sortByPriorityImpact(a, b))) {
+        const chip = list.createSpan({ cls: "friday-roadmap-undated-chip", text: t.title });
+        chip.addEventListener("click", () => this.onTopicClick(t));
+      }
+    }
+  }
+  renderRoadmapToggle(parent, label, options, current, onPick) {
+    const group = parent.createDiv({ cls: "friday-roadmap-toggle" });
+    group.createSpan({ cls: "friday-roadmap-toggle-label", text: `${label}:` });
+    for (const opt of options) {
+      const btn = group.createEl("button", { cls: "friday-topics-modebtn", text: opt.label });
+      if (opt.key === current)
+        btn.addClass("friday-topics-modebtn-active");
+      btn.addEventListener("click", () => onPick(opt.key));
+    }
+  }
+  /** A topic's time span [start → due]. start = startedAt when earlier than due, else due
+   *  (a point marker). Null when the topic has no due date (→ the "No date" bucket). */
+  computeTopicSpan(topic) {
+    if (!topic.dueDate)
+      return null;
+    const endMs = (/* @__PURE__ */ new Date(topic.dueDate + "T00:00:00")).getTime();
+    if (isNaN(endMs))
+      return null;
+    let startMs = endMs;
+    if (topic.startedAt) {
+      const s = (/* @__PURE__ */ new Date(topic.startedAt + "T00:00:00")).getTime();
+      if (!isNaN(s) && s < endMs)
+        startMs = s;
+    }
+    return { startMs, endMs };
+  }
+  renderRoadmapChart(parent, dated) {
+    var _a, _b;
+    const now = /* @__PURE__ */ new Date();
+    const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const DAY = 864e5;
+    const minMs = Math.min(todayMs, ...dated.map((d) => d.startMs)) - 2 * DAY;
+    const maxMs = Math.max(todayMs, ...dated.map((d) => d.endMs)) + 2 * DAY;
+    const span = Math.max(maxMs - minMs, DAY);
+    const pct = (ms) => (ms - minMs) / span * 100;
+    const unit = this.roadmapZoom === "month" || span / (7 * DAY) > 26 ? "month" : "week";
+    const chart = parent.createDiv({ cls: "friday-roadmap-chart" });
+    const axis = chart.createDiv({ cls: "friday-roadmap-axis" });
+    for (const tick of this.buildTicks(minMs, maxMs, unit)) {
+      const tx = pct(tick.ms);
+      if (tx < 0 || tx > 100)
+        continue;
+      const tickEl = axis.createDiv({ cls: "friday-roadmap-tick" });
+      tickEl.style.left = `${tx}%`;
+      tickEl.createSpan({ cls: "friday-roadmap-tick-label", text: tick.label });
+    }
+    const todayLine = axis.createDiv({ cls: "friday-roadmap-today" });
+    todayLine.style.left = `${pct(todayMs)}%`;
+    todayLine.setAttribute("title", "Today");
+    const critical = new Set(criticalPath(this.topics));
+    const deriveBlock = this.makeDeriveBlock();
+    for (const [groupLabel, items] of this.groupForRoadmap(dated)) {
+      const lane = chart.createDiv({ cls: "friday-roadmap-lane" });
+      lane.createDiv({ cls: "friday-roadmap-lane-header", text: groupLabel });
+      for (const { topic, startMs, endMs } of items) {
+        const row = lane.createDiv({ cls: "friday-roadmap-row" });
+        const labelEl = row.createDiv({ cls: "friday-roadmap-row-label" });
+        if (topic.blockedBy.length > 0) {
+          const glyph = labelEl.createSpan({ text: "\u26D3 " });
+          const blockers = ((_b = (_a = this.depIndex) == null ? void 0 : _a.blockersOf(topic)) != null ? _b : []).map((b) => b.title).join(", ");
+          glyph.setAttribute("title", blockers ? `Blocked by: ${blockers}` : "Has dependencies");
+        }
+        labelEl.createSpan({ text: topic.title });
+        const track = row.createDiv({ cls: "friday-roadmap-track" });
+        const left = pct(startMs);
+        const width = Math.max(pct(endMs) - left, 1.5);
+        const bar = track.createDiv({ cls: "friday-roadmap-bar" });
+        bar.style.left = `${left}%`;
+        bar.style.width = `${width}%`;
+        if (deriveBlock(topic).state === "blocked")
+          bar.addClass("is-blocked");
+        if (topic.status === "done")
+          bar.addClass("is-done");
+        if (topic.status !== "done" && this.isOverdue(topic.dueDate))
+          bar.addClass("is-overdue");
+        if (critical.has(topic.filePath))
+          bar.addClass("is-critical");
+        bar.setAttribute("title", `${topic.title} \xB7 due ${topic.dueDate}`);
+        bar.addEventListener("click", () => this.onTopicClick(topic));
+      }
+    }
+  }
+  buildTicks(minMs, maxMs, unit) {
+    var _a;
+    const ticks = [];
+    if (unit === "week") {
+      let d = getWeekStartConfigurable(new Date(minMs), (_a = this.settings.weekStartDay) != null ? _a : 1);
+      while (d.getTime() <= maxMs) {
+        ticks.push({ ms: d.getTime(), label: formatWeekId(getWeekId(d)) });
+        const next = new Date(d);
+        next.setDate(next.getDate() + 7);
+        d = next;
+      }
+    } else {
+      let d = new Date(new Date(minMs).getFullYear(), new Date(minMs).getMonth(), 1);
+      while (d.getTime() <= maxMs) {
+        ticks.push({ ms: d.getTime(), label: `${ROADMAP_MONTHS[d.getMonth()]} '${String(d.getFullYear()).slice(2)}` });
+        d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+      }
+    }
+    return ticks;
+  }
+  groupForRoadmap(dated) {
+    var _a;
+    const groups = /* @__PURE__ */ new Map();
+    const keyFor = (t) => {
+      var _a2;
+      if (this.roadmapGroupBy === "status")
+        return this.statusLabel(t.status);
+      if (!t.assignee)
+        return "Unassigned";
+      const m = ((_a2 = this.settings.teamMembers) != null ? _a2 : []).find((x) => x.email === t.assignee);
+      return m ? m.nickname || m.fullName || t.assignee : t.assignee;
+    };
+    for (const item of dated) {
+      const k = keyFor(item.topic);
+      const arr = (_a = groups.get(k)) != null ? _a : [];
+      arr.push(item);
+      groups.set(k, arr);
+    }
+    for (const arr of groups.values())
+      arr.sort((a, b) => a.startMs - b.startMs);
+    return groups;
   }
   destroy() {
     this.el.empty();
@@ -6915,14 +7369,53 @@ var UnscheduledView = class {
   }
 };
 
+// src/services/flowMetricsService.ts
+function computeFlow(topics, now, agingThresholdDays) {
+  var _a;
+  const todayIso = formatDateISO(now);
+  const cycleTimes = [];
+  for (const t of topics) {
+    if (t.status === "done" && t.startedAt && t.doneAt) {
+      const d = daysBetween(t.startedAt, t.doneAt);
+      if (d !== null && d >= 0)
+        cycleTimes.push(d);
+    }
+  }
+  const avgCycleTimeDays = cycleTimes.length > 0 ? cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length : null;
+  const throughputByWeek = /* @__PURE__ */ new Map();
+  for (const t of topics) {
+    if (t.status === "done" && t.doneAt) {
+      const wk = getWeekId(/* @__PURE__ */ new Date(t.doneAt + "T00:00:00"));
+      throughputByWeek.set(wk, ((_a = throughputByWeek.get(wk)) != null ? _a : 0) + 1);
+    }
+  }
+  const agingWip = [];
+  for (const t of topics) {
+    if (t.status === "done" || !t.statusSince)
+      continue;
+    const age = daysBetween(t.statusSince, todayIso);
+    if (age !== null && age >= agingThresholdDays) {
+      agingWip.push({ topic: t, daysInColumn: age });
+    }
+  }
+  agingWip.sort((a, b) => b.daysInColumn - a.daysInColumn);
+  return {
+    avgCycleTimeDays,
+    cycleSampleSize: cycleTimes.length,
+    throughputByWeek,
+    agingWip
+  };
+}
+
 // src/ui/components/AnalyticsView.ts
 var AnalyticsView = class {
-  constructor(container, store, analyticsService, settings, weeklyHistory, onSaveSnapshot) {
+  constructor(container, store, analyticsService, settings, weeklyHistory, onSaveSnapshot, topics = []) {
     this.store = store;
     this.analyticsService = analyticsService;
     this.settings = settings;
     this.weeklyHistory = weeklyHistory;
     this.onSaveSnapshot = onSaveSnapshot;
+    this.topics = topics;
     this.el = container.createDiv({ cls: "friday-analytics" });
   }
   render() {
@@ -6950,6 +7443,7 @@ var AnalyticsView = class {
     if (this.weeklyHistory.length > 0) {
       this.renderTrends();
     }
+    this.renderFlow();
   }
   renderSummary(stats) {
     const section = this.el.createDiv({ cls: "friday-analytics-summary" });
@@ -7016,6 +7510,87 @@ var AnalyticsView = class {
       const bar = barWrap.createDiv({ cls: "friday-analytics-trend-bar" });
       bar.style.height = `${rate}%`;
       col.createDiv({ cls: "friday-analytics-trend-label", text: formatWeekId(snapshot.weekId) });
+    }
+  }
+  /** Kanban flow metrics computed from topic status timestamps. */
+  renderFlow() {
+    var _a, _b;
+    const flow = computeFlow(this.topics, /* @__PURE__ */ new Date(), (_a = this.settings.agingWipThresholdDays) != null ? _a : 7);
+    const section = this.el.createDiv({ cls: "friday-analytics-flow" });
+    section.createEl("h4", { text: "Flow" });
+    const summary = section.createDiv({ cls: "friday-analytics-summary" });
+    const cycleCard = summary.createDiv({ cls: "friday-analytics-card" });
+    cycleCard.createDiv({
+      cls: "friday-analytics-card-value",
+      text: flow.avgCycleTimeDays !== null ? `${flow.avgCycleTimeDays.toFixed(1)}d` : "\u2014"
+    });
+    cycleCard.createDiv({
+      cls: "friday-analytics-card-label",
+      text: flow.cycleSampleSize > 0 ? `Avg cycle time (${flow.cycleSampleSize})` : "Avg cycle time"
+    });
+    const thisWeek = getWeekId(/* @__PURE__ */ new Date());
+    const doneThisWeek = (_b = flow.throughputByWeek.get(thisWeek)) != null ? _b : 0;
+    const tpCard = summary.createDiv({ cls: "friday-analytics-card done" });
+    tpCard.createDiv({ cls: "friday-analytics-card-value", text: String(doneThisWeek) });
+    tpCard.createDiv({ cls: "friday-analytics-card-label", text: "Done this week" });
+    const agingCard = summary.createDiv({ cls: "friday-analytics-card cancelled" });
+    agingCard.createDiv({ cls: "friday-analytics-card-value", text: String(flow.agingWip.length) });
+    agingCard.createDiv({ cls: "friday-analytics-card-label", text: "Aging WIP" });
+    this.renderThroughput(section, flow);
+    this.renderAgingWip(section, flow);
+  }
+  renderThroughput(section, flow) {
+    const weeks = [];
+    const now = /* @__PURE__ */ new Date();
+    for (let i = 7; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i * 7);
+      weeks.push(getWeekId(d));
+    }
+    const counts = weeks.map((w) => {
+      var _a;
+      return (_a = flow.throughputByWeek.get(w)) != null ? _a : 0;
+    });
+    const max = Math.max(...counts, 1);
+    const wrap = section.createDiv({ cls: "friday-analytics-trends" });
+    wrap.createEl("h4", { text: "Throughput (topics done / week)" });
+    const chart = wrap.createDiv({ cls: "friday-analytics-trend-chart" });
+    weeks.forEach((w, i) => {
+      const col = chart.createDiv({ cls: "friday-analytics-trend-col" });
+      const barWrap = col.createDiv({ cls: "friday-analytics-trend-bar-wrap" });
+      const bar = barWrap.createDiv({ cls: "friday-analytics-trend-bar" });
+      bar.style.height = `${counts[i] / max * 100}%`;
+      bar.setAttribute("title", `${counts[i]} done`);
+      col.createDiv({ cls: "friday-analytics-trend-label", text: formatWeekId(w) });
+    });
+  }
+  renderAgingWip(section, flow) {
+    const wrap = section.createDiv({ cls: "friday-analytics-aging" });
+    wrap.createEl("h4", { text: "Aging work-in-progress" });
+    if (flow.agingWip.length === 0) {
+      wrap.createDiv({ cls: "friday-empty", text: "Nothing aging past the threshold. Nice flow." });
+      return;
+    }
+    const list = wrap.createDiv({ cls: "friday-analytics-aging-list" });
+    for (const { topic, daysInColumn } of flow.agingWip.slice(0, 12)) {
+      const row = list.createDiv({ cls: "friday-analytics-aging-row" });
+      row.createSpan({ cls: "friday-analytics-aging-title", text: topic.title });
+      row.createSpan({ cls: "friday-analytics-aging-col", text: this.columnLabel(topic.status) });
+      row.createSpan({ cls: "friday-analytics-aging-days", text: `${daysInColumn}d` });
+    }
+  }
+  columnLabel(status) {
+    switch (status) {
+      case "backlog":
+        return "Backlog";
+      case "open":
+        return "To Do";
+      case "in-progress":
+        return "In Progress";
+      case "done":
+        return "Done";
+      default:
+        return status;
     }
   }
 };
@@ -7210,15 +7785,15 @@ var CalendarView = class {
 };
 
 // src/ui/components/SyntaxReference.ts
-var import_obsidian16 = require("obsidian");
-var SyntaxReferenceModal = class extends import_obsidian16.Modal {
+var import_obsidian17 = require("obsidian");
+var SyntaxReferenceModal = class extends import_obsidian17.Modal {
   constructor(app) {
     super(app);
   }
   /** Try to get the active markdown editor (if any) */
   getActiveEditor() {
     var _a;
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian16.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian17.MarkdownView);
     return (_a = view == null ? void 0 : view.editor) != null ? _a : null;
   }
   /** Insert text at cursor position in the active editor */
@@ -7350,11 +7925,11 @@ var SyntaxReferenceModal = class extends import_obsidian16.Modal {
 };
 
 // src/ui/components/AddTaskBar.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 
 // src/ui/InsertTaskModal.ts
-var import_obsidian17 = require("obsidian");
-var InsertTaskModal = class extends import_obsidian17.Modal {
+var import_obsidian18 = require("obsidian");
+var InsertTaskModal = class extends import_obsidian18.Modal {
   constructor(app, onSubmit, workTypes = [], purposes = []) {
     super(app);
     this.onSubmit = onSubmit;
@@ -7372,7 +7947,7 @@ var InsertTaskModal = class extends import_obsidian17.Modal {
     const { contentEl } = this;
     this.modalEl.addClass("friday-insert-modal");
     contentEl.createEl("h2", { text: "Quick Create Task" });
-    new import_obsidian17.Setting(contentEl).setName("Task text").addText((text) => {
+    new import_obsidian18.Setting(contentEl).setName("Task text").addText((text) => {
       text.setPlaceholder("What needs to be done?").onChange((v) => {
         this.text = v;
       });
@@ -7382,7 +7957,7 @@ var InsertTaskModal = class extends import_obsidian17.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian17.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian18.Setting(contentEl).setName("Priority").addDropdown(
       (dd) => dd.addOptions({
         none: "None",
         high: "High",
@@ -7392,13 +7967,13 @@ var InsertTaskModal = class extends import_obsidian17.Modal {
         this.priority = v;
       })
     );
-    new import_obsidian17.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian18.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.onChange((v) => {
         this.dueDate = v ? isoToPluginDate(v) : "";
       });
     });
-    new import_obsidian17.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
+    new import_obsidian18.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
       (dd) => dd.addOptions({
         "": "Auto (from heading)",
         "task": "Task",
@@ -7408,7 +7983,7 @@ var InsertTaskModal = class extends import_obsidian17.Modal {
       })
     );
     if (this.workTypes.length > 0) {
-      new import_obsidian17.Setting(contentEl).setName("Work type").addDropdown((dd) => {
+      new import_obsidian18.Setting(contentEl).setName("Work type").addDropdown((dd) => {
         const options = { "": "None" };
         for (const wt of this.workTypes) {
           options[wt.shortCode] = `${wt.name} (${wt.shortCode})`;
@@ -7419,7 +7994,7 @@ var InsertTaskModal = class extends import_obsidian17.Modal {
       });
     }
     if (this.purposes.length > 0) {
-      new import_obsidian17.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
+      new import_obsidian18.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
         const options = { "": "None" };
         for (const p of this.purposes) {
           options[p.shortCode] = `${p.name} (${p.shortCode})`;
@@ -7429,7 +8004,7 @@ var InsertTaskModal = class extends import_obsidian17.Modal {
         });
       });
     }
-    const descSetting = new import_obsidian17.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
+    const descSetting = new import_obsidian18.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
     const descArea = descSetting.controlEl.createEl("textarea", {
       cls: "friday-insert-description",
       attr: { rows: "3", placeholder: "Additional context, notes, links..." }
@@ -7437,7 +8012,7 @@ var InsertTaskModal = class extends import_obsidian17.Modal {
     descArea.addEventListener("input", () => {
       this.description = descArea.value;
     });
-    new import_obsidian17.Setting(contentEl).addButton(
+    new import_obsidian18.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Create").setCta().onClick(() => this.submit())
     );
   }
@@ -7561,7 +8136,7 @@ var AddTaskBar = class {
     const dateStr = formatDateISO(today);
     const filePath = `${settings.dailyNotePath}/${dateStr}.md`;
     const existing = this.app.vault.getAbstractFileByPath(filePath);
-    if (existing && existing instanceof import_obsidian18.TFile) {
+    if (existing && existing instanceof import_obsidian19.TFile) {
       let content = await this.app.vault.read(existing);
       let insertPos = this.findHeadingSection(content, this.target);
       if (insertPos === -1) {
@@ -7621,115 +8196,6 @@ ${this.target === "tasks" ? taskLine + "\n\n" : ""}## Migrated Tasks
   }
 };
 
-// src/ui/SprintModal.ts
-var import_obsidian19 = require("obsidian");
-var SprintModal = class extends import_obsidian19.Modal {
-  constructor(app, sprintService, settings, onSave, editSprint) {
-    super(app);
-    this.sprintService = sprintService;
-    this.settings = settings;
-    this.onSave = onSave;
-    this.editSprint = editSprint;
-    this.name = "";
-    this.startDate = "";
-    this.endDate = "";
-  }
-  onOpen() {
-    const { contentEl } = this;
-    this.modalEl.addClass("friday-sprint-modal");
-    if (this.editSprint) {
-      this.name = this.editSprint.name;
-      this.startDate = this.editSprint.startDate;
-      this.endDate = this.editSprint.endDate;
-    }
-    contentEl.createEl("h2", {
-      text: this.editSprint ? "Edit Sprint" : "Create Sprint"
-    });
-    new import_obsidian19.Setting(contentEl).setName("Sprint Name").addText((text) => {
-      text.setValue(this.name).onChange((value) => {
-        this.name = value;
-      });
-      text.inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter")
-          this.save();
-      });
-      setTimeout(() => text.inputEl.focus(), 50);
-    });
-    new import_obsidian19.Setting(contentEl).setName("Start Date").addText((text) => {
-      text.inputEl.type = "date";
-      text.inputEl.value = this.startDate;
-      text.onChange((value) => {
-        this.startDate = value;
-        this.updateDuration();
-      });
-    });
-    new import_obsidian19.Setting(contentEl).setName("End Date").addText((text) => {
-      text.inputEl.type = "date";
-      text.inputEl.value = this.endDate;
-      text.onChange((value) => {
-        this.endDate = value;
-        this.updateDuration();
-      });
-    });
-    this.durationEl = contentEl.createEl("p");
-    this.updateDuration();
-    this.errorEl = contentEl.createDiv({ cls: "friday-modal-error" });
-    new import_obsidian19.Setting(contentEl).addButton(
-      (btn) => btn.setButtonText("Save").setCta().onClick(() => this.save())
-    );
-  }
-  async save() {
-    this.errorEl.empty();
-    if (!this.name.trim()) {
-      this.errorEl.setText("Sprint name is required.");
-      return;
-    }
-    if (!this.startDate || !this.endDate) {
-      this.errorEl.setText("Both start and end dates are required.");
-      return;
-    }
-    if (this.startDate > this.endDate) {
-      this.errorEl.setText("End date must be after start date.");
-      return;
-    }
-    let sprint;
-    if (this.editSprint) {
-      await this.sprintService.updateSprint(this.editSprint.id, {
-        name: this.name,
-        startDate: this.startDate,
-        endDate: this.endDate
-      });
-      sprint = { ...this.editSprint, name: this.name, startDate: this.startDate, endDate: this.endDate };
-    } else {
-      sprint = await this.sprintService.createSprint(
-        this.name,
-        this.startDate,
-        this.endDate
-      );
-    }
-    this.onSave(sprint);
-    this.close();
-  }
-  onClose() {
-    this.contentEl.empty();
-  }
-  updateDuration() {
-    const start = Date.parse(this.startDate);
-    const end = Date.parse(this.endDate);
-    if (!isNaN(start) && !isNaN(end)) {
-      const calendarDays = Math.round((end - start) / (1e3 * 60 * 60 * 24));
-      if (this.settings.sprintWorkDaysOnly) {
-        const workDays = totalWorkDays(new Date(start), new Date(end));
-        this.durationEl.setText(`Duration: ${workDays} work day${workDays !== 1 ? "s" : ""} (${calendarDays} calendar)`);
-      } else {
-        this.durationEl.setText(`Duration: ${calendarDays} day${calendarDays !== 1 ? "s" : ""}`);
-      }
-    } else {
-      this.durationEl.setText("");
-    }
-  }
-};
-
 // src/ui/SprintTopicModal.ts
 var import_obsidian20 = require("obsidian");
 var PageSuggestModal = class extends import_obsidian20.FuzzySuggestModal {
@@ -7748,16 +8214,32 @@ var PageSuggestModal = class extends import_obsidian20.FuzzySuggestModal {
     this.onChoose(item);
   }
 };
+var TopicPickerModal = class extends import_obsidian20.FuzzySuggestModal {
+  constructor(app, items, onChoose) {
+    super(app);
+    this.items = items;
+    this.onChoose = onChoose;
+    this.setPlaceholder("Pick a blocking topic\u2026");
+  }
+  getItems() {
+    return this.items;
+  }
+  getItemText(t) {
+    return t.title;
+  }
+  onChooseItem(t) {
+    this.onChoose(t);
+  }
+};
 var SprintTopicModal = class extends import_obsidian20.Modal {
-  constructor(app, topicService, sprintId, onSave, editTopic, sprintService, prefill, settings) {
+  constructor(app, topicService, onSave, editTopic, prefill, settings, allTopics = []) {
     super(app);
     this.topicService = topicService;
-    this.sprintId = sprintId;
     this.onSave = onSave;
     this.editTopic = editTopic;
-    this.sprintService = sprintService;
     this.prefill = prefill;
     this.settings = settings;
+    this.allTopics = allTopics;
     this.title = "";
     this.jira = "";
     this.priority = "none" /* None */;
@@ -7765,8 +8247,6 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
     this.impact = null;
     this.effort = null;
     this.dueDate = "";
-    /** '' = Backlog (no sprint assigned). Otherwise a sprint id. */
-    this.chosenSprintId = "";
     /** Empty string = unassigned. Otherwise a team member email. */
     this.assignee = "";
     /** Empty string = not waiting. 'other:<text>' means free-text fallback; any other
@@ -7778,9 +8258,11 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
     this.refs = [];
     this.chipsContainer = null;
     this.refsContainer = null;
+    this.blockedBy = [];
+    this.blockerChipsContainer = null;
   }
   onOpen() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const { contentEl } = this;
     this.modalEl.addClass("friday-topic-modal");
     if (this.editTopic) {
@@ -7791,12 +8273,12 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
       this.impact = this.editTopic.impact;
       this.effort = this.editTopic.effort;
       this.dueDate = (_a = this.editTopic.dueDate) != null ? _a : "";
-      this.chosenSprintId = (_b = this.editTopic.sprintId) != null ? _b : "";
-      this.assignee = (_c = this.editTopic.assignee) != null ? _c : "";
-      this.lastNudged = (_d = this.editTopic.lastNudged) != null ? _d : "";
+      this.assignee = (_b = this.editTopic.assignee) != null ? _b : "";
+      this.lastNudged = (_c = this.editTopic.lastNudged) != null ? _c : "";
       this.refs = this.editTopic.refs.map((r) => ({ ...r }));
+      this.blockedBy = this.editTopic.blockedBy ? [...this.editTopic.blockedBy] : [];
       if (this.editTopic.waitingOn) {
-        const members = (_f = (_e = this.settings) == null ? void 0 : _e.teamMembers) != null ? _f : [];
+        const members = (_e = (_d = this.settings) == null ? void 0 : _d.teamMembers) != null ? _e : [];
         const match = members.find((m) => m.email === this.editTopic.waitingOn);
         if (match) {
           this.waitingOnMode = "member";
@@ -7807,7 +8289,6 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         }
       }
     } else {
-      this.chosenSprintId = this.sprintId;
       if (this.prefill) {
         if (this.prefill.title)
           this.title = this.prefill.title;
@@ -7818,7 +8299,7 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
       }
     }
     contentEl.createEl("h2", {
-      text: this.editTopic ? "Edit Topic" : "New Sprint Topic"
+      text: this.editTopic ? "Edit Topic" : "New Topic"
     });
     new import_obsidian20.Setting(contentEl).setName("Title").addText((text) => {
       text.setPlaceholder("Topic title").setValue(this.title).onChange((value) => {
@@ -7835,32 +8316,6 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         this.jira = value;
       })
     );
-    if (this.sprintService) {
-      const sprints = this.sprintService.getSprints();
-      const options = { "": "(Backlog)" };
-      for (const s of sprints) {
-        const suffix = s.status === "active" ? " \xB7 active" : s.status === "completed" ? " \xB7 completed" : "";
-        options[s.id] = `${s.name}${suffix}`;
-      }
-      new import_obsidian20.Setting(contentEl).setName("Sprint").setDesc("Assign to a sprint, or leave in Backlog").addDropdown(
-        (dropdown) => dropdown.addOptions(options).setValue(this.chosenSprintId).onChange((value) => {
-          this.chosenSprintId = value;
-        })
-      );
-      if (this.editTopic && this.editTopic.sprintHistory.length > 0) {
-        const historySetting = new import_obsidian20.Setting(contentEl).setName("Sprint history").setDesc("All sprints this topic has been assigned to (in order)");
-        const listEl = historySetting.settingEl.createDiv({ cls: "friday-topic-sprint-history" });
-        for (const sprintId of this.editTopic.sprintHistory) {
-          const sprint = sprints.find((s) => s.id === sprintId);
-          const label = sprint ? `${sprint.name} (${sprint.startDate} \u2192 ${sprint.endDate})` : `${sprintId} \xB7 deleted`;
-          const chip = listEl.createDiv({ cls: "friday-topic-sprint-history-chip" });
-          chip.setText(label);
-          if (sprintId === this.editTopic.sprintId) {
-            chip.addClass("friday-topic-sprint-history-current");
-          }
-        }
-      }
-    }
     new import_obsidian20.Setting(contentEl).setName("Priority").addDropdown(
       (dropdown) => dropdown.addOptions({
         ["none" /* None */]: "None",
@@ -7871,9 +8326,9 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         this.priority = value;
       })
     );
-    const teamMembers = (_h = (_g = this.settings) == null ? void 0 : _g.teamMembers) != null ? _h : [];
+    const teamMembers = (_g = (_f = this.settings) == null ? void 0 : _f.teamMembers) != null ? _g : [];
     const activeMembers = teamMembers.filter((m) => m.active);
-    const myEmail = (_k = (_j = (_i = this.settings) == null ? void 0 : _i.jiraEmail) == null ? void 0 : _j.trim()) != null ? _k : "";
+    const myEmail = (_j = (_i = (_h = this.settings) == null ? void 0 : _h.jiraEmail) == null ? void 0 : _i.trim()) != null ? _j : "";
     if (activeMembers.length > 0 || this.assignee || myEmail) {
       const options = { "": "\u2014 Unassigned \u2014" };
       if (myEmail) {
@@ -7948,6 +8403,7 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
     this.chipsContainer = linkedSetting.settingEl.createDiv({ cls: "friday-page-chips" });
     this.renderChips();
     this.renderRefsSection(contentEl);
+    this.renderBlockedBySection(contentEl);
     const errorEl = contentEl.createDiv({ cls: "friday-modal-error" });
     new import_obsidian20.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
@@ -8014,7 +8470,6 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
     renderInner();
   }
   async save() {
-    var _a, _b;
     if (!this.title.trim())
       return;
     const dueDateTrimmed = this.dueDate.trim();
@@ -8035,20 +8490,7 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         refs: this.refs.length > 0 ? serializeRefs(this.refs) : null
       };
       await this.topicService.updateTopicFrontmatter(this.editTopic.filePath, fmUpdates);
-      let newHistory = this.editTopic.sprintHistory;
-      const sprintChanged = this.sprintService && this.chosenSprintId !== ((_a = this.editTopic.sprintId) != null ? _a : "");
-      if (sprintChanged) {
-        await this.topicService.assignTopicToSprint(this.editTopic.filePath, this.chosenSprintId);
-        const seen = new Set(newHistory);
-        const merged = [...newHistory];
-        for (const s of [(_b = this.editTopic.sprintId) != null ? _b : "", this.chosenSprintId]) {
-          if (s && !seen.has(s)) {
-            merged.push(s);
-            seen.add(s);
-          }
-        }
-        newHistory = merged;
-      }
+      await this.applyDependencyChanges(this.editTopic.filePath, this.editTopic.blockedBy);
       const JIRA_KEY_RE = /[A-Z][A-Z0-9]+-\d+/g;
       const jiraKeys = [];
       const seenKeys = /* @__PURE__ */ new Set();
@@ -8067,12 +8509,11 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         impact: this.impact,
         effort: this.effort,
         dueDate: dueDateValue,
-        sprintId: this.sprintService ? this.chosenSprintId || null : this.editTopic.sprintId,
-        sprintHistory: newHistory,
         assignee: this.assignee || null,
         waitingOn: waitingOnValue,
         lastNudged: lastNudgedValue,
-        refs: this.refs.map((r) => ({ ...r }))
+        refs: this.refs.map((r) => ({ ...r })),
+        blockedBy: [...this.blockedBy]
       };
       this.onSave(updated);
     } else {
@@ -8081,7 +8522,6 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         this.jira.trim() || null,
         this.priority,
         this.linkedPages,
-        this.chosenSprintId,
         this.impact,
         this.effort,
         dueDateValue,
@@ -8090,6 +8530,7 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         lastNudgedValue,
         this.refs
       );
+      await this.applyDependencyChanges(topic.filePath, []);
       this.onSave(topic);
     }
     this.close();
@@ -8113,6 +8554,64 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
         this.linkedPages = this.linkedPages.filter((p) => p !== page);
         this.renderChips();
       });
+    }
+  }
+  /** "Blocked by" dependency picker — choose other topics that block this one.
+   *  Self and already-selected topics are excluded; true cycles are caught on save. */
+  renderBlockedBySection(contentEl) {
+    const setting = new import_obsidian20.Setting(contentEl).setName("Blocked by").setDesc("Other topics that must finish first. Cycles are rejected on save.").addButton(
+      (btn) => btn.setButtonText("+ Add blocker").onClick(() => {
+        var _a;
+        const selfPath = (_a = this.editTopic) == null ? void 0 : _a.filePath;
+        const candidates = this.allTopics.filter((t) => t.filePath !== selfPath && !this.blockedBy.includes(t.filePath));
+        if (candidates.length === 0) {
+          new import_obsidian20.Notice("No other topics available to add.");
+          return;
+        }
+        new TopicPickerModal(this.app, candidates, (t) => {
+          this.blockedBy.push(t.filePath);
+          this.renderBlockerChips();
+        }).open();
+      })
+    );
+    this.blockerChipsContainer = setting.settingEl.createDiv({ cls: "friday-page-chips" });
+    this.renderBlockerChips();
+  }
+  renderBlockerChips() {
+    var _a, _b;
+    if (!this.blockerChipsContainer)
+      return;
+    this.blockerChipsContainer.empty();
+    if (this.blockedBy.length === 0) {
+      this.blockerChipsContainer.createSpan({ cls: "friday-page-chips-empty", text: "No blockers" });
+      return;
+    }
+    for (const path of this.blockedBy) {
+      const topic = this.allTopics.find((t) => t.filePath === path);
+      const label = topic ? topic.title : (_b = (_a = path.split("/").pop()) == null ? void 0 : _a.replace(/\.md$/, "")) != null ? _b : path;
+      const chip = this.blockerChipsContainer.createDiv({ cls: "friday-page-chip" });
+      chip.createSpan({ text: label });
+      const removeBtn = chip.createSpan({ cls: "friday-page-chip-remove", text: "\xD7" });
+      removeBtn.addEventListener("click", () => {
+        this.blockedBy = this.blockedBy.filter((p) => p !== path);
+        this.renderBlockerChips();
+      });
+    }
+  }
+  /** Apply the modal's blockedBy selection against the stored set: add new, remove dropped.
+   *  The service rejects cycles/self; we surface the first rejection as a Notice. */
+  async applyDependencyChanges(filePath, original) {
+    var _a;
+    const target = this.blockedBy;
+    const toAdd = target.filter((p) => !original.includes(p));
+    const toRemove = original.filter((p) => !target.includes(p));
+    for (const p of toRemove) {
+      await this.topicService.removeDependency(filePath, p);
+    }
+    for (const p of toAdd) {
+      const res = await this.topicService.addDependency(filePath, p);
+      if (!res.ok)
+        new import_obsidian20.Notice(`Skipped blocker: ${(_a = res.reason) != null ? _a : "rejected"}`);
     }
   }
   /** References section: label+URL chip list + an add form. */
@@ -8193,161 +8692,9 @@ var SprintTopicModal = class extends import_obsidian20.Modal {
   }
 };
 
-// src/ui/SprintCloseModal.ts
-var import_obsidian21 = require("obsidian");
-var SprintCloseModal = class extends import_obsidian21.Modal {
-  constructor(app, sprint, topics, sprintService, topicService, onComplete) {
-    super(app);
-    this.sprint = sprint;
-    this.topics = topics;
-    this.sprintService = sprintService;
-    this.topicService = topicService;
-    this.onComplete = onComplete;
-    this.decisions = /* @__PURE__ */ new Map();
-    this.summaryEl = null;
-  }
-  onOpen() {
-    this.modalEl.addClass("friday-sprint-close-modal");
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h2", { text: `Close Sprint \u2014 ${this.sprint.name}` });
-    const openTopics = this.topics.filter((t) => t.status !== "done");
-    if (openTopics.length === 0) {
-      contentEl.createEl("p", {
-        text: "All topics are done. Sprint is ready to close!",
-        cls: "friday-empty"
-      });
-      this.renderApplySection(contentEl, openTopics);
-      return;
-    }
-    contentEl.createEl("p", {
-      text: `${openTopics.length} topic${openTopics.length > 1 ? "s are" : " is"} not yet done. Choose what to do with each:`,
-      cls: "friday-migration-intro"
-    });
-    for (const topic of openTopics) {
-      this.decisions.set(topic.filePath, { topic, action: "carry-forward" });
-    }
-    for (const topic of openTopics) {
-      this.renderTopicItem(contentEl, topic);
-    }
-    this.renderApplySection(contentEl, openTopics);
-  }
-  renderTopicItem(container, topic) {
-    const item = container.createDiv({ cls: "friday-sprint-close-item" });
-    const headerRow = item.createDiv({ cls: "friday-sprint-close-item-header" });
-    if (topic.priority !== "none" /* None */) {
-      const dot = headerRow.createSpan({ cls: "friday-priority-dot" });
-      dot.addClass(`friday-priority-${topic.priority}`);
-    }
-    headerRow.createSpan({ text: topic.title });
-    if (topic.jira.length > 0) {
-      headerRow.createSpan({ cls: "friday-kanban-card-jira", text: ` ${topic.jira.join(", ")}` });
-    }
-    if (topic.blocked) {
-      headerRow.createSpan({ cls: "friday-kanban-card-blocked", text: "BLOCKED" });
-    }
-    if (topic.taskTotal > 0) {
-      item.createDiv({
-        cls: "friday-sprint-close-item-progress",
-        text: `${topic.taskDone}/${topic.taskTotal} tasks done`
-      });
-    }
-    const actionsRow = item.createDiv({ cls: "friday-sprint-close-actions-row" });
-    const actions = [
-      { action: "carry-forward", label: "Carry Forward", cls: "friday-btn friday-btn-forward" },
-      { action: "archive", label: "Archive", cls: "friday-btn friday-btn-done" },
-      { action: "cancel", label: "Cancel", cls: "friday-btn friday-btn-cancel" }
-    ];
-    for (const { action, label, cls } of actions) {
-      const btn = actionsRow.createEl("button", { text: label, cls });
-      if (action === "carry-forward")
-        btn.addClass("is-active");
-      btn.addEventListener("click", () => {
-        this.decisions.set(topic.filePath, { topic, action });
-        actionsRow.querySelectorAll("button").forEach((b) => b.removeClass("is-active"));
-        btn.addClass("is-active");
-        this.updateSummary();
-      });
-    }
-  }
-  renderApplySection(container, openTopics) {
-    if (openTopics.length > 0) {
-      this.summaryEl = container.createDiv({ cls: "friday-sprint-close-summary" });
-      this.updateSummary();
-    }
-    const actionsDiv = container.createDiv({ cls: "friday-migration-actions" });
-    const applyBtn = actionsDiv.createEl("button", { text: "Close Sprint", cls: "mod-cta" });
-    applyBtn.addEventListener("click", async () => {
-      applyBtn.setAttribute("disabled", "true");
-      applyBtn.textContent = "Closing...";
-      await this.executeDecisions();
-      this.onComplete();
-      this.close();
-    });
-    const cancelBtn = actionsDiv.createEl("button", { text: "Cancel", cls: "friday-btn" });
-    cancelBtn.addEventListener("click", () => this.close());
-  }
-  async executeDecisions() {
-    var _a;
-    const newSprint = await this.sprintService.completeSprint(this.sprint.id);
-    const newSprintId = (_a = newSprint == null ? void 0 : newSprint.id) != null ? _a : null;
-    for (const decision of this.decisions.values()) {
-      switch (decision.action) {
-        case "carry-forward":
-          if (newSprintId) {
-            await this.topicService.carryForwardTopic(decision.topic.filePath, newSprintId);
-          }
-          break;
-        case "archive":
-          await this.topicService.archiveTopic(decision.topic.filePath);
-          break;
-        case "cancel":
-          await this.topicService.cancelTopic(decision.topic.filePath);
-          break;
-      }
-    }
-    const doneTopics = this.topics.filter((t) => t.status === "done");
-    for (const topic of doneTopics) {
-      await this.topicService.archiveTopic(topic.filePath);
-    }
-  }
-  updateSummary() {
-    if (!this.summaryEl)
-      return;
-    this.summaryEl.empty();
-    let carryForward = 0;
-    let archive = 0;
-    let cancel = 0;
-    for (const d of this.decisions.values()) {
-      switch (d.action) {
-        case "carry-forward":
-          carryForward++;
-          break;
-        case "archive":
-          archive++;
-          break;
-        case "cancel":
-          cancel++;
-          break;
-      }
-    }
-    const parts = [];
-    if (carryForward > 0)
-      parts.push(`${carryForward} carry forward`);
-    if (archive > 0)
-      parts.push(`${archive} archive`);
-    if (cancel > 0)
-      parts.push(`${cancel} cancel`);
-    this.summaryEl.textContent = parts.join(" \xB7 ");
-  }
-  onClose() {
-    this.contentEl.empty();
-  }
-};
-
 // src/ui/SubtaskConfirmModal.ts
-var import_obsidian22 = require("obsidian");
-var SubtaskConfirmModal = class extends import_obsidian22.Modal {
+var import_obsidian21 = require("obsidian");
+var SubtaskConfirmModal = class extends import_obsidian21.Modal {
   constructor(app, task, openChildCount, actionLabel = "Complete") {
     super(app);
     this.task = task;
@@ -8410,12 +8757,11 @@ var SubtaskConfirmModal = class extends import_obsidian22.Modal {
 };
 
 // src/ui/FridayView.ts
-var FridayView = class extends import_obsidian23.ItemView {
-  constructor(leaf, store, writer, sprintService, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
+var FridayView = class extends import_obsidian22.ItemView {
+  constructor(leaf, store, writer, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
     super(leaf);
     this.store = store;
     this.writer = writer;
-    this.sprintService = sprintService;
     this.sprintTopicService = sprintTopicService;
     this.scanner = scanner;
     this.migrationService = migrationService;
@@ -8429,6 +8775,9 @@ var FridayView = class extends import_obsidian23.ItemView {
     this.onSaveMonthlySnapshot = onSaveMonthlySnapshot;
     this.searchQuery = "";
     this.toolbar = null;
+    this.viewSwitcher = null;
+    /** Persisted Topics sub-mode so it survives view rebuilds (board / list / roadmap / matrix). */
+    this.topicsSubMode = "board";
     this.storeCallback = null;
     this.jiraCallback = null;
     this.refreshTimer = null;
@@ -8452,7 +8801,7 @@ var FridayView = class extends import_obsidian23.ItemView {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("friday-container");
-    new ViewSwitcher(containerEl, this.currentMode, {
+    this.viewSwitcher = new ViewSwitcher(containerEl, this.currentMode, {
       onViewChange: (mode) => {
         this.currentMode = mode;
         if (this.toolbar) {
@@ -8515,7 +8864,7 @@ var FridayView = class extends import_obsidian23.ItemView {
         let leaf = null;
         this.app.workspace.iterateAllLeaves((l) => {
           var _a;
-          if (!leaf && l.view instanceof import_obsidian23.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
+          if (!leaf && l.view instanceof import_obsidian22.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
             leaf = l;
           }
         });
@@ -8548,7 +8897,7 @@ var FridayView = class extends import_obsidian23.ItemView {
     }, REFRESH_DEBOUNCE_MS);
   }
   refresh() {
-    const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.store.version}|${this.jiraService.version}`;
+    const fingerprint = `${this.currentMode}|${this.currentGroupMode}|${this.searchQuery}|${this.topicsSubMode}|${this.store.version}|${this.jiraService.version}`;
     if (fingerprint === this.lastViewFingerprint)
       return;
     this.lastViewFingerprint = fingerprint;
@@ -8585,41 +8934,22 @@ var FridayView = class extends import_obsidian23.ItemView {
         view.render();
         break;
       }
-      case "sprint" /* Sprint */: {
-        const activeSprint = this.sprintService.getActiveSprint();
-        const topics = activeSprint ? this.scanner.getAllTopics().filter((t) => t.sprintId === activeSprint.id) : [];
-        const view = new SprintView(
-          this.contentContainer,
-          this.store,
-          this.sprintService,
-          this.sprintTopicService,
-          topics,
-          this.settings,
-          () => this.onNewSprint(),
-          (sprint) => this.onEndSprint(sprint),
-          () => this.onNewTopic(),
-          (topic) => this.onTopicClick(topic),
-          (sprint) => this.onEditSprint(sprint),
-          this.isDragging,
-          this.searchQuery,
-          this.jiraService
-        );
-        view.render();
-        break;
-      }
       case "topics" /* Topics */: {
         const view = new TopicsOverviewView(
           this.contentContainer,
           this.scanner.getAllTopics(),
-          this.sprintService,
           this.sprintTopicService,
           this.settings,
           (topic) => this.onTopicClick(topic),
           (topic) => this.onEditTopicDetails(topic),
-          () => this.onNewBacklogTopic(),
+          () => this.onNewTopic(),
           this.isDragging,
           this.searchQuery,
-          this.jiraService
+          this.jiraService,
+          this.topicsSubMode,
+          (m) => {
+            this.topicsSubMode = m;
+          }
         );
         view.render();
         break;
@@ -8651,74 +8981,36 @@ var FridayView = class extends import_obsidian23.ItemView {
           this.analyticsService,
           this.settings,
           this.getData().weeklyHistory,
-          this.onSaveSnapshot
+          this.onSaveSnapshot,
+          this.scanner.getAllTopics()
         );
         view.render();
         break;
       }
     }
   }
-  onNewSprint() {
-    new SprintModal(this.app, this.sprintService, this.settings, (_sprint) => {
-      this.refresh();
-    }).open();
-  }
-  onEditSprint(sprint) {
-    new SprintModal(this.app, this.sprintService, this.settings, (_sprint) => {
-      this.refresh();
-    }, sprint).open();
-  }
-  onEndSprint(sprint) {
-    const topics = this.scanner.getAllTopics().filter((t) => t.sprintId === sprint.id);
-    new SprintCloseModal(
-      this.app,
-      sprint,
-      topics,
-      this.sprintService,
-      this.sprintTopicService,
-      () => this.refresh()
-    ).open();
-  }
+  /** Create a new topic (lands in the Backlog column). */
   onNewTopic() {
-    var _a;
-    const activeSprint = this.sprintService.getActiveSprint();
     new SprintTopicModal(
       this.app,
       this.sprintTopicService,
-      (_a = activeSprint == null ? void 0 : activeSprint.id) != null ? _a : "",
       (_topic) => this.refresh(),
       void 0,
-      this.sprintService,
       void 0,
-      this.settings
-    ).open();
-  }
-  /** Create a topic without auto-assigning it to a sprint (backlog mode). */
-  onNewBacklogTopic() {
-    new SprintTopicModal(
-      this.app,
-      this.sprintTopicService,
-      "",
-      // empty sprintId → backlog topic
-      (_topic) => this.refresh(),
-      void 0,
-      this.sprintService,
-      void 0,
-      this.settings
+      this.settings,
+      this.scanner.getAllTopics()
     ).open();
   }
   /** Open the edit modal for an existing topic (used by TopicsOverviewView). */
   onEditTopicDetails(topic) {
-    var _a;
     new SprintTopicModal(
       this.app,
       this.sprintTopicService,
-      (_a = topic.sprintId) != null ? _a : "",
       (_topic) => this.refresh(),
       topic,
-      this.sprintService,
       void 0,
-      this.settings
+      this.settings,
+      this.scanner.getAllTopics()
     ).open();
   }
   async onTopicClick(topic) {
@@ -8728,6 +9020,16 @@ var FridayView = class extends import_obsidian23.ItemView {
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
     this.app.workspace.revealLeaf(leaf);
+  }
+  /** Programmatically switch the active view mode (used by palette commands). */
+  setViewMode(mode, topicsSubMode) {
+    var _a, _b;
+    this.currentMode = mode;
+    if (topicsSubMode)
+      this.topicsSubMode = topicsSubMode;
+    (_a = this.viewSwitcher) == null ? void 0 : _a.setMode(mode);
+    (_b = this.toolbar) == null ? void 0 : _b.setViewMode(mode);
+    this.refresh();
   }
   async onClose() {
     if (this.toolbar) {
@@ -8750,7 +9052,7 @@ var FridayView = class extends import_obsidian23.ItemView {
 };
 
 // src/ui/JiraDashboardView.ts
-var import_obsidian24 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 function mapJiraPriority(jiraPriority) {
   if (!jiraPriority)
     return "none" /* None */;
@@ -8763,7 +9065,7 @@ function mapJiraPriority(jiraPriority) {
     return "low" /* Low */;
   return "none" /* None */;
 }
-var TopicSuggestModal = class extends import_obsidian24.FuzzySuggestModal {
+var TopicSuggestModal = class extends import_obsidian23.FuzzySuggestModal {
   constructor(app, topics, onChoose) {
     super(app);
     this.topics = topics;
@@ -8781,15 +9083,14 @@ var TopicSuggestModal = class extends import_obsidian24.FuzzySuggestModal {
     this.onChoose(t);
   }
 };
-var JiraDashboardView = class extends import_obsidian24.ItemView {
-  constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics, topicService, sprintService, onTopicsChanged, teamService) {
+var JiraDashboardView = class extends import_obsidian23.ItemView {
+  constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics, topicService, onTopicsChanged, teamService) {
     super(leaf);
     this.dashboardService = dashboardService;
     this.getSettings = getSettings;
     this.saveSettings = saveSettings;
     this.getAllTopics = getAllTopics;
     this.topicService = topicService;
-    this.sprintService = sprintService;
     this.onTopicsChanged = onTopicsChanged;
     this.teamService = teamService;
     this.searchQuery = "";
@@ -8841,7 +9142,7 @@ var JiraDashboardView = class extends import_obsidian24.ItemView {
         defaultCollapsed: true
       }
     ];
-    this.debouncedSearch = (0, import_obsidian24.debounce)((value) => {
+    this.debouncedSearch = (0, import_obsidian23.debounce)((value) => {
       this.searchQuery = value;
       this.renderContent();
     }, SEARCH_DEBOUNCE_MS, false);
@@ -9175,7 +9476,7 @@ var JiraDashboardView = class extends import_obsidian24.ItemView {
   }
   async openTopic(topic) {
     const file = this.app.vault.getAbstractFileByPath(topic.filePath);
-    if (!(file instanceof import_obsidian24.TFile))
+    if (!(file instanceof import_obsidian23.TFile))
       return;
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
@@ -9322,7 +9623,7 @@ var JiraDashboardView = class extends import_obsidian24.ItemView {
   // Both flows go through the normal topic-write path (createTopic / updateTopicFrontmatter)
   // so they participate in the scanner's file-watch → onTopicsChange → re-render cycle.
   openRowContextMenu(evt, issue, linkedTopics) {
-    const menu = new import_obsidian24.Menu();
+    const menu = new import_obsidian23.Menu();
     menu.addItem((item) => item.setTitle("Create topic from this issue").setIcon("plus").onClick(() => this.createTopicFromIssue(issue)));
     const allTopics = this.getAllTopics();
     const linkableTopics = allTopics.filter((t) => !t.jira.includes(issue.key));
@@ -9340,18 +9641,13 @@ var JiraDashboardView = class extends import_obsidian24.ItemView {
     menu.showAtMouseEvent(evt);
   }
   createTopicFromIssue(issue) {
-    var _a;
-    const active = this.sprintService.getActiveSprint();
-    const sprintId = (_a = active == null ? void 0 : active.id) != null ? _a : "";
     const modal = new SprintTopicModal(
       this.app,
       this.topicService,
-      sprintId,
       (topic) => {
-        new import_obsidian24.Notice(`Topic created: ${topic.title}`);
+        new import_obsidian23.Notice(`Topic created: ${topic.title}`);
       },
       void 0,
-      this.sprintService,
       {
         title: issue.summary || issue.key,
         jira: issue.key,
@@ -9363,14 +9659,14 @@ var JiraDashboardView = class extends import_obsidian24.ItemView {
   }
   linkIssueToTopic(issue, candidateTopics) {
     if (candidateTopics.length === 0) {
-      new import_obsidian24.Notice("Every topic is already linked to this issue.");
+      new import_obsidian23.Notice("Every topic is already linked to this issue.");
       return;
     }
     new TopicSuggestModal(this.app, candidateTopics, async (topic) => {
       var _a;
       const seen = new Set(topic.jira);
       if (seen.has(issue.key)) {
-        new import_obsidian24.Notice(`${topic.title} already linked to ${issue.key}.`);
+        new import_obsidian23.Notice(`${topic.title} already linked to ${issue.key}.`);
         return;
       }
       const merged = [...topic.jira, issue.key];
@@ -9378,10 +9674,10 @@ var JiraDashboardView = class extends import_obsidian24.ItemView {
         await this.topicService.updateTopicFrontmatter(topic.filePath, {
           jira: merged.join(", ")
         });
-        new import_obsidian24.Notice(`Linked ${issue.key} \u2192 ${topic.title}`);
+        new import_obsidian23.Notice(`Linked ${issue.key} \u2192 ${topic.title}`);
       } catch (err) {
         console.error("[JIRA Dashboard] link-to-topic failed:", err);
-        new import_obsidian24.Notice(`Failed to link: ${(_a = err.message) != null ? _a : err}`);
+        new import_obsidian23.Notice(`Failed to link: ${(_a = err.message) != null ? _a : err}`);
       }
     }).open();
   }
@@ -9585,11 +9881,11 @@ var JiraDashboardView = class extends import_obsidian24.ItemView {
 var import_obsidian27 = require("obsidian");
 
 // src/ui/components/TeamOverviewView.ts
-var import_obsidian26 = require("obsidian");
+var import_obsidian25 = require("obsidian");
 
 // src/ui/OneOnOneModal.ts
-var import_obsidian25 = require("obsidian");
-var OneOnOneModal = class extends import_obsidian25.FuzzySuggestModal {
+var import_obsidian24 = require("obsidian");
+var OneOnOneModal = class extends import_obsidian24.FuzzySuggestModal {
   constructor(app, members, onSelect) {
     super(app);
     this.members = members;
@@ -9614,12 +9910,20 @@ var OneOnOneModal = class extends import_obsidian25.FuzzySuggestModal {
 
 // src/ui/components/TeamOverviewView.ts
 var TeamOverviewView = class {
-  constructor(container, app, service, settings, callbacks = {}) {
+  constructor(container, app, service, settings, callbacks = {}, rollupByEmail = /* @__PURE__ */ new Map(), expanded = /* @__PURE__ */ new Set(), onToggleExpand = () => {
+  }, sortMode = "cadence", hideOnLeave = false, onViewStateChange = () => {
+  }) {
     this.container = container;
     this.app = app;
     this.service = service;
     this.settings = settings;
     this.callbacks = callbacks;
+    this.rollupByEmail = rollupByEmail;
+    this.expanded = expanded;
+    this.onToggleExpand = onToggleExpand;
+    this.sortMode = sortMode;
+    this.hideOnLeave = hideOnLeave;
+    this.onViewStateChange = onViewStateChange;
   }
   render() {
     this.container.empty();
@@ -9634,26 +9938,6 @@ var TeamOverviewView = class {
     for (const m of members) {
       signals.set(m.folderPath, this.service.computeCadenceSignal(m, today));
     }
-    const rank = {
-      "overdue": 0,
-      "due-soon": 1,
-      "never": 2,
-      "on-track": 3,
-      "suspended": 4
-    };
-    const sorted = [...members].sort((a, b) => {
-      var _a, _b, _c, _d;
-      const sa = signals.get(a.folderPath);
-      const sb = signals.get(b.folderPath);
-      const ra = (_a = rank[sa.state]) != null ? _a : 9;
-      const rb = (_b = rank[sb.state]) != null ? _b : 9;
-      if (ra !== rb)
-        return ra - rb;
-      if (sa.state === "overdue" && sb.state === "overdue") {
-        return ((_c = sb.daysSince) != null ? _c : 0) - ((_d = sa.daysSince) != null ? _d : 0);
-      }
-      return a.name.localeCompare(b.name);
-    });
     const header = this.container.createDiv({ cls: "friday-team-header" });
     header.createEl("h2", { text: "Team", cls: "friday-team-title" });
     const startBtn = header.createEl("button", {
@@ -9661,10 +9945,73 @@ var TeamOverviewView = class {
       text: "Start 1:1\u2026"
     });
     startBtn.addEventListener("click", () => this.openOneOnOnePicker());
+    this.renderToolbar(this.container);
+    const visible = this.hideOnLeave ? members.filter((m) => m.status !== "on_leave") : members;
+    const sorted = this.sortMembers(visible, signals);
     const grid = this.container.createDiv({ cls: "friday-team-grid" });
     for (const member of sorted) {
       this.renderCard(grid, member, signals.get(member.folderPath));
     }
+  }
+  renderToolbar(parent) {
+    const bar = parent.createDiv({ cls: "friday-team-toolbar" });
+    bar.createSpan({ cls: "friday-team-toolbar-label", text: "Sort:" });
+    const sorts = [
+      { key: "cadence", label: "Cadence" },
+      { key: "load", label: "Load" },
+      { key: "blockers", label: "Blockers" },
+      { key: "name", label: "Name" }
+    ];
+    for (const s of sorts) {
+      const btn = bar.createEl("button", { cls: "friday-topics-modebtn", text: s.label });
+      if (s.key === this.sortMode)
+        btn.addClass("friday-topics-modebtn-active");
+      btn.addEventListener("click", () => this.onViewStateChange({ sort: s.key, hideOnLeave: this.hideOnLeave }));
+    }
+    const label = bar.createEl("label", { cls: "friday-team-toolbar-toggle" });
+    const cb = label.createEl("input", { type: "checkbox" });
+    cb.checked = this.hideOnLeave;
+    label.createSpan({ text: " Hide on-leave" });
+    cb.addEventListener("change", () => this.onViewStateChange({ sort: this.sortMode, hideOnLeave: cb.checked }));
+  }
+  sortMembers(members, signals) {
+    const rank = { "overdue": 0, "due-soon": 1, "never": 2, "on-track": 3, "suspended": 4 };
+    const arr = [...members];
+    switch (this.sortMode) {
+      case "load":
+        arr.sort((a, b) => this.committedOf(b) - this.committedOf(a) || a.name.localeCompare(b.name));
+        break;
+      case "blockers":
+        arr.sort((a, b) => this.blockersOf(b) - this.blockersOf(a) || a.name.localeCompare(b.name));
+        break;
+      case "name":
+        arr.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case "cadence":
+      default:
+        arr.sort((a, b) => {
+          var _a, _b, _c, _d;
+          const sa = signals.get(a.folderPath);
+          const sb = signals.get(b.folderPath);
+          const ra = (_a = rank[sa.state]) != null ? _a : 9;
+          const rb = (_b = rank[sb.state]) != null ? _b : 9;
+          if (ra !== rb)
+            return ra - rb;
+          if (sa.state === "overdue" && sb.state === "overdue")
+            return ((_c = sb.daysSince) != null ? _c : 0) - ((_d = sa.daysSince) != null ? _d : 0);
+          return a.name.localeCompare(b.name);
+        });
+    }
+    return arr;
+  }
+  committedOf(m) {
+    var _a, _b, _c;
+    return (_c = (_b = this.rollupByEmail.get(((_a = m.email) != null ? _a : "").toLowerCase())) == null ? void 0 : _b.load.committed) != null ? _c : 0;
+  }
+  blockersOf(m) {
+    var _a;
+    const r = this.rollupByEmail.get(((_a = m.email) != null ? _a : "").toLowerCase());
+    return r ? r.counts.jiraBlocked + r.counts.topicsBlocked : 0;
   }
   renderEmptyState() {
     const empty = this.container.createDiv({ cls: "friday-empty" });
@@ -9679,6 +10026,7 @@ var TeamOverviewView = class {
     hint.appendText(` button in Friday settings.`);
   }
   renderCard(parent, member, signal) {
+    var _a, _b;
     const card = parent.createDiv({ cls: "friday-team-card" });
     if (member.status === "on_leave")
       card.addClass("is-on-leave");
@@ -9695,6 +10043,23 @@ var TeamOverviewView = class {
       chipRow.appendChild(createCadenceChip("suspended", "On leave"));
     } else {
       chipRow.appendChild(createCadenceChip(signal.state, formatCadenceLabel(member, signal)));
+    }
+    if (member.currentFocus) {
+      card.createDiv({ cls: "friday-team-focus", text: member.currentFocus });
+    }
+    const r = this.rollupByEmail.get(((_a = member.email) != null ? _a : "").toLowerCase());
+    if (r) {
+      const stats = card.createDiv({ cls: "friday-team-stats" });
+      stats.appendChild(createLoadChip(r.load.band, `${r.load.band} \xB7 ${r.load.committed}/${r.load.target.toFixed(0)}`));
+      const blocked = r.counts.jiraBlocked + r.counts.topicsBlocked;
+      if (blocked > 0) {
+        stats.createSpan({ cls: "friday-team-blockbadge", text: `\u26D4 ${blocked}` }).setAttribute("title", `${blocked} blocked item(s)`);
+      }
+      const driving = [...r.drivingTopics.map((t) => t.title), ...r.drivingJira.map((i) => i.key)];
+      if (driving.length > 0) {
+        const shown = driving.slice(0, 3).join(", ") + (driving.length > 3 ? ` +${driving.length - 3}` : "");
+        card.createDiv({ cls: "friday-team-driving", text: `Driving: ${shown}` }).setAttribute("title", driving.join(", "));
+      }
     }
     const actions = card.createDiv({ cls: "friday-team-actions" });
     const openPageBtn = actions.createEl("button", { cls: "friday-team-action", text: "Open page" });
@@ -9721,11 +10086,64 @@ var TeamOverviewView = class {
       });
       jiraBtn.addEventListener("click", () => this.openJiraTeamTab());
     }
+    if (r && (r.topics.length > 0 || r.jiraIssues.length > 0)) {
+      const email = ((_b = member.email) != null ? _b : "").toLowerCase();
+      const panel = card.createDiv({ cls: "friday-team-drill" });
+      if (this.expanded.has(email))
+        panel.addClass("is-open");
+      this.renderDrillDown(panel, r);
+      const toggleBtn = actions.createEl("button", {
+        cls: "friday-team-action",
+        text: this.expanded.has(email) ? "Hide details" : "Details"
+      });
+      toggleBtn.addEventListener("click", () => {
+        const open = panel.hasClass("is-open");
+        panel.toggleClass("is-open", !open);
+        toggleBtn.setText(!open ? "Hide details" : "Details");
+        this.onToggleExpand(email);
+      });
+    }
+  }
+  /** Build the (initially hidden) drill-down panel: the member's topics grouped by column
+   *  and their JIRA issues, both clickable, with blocked/flagged items marked. */
+  renderDrillDown(panel, r) {
+    if (r.topics.length > 0) {
+      const sec = panel.createDiv({ cls: "friday-team-drill-sec" });
+      sec.createDiv({ cls: "friday-team-drill-h", text: "Topics" });
+      const order = [
+        { status: "in-progress", label: "In Progress" },
+        { status: "open", label: "To Do" },
+        { status: "backlog", label: "Backlog" },
+        { status: "done", label: "Done" }
+      ];
+      for (const { status, label } of order) {
+        for (const t of r.topics.filter((x) => x.status === status)) {
+          const row = sec.createDiv({ cls: "friday-team-drill-row" });
+          row.createSpan({ cls: "friday-team-drill-col", text: label });
+          const titleEl = row.createSpan({ cls: "friday-team-drill-title friday-clickable", text: t.title });
+          if (t.blocked)
+            row.createSpan({ cls: "friday-team-drill-flag", text: "\u26D4" });
+          titleEl.addEventListener("click", () => this.openFile(t.filePath));
+        }
+      }
+    }
+    if (r.jiraIssues.length > 0) {
+      const sec = panel.createDiv({ cls: "friday-team-drill-sec" });
+      sec.createDiv({ cls: "friday-team-drill-h", text: "JIRA" });
+      for (const issue of r.jiraIssues) {
+        const row = sec.createDiv({ cls: "friday-team-drill-row" });
+        const titleEl = row.createSpan({ cls: "friday-team-drill-title friday-clickable", text: `${issue.key} ${issue.summary}` });
+        row.createSpan({ cls: "friday-team-drill-col", text: issue.status });
+        if (issue.flagged)
+          row.createSpan({ cls: "friday-team-drill-flag", text: "\u26D4" });
+        titleEl.addEventListener("click", () => window.open(issue.issueUrl, "_blank"));
+      }
+    }
   }
   async openFile(path) {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) {
-      new import_obsidian26.Notice(`File not found: ${path}`);
+      new import_obsidian25.Notice(`File not found: ${path}`);
       return;
     }
     const leaf = this.reuseOrCreateLeaf(path);
@@ -9737,26 +10155,29 @@ var TeamOverviewView = class {
     let existing = null;
     this.app.workspace.iterateAllLeaves((l) => {
       var _a;
-      if (!existing && l.view instanceof import_obsidian26.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === path) {
+      if (!existing && l.view instanceof import_obsidian25.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === path) {
         existing = l;
       }
     });
     return existing != null ? existing : this.app.workspace.getLeaf(false);
   }
   async startOneOnOne(member) {
+    var _a;
     try {
-      const file = await this.service.startOneOnOne(member, /* @__PURE__ */ new Date());
+      const r = this.rollupByEmail.get(((_a = member.email) != null ? _a : "").toLowerCase());
+      const agenda = r ? buildOneOnOneAgenda(r) : void 0;
+      const file = await this.service.startOneOnOne(member, /* @__PURE__ */ new Date(), agenda);
       const leaf = this.app.workspace.getLeaf(false);
       await leaf.openFile(file);
       this.app.workspace.revealLeaf(leaf);
     } catch (e) {
-      new import_obsidian26.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
+      new import_obsidian25.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
     }
   }
   openOneOnOnePicker() {
     const members = this.service.getActiveMembers();
     if (members.length === 0) {
-      new import_obsidian26.Notice("No active team members to pick from.");
+      new import_obsidian25.Notice("No active team members to pick from.");
       return;
     }
     new OneOnOneModal(this.app, members, (picked) => this.startOneOnOne(picked)).open();
@@ -9814,16 +10235,167 @@ function mostRecentSessionPath(member) {
   return sorted[sorted.length - 1];
 }
 
+// src/ui/components/TeamStatusSummary.ts
+var import_obsidian26 = require("obsidian");
+var TeamStatusSummary = class {
+  constructor(container, app, rollup, freshnessLabel, opts) {
+    this.container = container;
+    this.app = app;
+    this.rollup = rollup;
+    this.freshnessLabel = freshnessLabel;
+    this.opts = opts;
+  }
+  render() {
+    const el = this.container.createDiv({ cls: "friday-team-status" });
+    const header = el.createDiv({ cls: "friday-team-status-header" });
+    header.createEl("h3", { text: "Team status" });
+    header.createSpan({ cls: "friday-team-status-meta", text: this.freshnessLabel });
+    const copyBtn = header.createEl("button", { cls: "friday-btn", text: "Copy digest" });
+    copyBtn.addEventListener("click", () => this.opts.onCopyDigest());
+    const genBtn = header.createEl("button", { cls: "friday-btn", text: "Generate digest" });
+    genBtn.addEventListener("click", () => this.opts.onGenerateDigest());
+    this.renderBlockers(el);
+    this.renderAtRisk(el);
+    this.renderCadence(el);
+  }
+  section(parent, title) {
+    const sec = parent.createDiv({ cls: "friday-team-status-section" });
+    sec.createEl("h4", { text: title });
+    return sec;
+  }
+  renderBlockers(parent) {
+    const sec = this.section(parent, `Top blockers (${this.rollup.topBlockers.length})`);
+    if (this.rollup.topBlockers.length === 0) {
+      sec.createDiv({ cls: "friday-empty", text: "No blockers." });
+      return;
+    }
+    for (const b of this.rollup.topBlockers.slice(0, 12)) {
+      const row = sec.createDiv({ cls: "friday-team-status-row" });
+      if (b.ownerName)
+        row.createSpan({ cls: "friday-team-status-owner", text: b.ownerName });
+      const titleEl = row.createSpan({ cls: "friday-team-status-title", text: b.title });
+      this.wireRef(titleEl, b.ref, b.url);
+      if (b.detail)
+        row.createSpan({ cls: "friday-team-status-detail", text: b.detail });
+    }
+  }
+  renderAtRisk(parent) {
+    const sec = this.section(parent, `At risk (${this.rollup.atRisk.length})`);
+    if (this.rollup.atRisk.length === 0) {
+      sec.createDiv({ cls: "friday-empty", text: "Nothing due soon." });
+      return;
+    }
+    for (const a of this.rollup.atRisk.slice(0, 12)) {
+      const row = sec.createDiv({ cls: "friday-team-status-row" });
+      if (a.ownerName)
+        row.createSpan({ cls: "friday-team-status-owner", text: a.ownerName });
+      const titleEl = row.createSpan({ cls: "friday-team-status-title", text: a.title });
+      this.wireRef(titleEl, a.ref, a.url);
+      const when = a.daysUntilDue < 0 ? `${-a.daysUntilDue}d overdue` : `due ${a.daysUntilDue}d`;
+      const detail = row.createSpan({ cls: "friday-team-status-detail", text: when });
+      if (a.daysUntilDue < 0)
+        detail.addClass("is-overdue");
+    }
+  }
+  renderDriving(parent) {
+    const driving = this.rollup.members.filter((m) => m.drivingJira.length + m.drivingTopics.length > 0);
+    const sec = this.section(parent, "Currently driving");
+    if (driving.length === 0) {
+      sec.createDiv({ cls: "friday-empty", text: "Nothing in progress." });
+      return;
+    }
+    for (const m of driving) {
+      const row = sec.createDiv({ cls: "friday-team-status-row" });
+      row.createSpan({ cls: "friday-team-status-owner", text: m.displayName });
+      const items = [...m.drivingTopics.map((t) => t.title), ...m.drivingJira.map((i) => i.key)];
+      row.createSpan({ cls: "friday-team-status-title", text: items.join(", ") });
+    }
+  }
+  renderCadence(parent) {
+    if (this.rollup.overdueOneOnOnes.length === 0)
+      return;
+    const sec = this.section(parent, `1:1 cadence overdue (${this.rollup.overdueOneOnOnes.length})`);
+    for (const o of this.rollup.overdueOneOnOnes) {
+      const row = sec.createDiv({ cls: "friday-team-status-row" });
+      row.createSpan({ cls: "friday-team-status-owner", text: o.name });
+      row.createSpan({ cls: "friday-team-status-detail", text: `${o.daysOverdue}d overdue` });
+    }
+  }
+  /** Clicking a row opens its JIRA issue (url) or its topic file (vault path). */
+  wireRef(el, ref, url) {
+    el.addClass("friday-clickable");
+    el.addEventListener("click", () => {
+      if (url) {
+        window.open(url, "_blank");
+        return;
+      }
+      const file = this.app.vault.getAbstractFileByPath(ref);
+      if (file instanceof import_obsidian26.TFile) {
+        const leaf = this.app.workspace.getLeaf(false);
+        void leaf.openFile(file);
+        this.app.workspace.revealLeaf(leaf);
+      }
+    });
+  }
+};
+
+// src/ui/components/TeamWorkloadTrend.ts
+var TeamWorkloadTrend = class {
+  constructor(container, rollup, snapshots) {
+    this.container = container;
+    this.rollup = rollup;
+    this.snapshots = snapshots;
+  }
+  render() {
+    const recent = this.snapshots.slice(-8);
+    if (recent.length < 2)
+      return;
+    const el = this.container.createDiv({ cls: "friday-team-trend" });
+    el.createEl("h4", { text: "Workload trend (committed / week)" });
+    const totals = recent.map((s) => s.totals.committed);
+    this.renderSpark(el, "Team total", totals);
+    const delta = totals[totals.length - 1] - totals[totals.length - 2];
+    el.createDiv({ cls: "friday-team-trend-delta", text: `${delta >= 0 ? "+" : ""}${delta} since last week` });
+    for (const m of this.rollup.members) {
+      this.renderSpark(el, m.displayName, recent.map((s) => {
+        var _a, _b;
+        return (_b = (_a = s.members[m.email]) == null ? void 0 : _a.committed) != null ? _b : 0;
+      }));
+    }
+  }
+  renderSpark(parent, name, series) {
+    const row = parent.createDiv({ cls: "friday-team-trend-row" });
+    row.createSpan({ cls: "friday-team-trend-name", text: name });
+    const spark = row.createDiv({ cls: "friday-team-trend-spark" });
+    const max = Math.max(1, ...series);
+    for (const v of series) {
+      const bar = spark.createDiv({ cls: "friday-team-trend-bar" });
+      bar.style.height = `${v / max * 100}%`;
+      bar.setAttribute("title", String(v));
+    }
+  }
+};
+
 // src/ui/TeamDashboardView.ts
 var TeamDashboardView = class extends import_obsidian27.ItemView {
-  constructor(leaf, service, getSettings, onTeamChanged, onActivateJiraTeamTab) {
+  constructor(leaf, service, rollupService, digestService, jiraTeamService, getSettings, onTeamChanged, onTopicsChanged, onActivateJiraTeamTab, getData) {
     super(leaf);
     this.service = service;
+    this.rollupService = rollupService;
+    this.digestService = digestService;
+    this.jiraTeamService = jiraTeamService;
     this.getSettings = getSettings;
     this.onTeamChanged = onTeamChanged;
+    this.onTopicsChanged = onTopicsChanged;
     this.onActivateJiraTeamTab = onActivateJiraTeamTab;
+    this.getData = getData;
     this.contentContainer = null;
     this.refreshTimer = null;
+    this.jiraListener = null;
+    /** Per-person view state, persisted across the dashboard's debounced rebuilds. */
+    this.expandedMembers = /* @__PURE__ */ new Set();
+    this.teamSort = "cadence";
+    this.hideOnLeave = false;
   }
   getViewType() {
     return VIEW_TYPE_TEAM_DASHBOARD;
@@ -9843,16 +10415,31 @@ var TeamDashboardView = class extends import_obsidian27.ItemView {
       cls: "friday-content friday-team-dashboard-content"
     });
     this.onTeamChanged(() => {
-      if (!this.contentContainer)
-        return;
-      this.scheduleRender();
+      if (this.contentContainer)
+        this.scheduleRender();
     });
+    this.onTopicsChanged(() => {
+      if (this.contentContainer)
+        this.scheduleRender();
+    });
+    this.jiraListener = () => {
+      if (this.contentContainer)
+        this.scheduleRender();
+    };
+    this.jiraTeamService.on(this.jiraListener);
+    if (this.jiraTeamService.isEnabled() && this.jiraTeamService.isStale()) {
+      void this.jiraTeamService.refresh();
+    }
     this.render();
   }
   async onClose() {
     if (this.refreshTimer !== null) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
+    }
+    if (this.jiraListener) {
+      this.jiraTeamService.off(this.jiraListener);
+      this.jiraListener = null;
     }
     this.contentContainer = null;
   }
@@ -9864,17 +10451,65 @@ var TeamDashboardView = class extends import_obsidian27.ItemView {
       this.render();
     }, REFRESH_DEBOUNCE_MS);
   }
+  /** Flip a member's drill-down expanded state. The card toggles its own DOM in place,
+   *  so this only updates the persisted set (no full re-render needed). */
+  toggleExpanded(email) {
+    if (this.expandedMembers.has(email))
+      this.expandedMembers.delete(email);
+    else
+      this.expandedMembers.add(email);
+  }
   render() {
     if (!this.contentContainer)
       return;
+    this.contentContainer.empty();
+    const rollup = this.rollupService.buildRollup();
+    new TeamStatusSummary(this.contentContainer, this.app, rollup, this.freshnessLabel(rollup.jiraIncluded), {
+      onCopyDigest: () => {
+        void navigator.clipboard.writeText(this.digestService.buildMarkdown(rollup, /* @__PURE__ */ new Date()));
+        new import_obsidian27.Notice("Team digest copied to clipboard.");
+      },
+      onGenerateDigest: async () => {
+        try {
+          const file = await this.digestService.generateDigest(/* @__PURE__ */ new Date());
+          const leaf = this.app.workspace.getLeaf(false);
+          await leaf.openFile(file);
+          this.app.workspace.revealLeaf(leaf);
+          new import_obsidian27.Notice("Team status digest generated.");
+        } catch (e) {
+          new import_obsidian27.Notice(`Could not generate digest: ${e instanceof Error ? e.message : "error"}`);
+        }
+      }
+    }).render();
+    const rollupByEmail = new Map(rollup.members.map((m) => [m.email.toLowerCase(), m]));
     const view = new TeamOverviewView(
       this.contentContainer,
       this.app,
       this.service,
       this.getSettings(),
-      { onActivateJiraTeamTab: () => this.onActivateJiraTeamTab() }
+      { onActivateJiraTeamTab: () => this.onActivateJiraTeamTab() },
+      rollupByEmail,
+      this.expandedMembers,
+      (email) => this.toggleExpanded(email),
+      this.teamSort,
+      this.hideOnLeave,
+      (s) => {
+        this.teamSort = s.sort;
+        this.hideOnLeave = s.hideOnLeave;
+        this.scheduleRender();
+      }
     );
     view.render();
+    new TeamWorkloadTrend(this.contentContainer, rollup, this.getData().workloadHistory).render();
+  }
+  freshnessLabel(jiraIncluded) {
+    if (!jiraIncluded)
+      return "Topics only \xB7 JIRA off";
+    const at = this.jiraTeamService.getFetchedAt();
+    if (!at)
+      return "JIRA included";
+    const mins = Math.round((Date.now() - at) / 6e4);
+    return `JIRA included \xB7 updated ${mins <= 0 ? "just now" : `${mins}m ago`}`;
   }
 };
 
@@ -10625,6 +11260,99 @@ var DueDateModal = class extends import_obsidian32.Modal {
   }
 };
 
+// src/ui/TopicSwitcherModal.ts
+var import_obsidian33 = require("obsidian");
+var STATUS_LABEL = {
+  backlog: "Backlog",
+  open: "To Do",
+  "in-progress": "In Progress",
+  done: "Done"
+};
+var TopicSwitcherModal = class extends import_obsidian33.FuzzySuggestModal {
+  constructor(app, topics, onChoose, settings) {
+    super(app);
+    this.topics = topics;
+    this.onChoose = onChoose;
+    this.settings = settings;
+    this.setPlaceholder("Go to topic\u2026");
+    this.setInstructions([
+      { command: "\u2191\u2193", purpose: "navigate" },
+      { command: "\u23CE", purpose: "open topic" },
+      { command: "esc", purpose: "cancel" }
+    ]);
+  }
+  getItems() {
+    return this.topics;
+  }
+  getItemText(t) {
+    return t.jira.length > 0 ? `${t.title} ${t.jira.join(" ")}` : t.title;
+  }
+  renderSuggestion(match, el) {
+    const t = match.item;
+    el.createDiv({ cls: "friday-switcher-title", text: t.title });
+    const bits = [STATUS_LABEL[t.status]];
+    if (t.blocked)
+      bits.push("BLOCKED");
+    if (t.assignee)
+      bits.push(this.assigneeLabel(t.assignee));
+    if (t.jira.length > 0)
+      bits.push(t.jira.join(", "));
+    el.createDiv({ cls: "friday-switcher-hint", text: bits.join(" \xB7 ") });
+  }
+  assigneeLabel(email) {
+    var _a, _b;
+    const m = ((_b = (_a = this.settings) == null ? void 0 : _a.teamMembers) != null ? _b : []).find((x) => x.email === email);
+    return m ? m.nickname || m.fullName || email : email;
+  }
+  onChooseItem(t) {
+    this.onChoose(t);
+  }
+};
+
+// src/ui/pickers.ts
+var import_obsidian34 = require("obsidian");
+var GenericPickerModal = class extends import_obsidian34.FuzzySuggestModal {
+  constructor(app, options, resolveChoice, opts) {
+    var _a;
+    super(app);
+    this.options = options;
+    this.resolveChoice = resolveChoice;
+    this.chosen = false;
+    this.setPlaceholder((_a = opts == null ? void 0 : opts.placeholder) != null ? _a : "Pick one\u2026");
+    this.setInstructions([
+      { command: "\u2191\u2193", purpose: "navigate" },
+      { command: "\u23CE", purpose: "select" },
+      { command: "esc", purpose: "cancel" }
+    ]);
+  }
+  getItems() {
+    return this.options;
+  }
+  getItemText(item) {
+    return item.text;
+  }
+  renderSuggestion(match, el) {
+    const opt = match.item;
+    el.createSpan({ text: opt.text });
+    if (opt.hint) {
+      el.createSpan({ cls: "friday-picker-hint", text: opt.hint });
+    }
+  }
+  onChooseItem(item) {
+    this.chosen = true;
+    this.resolveChoice(item.value);
+  }
+  onClose() {
+    if (!this.chosen)
+      this.resolveChoice(null);
+  }
+};
+function pickFromList(app, options, opts) {
+  return new Promise((resolve) => {
+    new GenericPickerModal(app, options, resolve, opts).open();
+  });
+}
+
 // src/mcp/tool.ts
 function jsonResult(value) {
   return {
@@ -11108,137 +11836,41 @@ function resolveSimpleDate(input) {
 }
 
 // src/mcp/tools/topics.ts
-var TOPIC_STATUS = ["open", "in-progress", "done"];
+var TOPIC_STATUS = ["backlog", "open", "in-progress", "done"];
 var TOPIC_IMPACT = ["critical", "high", "medium", "low"];
 var TOPIC_EFFORT = ["xs", "s", "m", "l", "xl"];
 var TOPIC_PRIORITY = ["high", "medium", "low", "none"];
 function topicTools(deps) {
   return [
-    sprintsListTool(deps),
-    sprintCreateTool(deps),
-    sprintCompleteTool(deps),
     topicsListTool(deps),
     topicGetTool(deps),
     topicCreateTool(deps),
     topicUpdateTool(deps),
-    topicAssignTool(deps)
+    topicLinkTool(deps)
   ];
-}
-function sprintsListTool(deps) {
-  return {
-    name: "sprints_list",
-    description: "Return every sprint defined in the plugin data (active, planned, completed). Use this to discover sprint IDs before calling topic_assign_to_sprint or topic_create. `activeSprintId` is also returned for convenience.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => {
-      var _a;
-      const sprints = deps.sprintService.getSprints();
-      const active = deps.sprintService.getActiveSprint();
-      return jsonResult({
-        activeSprintId: (_a = active == null ? void 0 : active.id) != null ? _a : null,
-        sprints: sprints.map(toSprintDto)
-      });
-    }
-  };
-}
-function sprintCreateTool(deps) {
-  return {
-    name: "sprint_create",
-    description: "Create a new sprint. `startDate` and `endDate` are ISO YYYY-MM-DD. If omitted, the plugin defaults are used (start = tomorrow, end = start + defaultSprintLength, respecting work-days-only if configured).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Display name for the sprint." },
-        startDate: { type: "string", description: "ISO YYYY-MM-DD. Optional." },
-        endDate: { type: "string", description: "ISO YYYY-MM-DD. Optional." }
-      },
-      required: ["name"],
-      additionalProperties: false
-    },
-    handler: async (args) => {
-      try {
-        const name = requireString(args, "name");
-        const startDate = optionalIsoDate(args, "startDate");
-        const endDate = optionalIsoDate(args, "endDate");
-        const created = await deps.sprintService.createSprint(name, startDate, endDate);
-        return jsonResult({ ok: true, sprint: toSprintDto(created) });
-      } catch (err) {
-        if (err instanceof ToolError)
-          return errorResult(err.message);
-        throw err;
-      }
-    }
-  };
-}
-function sprintCompleteTool(deps) {
-  return {
-    name: "sprint_complete",
-    description: 'Mark a sprint as completed. If the "auto-start next sprint" setting is on, a new sprint is opened immediately and returned in `next`. Topic carry-forward is NOT automatic \u2014 use topic_assign_to_sprint per topic to move work onto the new sprint.',
-    inputSchema: {
-      type: "object",
-      properties: { sprintId: { type: "string" } },
-      required: ["sprintId"],
-      additionalProperties: false
-    },
-    handler: async (args) => {
-      try {
-        const sprintId = requireString(args, "sprintId");
-        const next = await deps.sprintService.completeSprint(sprintId);
-        return jsonResult({
-          ok: true,
-          completedSprintId: sprintId,
-          next: next ? toSprintDto(next) : null
-        });
-      } catch (err) {
-        if (err instanceof ToolError)
-          return errorResult(err.message);
-        if (err instanceof Error)
-          return errorResult(err.message);
-        throw err;
-      }
-    }
-  };
 }
 function topicsListTool(deps) {
   return {
     name: "topics_list",
-    description: 'List sprint topics. `scope` can be a specific sprintId, "active" (the currently active sprint), "backlog" (topics with no sprint assignment), or "all" (default). Optional `status` and `blocked` further filter the result.',
+    description: 'List Kanban topics. Optional `status` filters to a single column (backlog, open = "To Do", in-progress, done). Optional `blocked` filters to blocked topics only.',
     inputSchema: {
       type: "object",
       properties: {
-        scope: {
-          type: "string",
-          description: 'sprintId, "active", "backlog", or "all". Default "all".'
-        },
         status: { type: "string", enum: [...TOPIC_STATUS] },
         blocked: { type: "boolean" }
       },
       additionalProperties: false
     },
     handler: async (args) => {
-      var _a;
       try {
-        const scope = (_a = optionalString(args, "scope")) != null ? _a : "all";
         const status = optionalEnum(args, "status", TOPIC_STATUS);
         const blocked = optionalBoolean(args, "blocked");
-        const all = await deps.sprintTopicService.getAllTopics();
-        let filtered = all;
-        if (scope === "backlog") {
-          filtered = all.filter((t) => !t.sprintId);
-        } else if (scope === "active") {
-          const active = deps.sprintService.getActiveSprint();
-          if (!active) {
-            return jsonResult({ scope, activeSprintId: null, total: 0, topics: [] });
-          }
-          filtered = all.filter((t) => t.sprintId === active.id);
-        } else if (scope !== "all") {
-          filtered = all.filter((t) => t.sprintId === scope);
-        }
+        let filtered = await deps.sprintTopicService.getAllTopics();
         if (status)
           filtered = filtered.filter((t) => t.status === status);
         if (blocked !== void 0)
           filtered = filtered.filter((t) => t.blocked === blocked);
         return jsonResult({
-          scope,
           total: filtered.length,
           topics: filtered.map(toTopicDto)
         });
@@ -11279,15 +11911,11 @@ function topicGetTool(deps) {
 function topicCreateTool(deps) {
   return {
     name: "topic_create",
-    description: 'Create a new sprint topic file. By default the topic is placed on the currently active sprint; pass `sprintId="backlog"` for a backlog topic, or an explicit ID. `jira` accepts one key (PROJ-123) or a comma-separated list (PROJ-1, PROJ-2). `linkedPages` are wiki-link basenames written into the ## Linked Pages section.',
+    description: "Create a new Kanban topic file. The topic lands in the Backlog column. `jira` accepts one key (PROJ-123) or a comma-separated list (PROJ-1, PROJ-2). `linkedPages` are wiki-link basenames written into the ## Linked Pages section.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
-        sprintId: {
-          type: "string",
-          description: 'Sprint ID, "active" (default), or "backlog".'
-        },
         jira: { type: "string", description: "Single key or comma-separated list." },
         priority: { type: "string", enum: [...TOPIC_PRIORITY] },
         impact: { type: "string", enum: [...TOPIC_IMPACT] },
@@ -11305,18 +11933,16 @@ function topicCreateTool(deps) {
       additionalProperties: false
     },
     handler: async (args) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h;
+      var _a, _b, _c, _d, _e, _f, _g;
       try {
         const title = requireString(args, "title");
-        const sprintArg = (_a = optionalString(args, "sprintId")) != null ? _a : "active";
-        const sprintId = resolveSprintId(deps, sprintArg);
-        const jira = (_b = optionalString(args, "jira")) != null ? _b : null;
-        const priorityName = (_c = optionalEnum(args, "priority", TOPIC_PRIORITY)) != null ? _c : "none";
-        const impact = (_d = optionalEnum(args, "impact", TOPIC_IMPACT)) != null ? _d : null;
-        const effort = (_e = optionalEnum(args, "effort", TOPIC_EFFORT)) != null ? _e : null;
-        const dueDate = (_f = optionalIsoDate(args, "dueDate")) != null ? _f : null;
-        const assignee = (_g = optionalString(args, "assignee")) != null ? _g : null;
-        const waitingOn = (_h = optionalString(args, "waitingOn")) != null ? _h : null;
+        const jira = (_a = optionalString(args, "jira")) != null ? _a : null;
+        const priorityName = (_b = optionalEnum(args, "priority", TOPIC_PRIORITY)) != null ? _b : "none";
+        const impact = (_c = optionalEnum(args, "impact", TOPIC_IMPACT)) != null ? _c : null;
+        const effort = (_d = optionalEnum(args, "effort", TOPIC_EFFORT)) != null ? _d : null;
+        const dueDate = (_e = optionalIsoDate(args, "dueDate")) != null ? _e : null;
+        const assignee = (_f = optionalString(args, "assignee")) != null ? _f : null;
+        const waitingOn = (_g = optionalString(args, "waitingOn")) != null ? _g : null;
         const linkedPagesRaw = args.linkedPages;
         const linkedPages = [];
         if (Array.isArray(linkedPagesRaw)) {
@@ -11336,7 +11962,6 @@ function topicCreateTool(deps) {
           jira,
           priorityToEnum(priorityName),
           linkedPages,
-          sprintId,
           impact,
           effort,
           dueDate,
@@ -11358,7 +11983,7 @@ function topicCreateTool(deps) {
 function topicUpdateTool(deps) {
   return {
     name: "topic_update",
-    description: "Update one or more frontmatter fields on a topic in place. Only the fields you pass are touched; omitting a field leaves it unchanged. Pass `null` for impact / effort / dueDate / assignee / waitingOn to clear them. Status / blocked / priority require a value.",
+    description: "Update one or more frontmatter fields on a topic in place. Only the fields you pass are touched; omitting a field leaves it unchanged. Pass `null` for impact / effort / dueDate / assignee / waitingOn to clear them. Status / blocked / priority require a value. Setting status stamps the Kanban flow timestamps automatically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -11498,30 +12123,34 @@ function topicUpdateTool(deps) {
     }
   };
 }
-function topicAssignTool(deps) {
+function topicLinkTool(deps) {
   return {
-    name: "topic_assign_to_sprint",
-    description: 'Move a topic to a different sprint, the active sprint, or the backlog. `sprintId` accepts a real sprint ID, "active" (the currently active sprint), or "backlog" (clear the sprint assignment). Sprint history is appended automatically.',
+    name: "topic_link",
+    description: 'Add or remove a topic dependency: mark `path` as blocked-by `blockerPath`. `action` is "add" or "remove". Adding rejects self-links and cycles.',
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Topic file path." },
-        sprintId: { type: "string" }
+        path: { type: "string", description: "Topic file path (the blocked topic)." },
+        blockerPath: { type: "string", description: "Topic file path (the blocking topic)." },
+        action: { type: "string", enum: ["add", "remove"] }
       },
-      required: ["path", "sprintId"],
+      required: ["path", "blockerPath", "action"],
       additionalProperties: false
     },
     handler: async (args) => {
+      var _a, _b;
       try {
         const path = requireString(args, "path");
-        const arg = requireString(args, "sprintId");
-        if (arg === "backlog") {
-          await deps.sprintTopicService.moveTopicToBacklog(path);
-          return jsonResult({ ok: true, path, sprintId: null });
+        const blockerPath = requireString(args, "blockerPath");
+        const action = (_a = optionalEnum(args, "action", ["add", "remove"])) != null ? _a : "add";
+        if (action === "remove") {
+          await deps.sprintTopicService.removeDependency(path, blockerPath);
+          return jsonResult({ ok: true, path, blockerPath, action });
         }
-        const sprintId = resolveSprintId(deps, arg);
-        await deps.sprintTopicService.assignTopicToSprint(path, sprintId);
-        return jsonResult({ ok: true, path, sprintId: sprintId || null });
+        const res = await deps.sprintTopicService.addDependency(path, blockerPath);
+        if (!res.ok)
+          return errorResult((_b = res.reason) != null ? _b : "Could not add dependency.");
+        return jsonResult({ ok: true, path, blockerPath, action });
       } catch (err) {
         if (err instanceof ToolError)
           return errorResult(err.message);
@@ -11532,15 +12161,6 @@ function topicAssignTool(deps) {
     }
   };
 }
-function toSprintDto(s) {
-  return {
-    id: s.id,
-    name: s.name,
-    startDate: s.startDate,
-    endDate: s.endDate,
-    status: s.status
-  };
-}
 function toTopicDto(t) {
   return {
     path: t.filePath,
@@ -11548,7 +12168,6 @@ function toTopicDto(t) {
     status: t.status,
     priority: t.priority,
     blocked: t.blocked,
-    sprintId: t.sprintId,
     sortOrder: t.sortOrder,
     impact: t.impact,
     effort: t.effort,
@@ -11557,11 +12176,14 @@ function toTopicDto(t) {
     linkedPages: t.linkedPages,
     taskTotal: t.taskTotal,
     taskDone: t.taskDone,
-    sprintHistory: t.sprintHistory,
+    statusSince: t.statusSince,
+    startedAt: t.startedAt,
+    doneAt: t.doneAt,
     assignee: t.assignee,
     waitingOn: t.waitingOn,
     lastNudged: t.lastNudged,
-    refs: t.refs
+    refs: t.refs,
+    blockedBy: t.blockedBy
   };
 }
 function priorityToEnum(name) {
@@ -11576,18 +12198,6 @@ function priorityToEnum(name) {
     default:
       return "none" /* None */;
   }
-}
-function resolveSprintId(deps, raw) {
-  if (raw === "backlog")
-    return "";
-  if (raw === "active") {
-    const active = deps.sprintService.getActiveSprint();
-    if (!active) {
-      throw new ToolError('No active sprint. Pass an explicit sprint ID or "backlog".');
-    }
-    return active.id;
-  }
-  return raw;
 }
 function optionalIsoDate(args, key) {
   const v = args[key];
@@ -11610,16 +12220,19 @@ function optionalIsoDate(args, key) {
 }
 
 // src/main.ts
-var FridayPlugin = class extends import_obsidian33.Plugin {
+var FridayPlugin = class extends import_obsidian35.Plugin {
   async onload() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f;
     const saved = await this.loadData();
     this.data = Object.assign({}, DEFAULT_PLUGIN_DATA, saved);
     this.data.settings = Object.assign({}, DEFAULT_PLUGIN_DATA.settings, saved == null ? void 0 : saved.settings);
     this.data.weeklyHistory = (_a = this.data.weeklyHistory) != null ? _a : [];
     this.data.lastWeeklyReviewWeek = (_b = this.data.lastWeeklyReviewWeek) != null ? _b : null;
     this.data.monthlyHistory = (_c = this.data.monthlyHistory) != null ? _c : [];
-    const staleModes = ["eisenhower", "impactEffort"];
+    this.data.kanbanMigrationDone = (_d = this.data.kanbanMigrationDone) != null ? _d : false;
+    this.data.workloadHistory = (_e = this.data.workloadHistory) != null ? _e : [];
+    this.data.lastWorkloadSnapshotWeek = (_f = this.data.lastWorkloadSnapshotWeek) != null ? _f : null;
+    const staleModes = ["eisenhower", "impactEffort", "sprint"];
     if (staleModes.includes(this.data.settings.defaultViewMode)) {
       this.data.settings.defaultViewMode = "topics" /* Topics */;
     }
@@ -11632,7 +12245,6 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
     this.scanner = new VaultScanner(this.app.vault, () => this.settings);
     this.scanner.setWriter(this.writer);
     this.dailyNoteService = new DailyNoteService(this.app.vault, () => this.settings);
-    this.sprintService = new SprintService(() => this.data, () => this.saveSettings());
     this.sprintTopicService = new SprintTopicService(this.app.vault, () => this.settings);
     this.migrationService = new MigrationService(
       this.store,
@@ -11654,6 +12266,18 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
     this.jiraDashboardService = new JiraDashboardService(() => this.settings);
     this.jiraTeamService = new JiraTeamService(() => this.settings);
     this.teamMemberService = new TeamMemberService(this.app.vault, this.scanner, () => this.settings);
+    this.teamRollupService = new TeamRollupService(
+      () => this.settings,
+      this.teamMemberService,
+      this.jiraTeamService,
+      () => this.scanner.getAllTopics()
+    );
+    this.teamDigestService = new TeamDigestService(
+      this.app.vault,
+      () => this.settings,
+      this.teamRollupService,
+      this.jiraTeamService
+    );
     this.mcpServer = new McpServer();
     this.mcpServer.setTools([
       ...taskTools({
@@ -11663,7 +12287,6 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
         getSettings: () => this.settings
       }),
       ...topicTools({
-        sprintService: this.sprintService,
         sprintTopicService: this.sprintTopicService
       })
     ]);
@@ -11680,7 +12303,6 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
         leaf,
         this.store,
         this.writer,
-        this.sprintService,
         this.sprintTopicService,
         this.scanner,
         this.migrationService,
@@ -11699,11 +12321,16 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
       (leaf) => new TeamDashboardView(
         leaf,
         this.teamMemberService,
+        this.teamRollupService,
+        this.teamDigestService,
+        this.jiraTeamService,
         () => this.settings,
         // Scanner has no unsubscribe API; the view guards on `contentContainer`
         // being non-null so closures fired post-close are safe.
         (cb) => this.scanner.onTeamChange(cb),
-        () => this.activateJiraTeamTab()
+        (cb) => this.scanner.onTopicsChange(cb),
+        () => this.activateJiraTeamTab(),
+        () => this.data
       )
     );
     this.registerView(
@@ -11718,7 +12345,6 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
         () => this.saveData(this.data),
         () => this.scanner.getAllTopics(),
         this.sprintTopicService,
-        this.sprintService,
         (cb) => this.scanner.onTopicsChange(cb),
         this.jiraTeamService
       )
@@ -11775,6 +12401,117 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
       callback: () => new SyntaxReferenceModal(this.app).open()
     });
     this.addCommand({
+      id: "go-to-topic",
+      name: "Go to topic",
+      callback: () => {
+        const topics = this.scanner.getAllTopics();
+        if (topics.length === 0) {
+          new import_obsidian35.Notice("No topics found.");
+          return;
+        }
+        new TopicSwitcherModal(this.app, topics, (t) => {
+          void this.openTopicFile(t.filePath);
+        }, this.settings).open();
+      }
+    });
+    this.addCommand({
+      id: "create-topic",
+      name: "Create topic",
+      callback: () => {
+        new SprintTopicModal(this.app, this.sprintTopicService, () => {
+        }, void 0, void 0, this.settings, this.scanner.getAllTopics()).open();
+      }
+    });
+    this.addCommand({
+      id: "move-topic-to-column",
+      name: "Move topic to column",
+      callback: async () => {
+        const topics = this.scanner.getAllTopics();
+        if (topics.length === 0) {
+          new import_obsidian35.Notice("No topics found.");
+          return;
+        }
+        const topic = await pickFromList(this.app, topics.map((t) => ({
+          text: t.title,
+          value: t,
+          hint: this.topicColumnLabel(t.status)
+        })), { placeholder: "Pick a topic\u2026" });
+        if (!topic)
+          return;
+        const status = await pickFromList(this.app, [
+          { text: "Backlog", value: "backlog" },
+          { text: "To Do", value: "open" },
+          { text: "In Progress", value: "in-progress" },
+          { text: "Done", value: "done" }
+        ], { placeholder: `Move "${topic.title}" to\u2026` });
+        if (status === null)
+          return;
+        await this.sprintTopicService.setTopicStatus(topic.filePath, status);
+        new import_obsidian35.Notice(`Moved "${topic.title}" \u2192 ${this.topicColumnLabel(status)}`);
+      }
+    });
+    this.addCommand({
+      id: "toggle-topic-blocked",
+      name: "Toggle topic blocked",
+      callback: async () => {
+        const topics = this.scanner.getAllTopics();
+        if (topics.length === 0) {
+          new import_obsidian35.Notice("No topics found.");
+          return;
+        }
+        const topic = await pickFromList(this.app, topics.map((t) => ({
+          text: t.title,
+          value: t,
+          hint: t.blocked ? "blocked" : ""
+        })), { placeholder: "Toggle blocked on\u2026" });
+        if (!topic)
+          return;
+        await this.sprintTopicService.setTopicBlocked(topic.filePath, !topic.blocked);
+        new import_obsidian35.Notice(`${topic.blocked ? "Unblocked" : "Blocked"}: ${topic.title}`);
+      }
+    });
+    this.addCommand({
+      id: "set-topic-due-date",
+      name: "Set topic due date",
+      callback: async () => {
+        const topics = this.scanner.getAllTopics();
+        if (topics.length === 0) {
+          new import_obsidian35.Notice("No topics found.");
+          return;
+        }
+        const topic = await pickFromList(this.app, topics.map((t) => {
+          var _a2;
+          return {
+            text: t.title,
+            value: t,
+            hint: (_a2 = t.dueDate) != null ? _a2 : ""
+          };
+        }), { placeholder: "Set due date on\u2026" });
+        if (!topic)
+          return;
+        const current = topic.dueDate ? isoToPluginDate(topic.dueDate) : "";
+        new DueDateModal(this.app, current, async (pluginDate) => {
+          const iso = pluginDate ? pluginDateToIso(pluginDate) : null;
+          await this.sprintTopicService.setTopicDueDate(topic.filePath, iso);
+          new import_obsidian35.Notice(iso ? `Due ${iso}: ${topic.title}` : `Due date cleared: ${topic.title}`);
+        }).open();
+      }
+    });
+    this.addCommand({
+      id: "open-board",
+      name: "Open Board",
+      callback: () => {
+        void this.activateViewAtMode("topics" /* Topics */, "board");
+      }
+    });
+    this.addCommand({
+      id: "open-roadmap",
+      name: "Open Roadmap",
+      callback: () => {
+        void this.activateViewAtMode("topics" /* Topics */, "roadmap");
+      }
+    });
+    this.addCommand({
       id: "monthly-review",
       name: "Monthly Review",
       callback: () => this.showMonthlyReview()
@@ -11790,18 +12527,41 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
       callback: () => this.openOneOnOnePicker()
     });
     this.addCommand({
+      id: "generate-team-digest",
+      name: "Generate Team Status Digest",
+      callback: async () => {
+        try {
+          const file = await this.teamDigestService.generateDigest(/* @__PURE__ */ new Date());
+          const leaf = this.app.workspace.getLeaf(false);
+          await leaf.openFile(file);
+          this.app.workspace.revealLeaf(leaf);
+          new import_obsidian35.Notice("Team status digest generated.");
+        } catch (e) {
+          new import_obsidian35.Notice(`Could not generate digest: ${e instanceof Error ? e.message : "error"}`);
+        }
+      }
+    });
+    this.addCommand({
+      id: "capture-workload-snapshot",
+      name: "Capture Workload Snapshot",
+      callback: async () => {
+        const ok = await this.captureWorkloadSnapshot(/* @__PURE__ */ new Date());
+        new import_obsidian35.Notice(ok ? "Workload snapshot captured." : "No active team members to snapshot.");
+      }
+    });
+    this.addCommand({
       id: "archive-completed",
       name: "Archive Completed Tasks",
       callback: async () => {
         const result = await this.archiveService.archiveCompleted();
         if (result.archived === 0 && result.skipped === 0) {
-          new import_obsidian33.Notice("No completed tasks to archive.");
+          new import_obsidian35.Notice("No completed tasks to archive.");
         } else {
           const parts = [`Archived ${result.archived} task(s) to ${result.files.length} file(s).`];
           if (result.skipped > 0) {
             parts.push(`${result.skipped} skipped (source file edited since last scan \u2014 try again).`);
           }
-          new import_obsidian33.Notice(parts.join(" "));
+          new import_obsidian35.Notice(parts.join(" "));
         }
       }
     });
@@ -11812,7 +12572,7 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
       callback: () => {
         new InsertTaskModal(this.app, async (result) => {
           const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
-          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian33.MarkdownView);
+          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian35.MarkdownView);
           if (activeView == null ? void 0 : activeView.editor) {
             const editor = activeView.editor;
             const cursor = editor.getCursor();
@@ -11821,7 +12581,7 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
             editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
           } else {
             await this.dailyNoteService.addRawTaskLine(block, /* @__PURE__ */ new Date());
-            new import_obsidian33.Notice("Task added to today's daily note");
+            new import_obsidian35.Notice("Task added to today's daily note");
           }
         }, this.settings.workTypes, this.settings.purposes).open();
       }
@@ -11838,7 +12598,7 @@ var FridayPlugin = class extends import_obsidian33.Plugin {
           const block = rest ? `- [ ] ${first}
 ${rest}` : `- [ ] ${first}`;
           await this.dailyNoteService.addRawInboxLine(block, /* @__PURE__ */ new Date());
-          new import_obsidian33.Notice("Captured to today's Inbox");
+          new import_obsidian35.Notice("Captured to today's Inbox");
         }).open();
       }
     });
@@ -11905,7 +12665,9 @@ ${rest}` : `- [ ] ${first}`;
       await this.scanner.fullScan();
       this.store.setTasks(this.scanner.getAllTasks());
       this.updateStatusBar();
+      await this.runKanbanMigrationIfNeeded();
       await this.autoGenerateTeamPagesIfNeeded();
+      await this.captureWorkloadSnapshotIfNeeded();
       this.checkMigration();
       this.checkWeeklyReview();
       await this.applyMcpServerState();
@@ -11915,7 +12677,7 @@ ${rest}` : `- [ ] ${first}`;
    *  from onload, after settings changes, and from manual UI buttons. No-op on mobile
    *  (Node's http module is unavailable there). */
   async applyMcpServerState() {
-    if (!import_obsidian33.Platform.isDesktop)
+    if (!import_obsidian35.Platform.isDesktop)
       return;
     if (this.settings.mcpEnabled) {
       if (!this.settings.mcpToken) {
@@ -11934,6 +12696,82 @@ ${rest}` : `- [ ] ${first}`;
     } else {
       await this.mcpServer.stop();
     }
+  }
+  /** One-time sprint→Kanban data migration. Rewrites topic frontmatter (backlog status +
+   *  strips dead sprint keys) once, guarded by a persisted flag so it never re-runs. */
+  async runKanbanMigrationIfNeeded() {
+    if (this.data.kanbanMigrationDone)
+      return;
+    try {
+      const changed = await this.sprintTopicService.migrateToKanban();
+      this.data.kanbanMigrationDone = true;
+      await this.saveData(this.data);
+      if (changed > 0) {
+        await this.scanner.fullScan();
+        this.store.setTasks(this.scanner.getAllTasks());
+        new import_obsidian35.Notice(`Friday: migrated ${changed} topic(s) to the Kanban board.`);
+      }
+    } catch (e) {
+      console.error("[Friday] Kanban migration failed:", e);
+    }
+  }
+  /** Capture a workload snapshot from the current roll-up. Awaits a JIRA refresh when
+   *  enabled+stale; records jiraIncluded=false rather than logging zeros if unavailable.
+   *  Returns false (no-op) when there are no active team members. */
+  async captureWorkloadSnapshot(now = /* @__PURE__ */ new Date()) {
+    var _a;
+    const active = ((_a = this.settings.teamMembers) != null ? _a : []).filter((m) => m.active && m.email);
+    if (active.length === 0)
+      return false;
+    if (this.jiraTeamService.isEnabled() && this.jiraTeamService.isStale()) {
+      try {
+        await this.jiraTeamService.refresh();
+      } catch (e) {
+      }
+    }
+    const rollup = this.teamRollupService.buildRollup(now);
+    const members = {};
+    const totals = { committed: 0, blocked: 0, inProgress: 0, open: 0, done: 0 };
+    for (const m of rollup.members) {
+      const c = m.counts;
+      const blocked = c.jiraBlocked + c.topicsBlocked;
+      const inProgress = c.jiraInProgress + c.topicsInProgress;
+      const open = c.jiraOpen + c.topicsOpen;
+      const done = c.jiraDone + c.topicsDone;
+      members[m.email] = { displayName: m.displayName, committed: m.load.committed, blocked, inProgress, open, done };
+      totals.committed += m.load.committed;
+      totals.blocked += blocked;
+      totals.inProgress += inProgress;
+      totals.open += open;
+      totals.done += done;
+    }
+    await this.saveWorkloadSnapshot({
+      weekId: getWeekId(now),
+      capturedAt: now.toISOString(),
+      jiraIncluded: rollup.jiraIncluded,
+      members,
+      totals
+    });
+    return true;
+  }
+  async saveWorkloadSnapshot(snapshot) {
+    const MAX_HISTORY = 104;
+    const idx = this.data.workloadHistory.findIndex((s) => s.weekId === snapshot.weekId);
+    if (idx >= 0)
+      this.data.workloadHistory[idx] = snapshot;
+    else
+      this.data.workloadHistory.push(snapshot);
+    if (this.data.workloadHistory.length > MAX_HISTORY) {
+      this.data.workloadHistory = this.data.workloadHistory.slice(-MAX_HISTORY);
+    }
+    this.data.lastWorkloadSnapshotWeek = snapshot.weekId;
+    await this.saveData(this.data);
+  }
+  /** Weekly opportunistic capture — once per ISO week, when there are active members. */
+  async captureWorkloadSnapshotIfNeeded() {
+    if (this.data.lastWorkloadSnapshotWeek === getWeekId(/* @__PURE__ */ new Date()))
+      return;
+    await this.captureWorkloadSnapshot(/* @__PURE__ */ new Date());
   }
   /** One-shot: if the user has a populated `teamMembers[]` list from the JIRA
    *  team-tracking feature but no person pages in `teamFolderPath`, create
@@ -11959,7 +12797,7 @@ ${rest}` : `- [ ] ${first}`;
     if (created > 0) {
       await this.scanner.fullScan();
       this.store.setTasks(this.scanner.getAllTasks());
-      new import_obsidian33.Notice(`Friday: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
+      new import_obsidian35.Notice(`Friday: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
     }
   }
   async activateView(newTab = false) {
@@ -12014,6 +12852,39 @@ ${rest}` : `- [ ] ${first}`;
     }
     await this.activateJiraDashboard();
   }
+  /** Open (or focus) the Friday view and switch it to a specific mode. */
+  async activateViewAtMode(mode, topicsSubMode) {
+    var _a;
+    await this.activateView();
+    const view = (_a = this.app.workspace.getLeavesOfType(VIEW_TYPE_FRIDAY)[0]) == null ? void 0 : _a.view;
+    if (view instanceof FridayView)
+      view.setViewMode(mode, topicsSubMode);
+  }
+  /** Open a topic markdown file in the active leaf. */
+  async openTopicFile(path) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof import_obsidian35.TFile)) {
+      new import_obsidian35.Notice("Topic file not found.");
+      return;
+    }
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(file);
+    this.app.workspace.revealLeaf(leaf);
+  }
+  topicColumnLabel(status) {
+    switch (status) {
+      case "backlog":
+        return "Backlog";
+      case "open":
+        return "To Do";
+      case "in-progress":
+        return "In Progress";
+      case "done":
+        return "Done";
+      default:
+        return status;
+    }
+  }
   /** Open the fuzzy picker for 1:1 start. Separates the "pick" from "start"
    *  so the same flow is reachable from a keyboard shortcut (no view open)
    *  as well as from the Team Overview button. Scopes to active members —
@@ -12022,17 +12893,23 @@ ${rest}` : `- [ ] ${first}`;
   openOneOnOnePicker() {
     const members = this.teamMemberService.getActiveMembers();
     if (members.length === 0) {
-      new import_obsidian33.Notice("No active team members found. Create a person page under " + this.settings.teamFolderPath + "/.");
+      new import_obsidian35.Notice("No active team members found. Create a person page under " + this.settings.teamFolderPath + "/.");
       return;
     }
     new OneOnOneModal(this.app, members, async (member) => {
       try {
-        const file = await this.teamMemberService.startOneOnOne(member, /* @__PURE__ */ new Date());
+        const rollup = this.teamRollupService.buildRollup();
+        const r = rollup.members.find((x) => {
+          var _a;
+          return x.email.toLowerCase() === ((_a = member.email) != null ? _a : "").toLowerCase();
+        });
+        const agenda = r ? buildOneOnOneAgenda(r) : void 0;
+        const file = await this.teamMemberService.startOneOnOne(member, /* @__PURE__ */ new Date(), agenda);
         const leaf = this.app.workspace.getLeaf(false);
         await leaf.openFile(file);
         this.app.workspace.revealLeaf(leaf);
       } catch (e) {
-        new import_obsidian33.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
+        new import_obsidian35.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
       }
     }).open();
   }

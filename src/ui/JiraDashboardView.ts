@@ -4,7 +4,6 @@ import { VIEW_TYPE_JIRA_DASHBOARD, SEARCH_DEBOUNCE_MS } from '../constants';
 import { JiraDashboardService } from '../services/jiraDashboardService';
 import { JiraTeamService } from '../services/jiraTeamService';
 import { SprintTopicService } from '../services/sprintTopicService';
-import { SprintService } from '../services/sprintService';
 import { SprintTopicModal } from './SprintTopicModal';
 
 /** Map a JIRA priority name to the topic Priority enum. Called on a best-effort
@@ -125,7 +124,6 @@ export class JiraDashboardView extends ItemView {
 		private saveSettings: () => Promise<void>,
 		private getAllTopics: () => SprintTopic[],
 		private topicService: SprintTopicService,
-		private sprintService: SprintService,
 		/** Scanner hook so we can subscribe to topic changes and re-render chip rows
 		 *  once a newly-created / re-linked topic lands on disk. Returns an unsubscribe
 		 *  function (or void — the scanner currently exposes no off() API, so we just
@@ -728,19 +726,13 @@ export class JiraDashboardView extends ItemView {
 	}
 
 	private createTopicFromIssue(issue: JiraDashboardIssue): void {
-		// Default to the active sprint; fall back to backlog if none is active.
-		const active = this.sprintService.getActiveSprint();
-		const sprintId = active?.id ?? '';
-
 		const modal = new SprintTopicModal(
 			this.app,
 			this.topicService,
-			sprintId,
 			(topic) => {
 				new Notice(`Topic created: ${topic.title}`);
 			},
 			undefined,
-			this.sprintService,
 			{
 				title: issue.summary || issue.key,
 				jira: issue.key,

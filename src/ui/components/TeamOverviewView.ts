@@ -1,9 +1,12 @@
 import { App, MarkdownView, Notice, WorkspaceLeaf } from 'obsidian';
-import { TeamMemberPage, PluginSettings } from '../../types';
+import { TeamMemberPage, PluginSettings, MemberRollup, SprintTopic, JiraDashboardIssue } from '../../types';
 import { VIEW_TYPE_JIRA_DASHBOARD } from '../../constants';
 import { TeamMemberService, CadenceSignal } from '../../services/teamMemberService';
-import { createCadenceChip } from '../icons';
+import { buildOneOnOneAgenda } from '../../services/teamRollupService';
+import { createCadenceChip, createLoadChip } from '../icons';
 import { OneOnOneModal } from '../OneOnOneModal';
+
+export type TeamSort = 'cadence' | 'load' | 'blockers' | 'name';
 
 export interface TeamOverviewCallbacks {
 	/** Persist a flag change to `jiraDashboardActiveTab` without rescanning.
@@ -23,6 +26,14 @@ export class TeamOverviewView {
 		private service: TeamMemberService,
 		private settings: PluginSettings,
 		private callbacks: TeamOverviewCallbacks = {},
+		/** Per-member roll-up, keyed by lowercased email. Empty map = cadence-only cards. */
+		private rollupByEmail: Map<string, MemberRollup> = new Map(),
+		/** Emails whose drill-down panel is expanded. Persisted by the parent view. */
+		private expanded: Set<string> = new Set(),
+		private onToggleExpand: (email: string) => void = () => {},
+		private sortMode: TeamSort = 'cadence',
+		private hideOnLeave: boolean = false,
+		private onViewStateChange: (s: { sort: TeamSort; hideOnLeave: boolean }) => void = () => {},
 	) {}
 
 	render(): void {
@@ -42,28 +53,7 @@ export class TeamOverviewView {
 			signals.set(m.folderPath, this.service.computeCadenceSignal(m, today));
 		}
 
-		// Most overdue first, then on-track, then suspended/departed-on-leave, by name.
-		const rank: Record<string, number> = {
-			'overdue': 0,
-			'due-soon': 1,
-			'never': 2,
-			'on-track': 3,
-			'suspended': 4,
-		};
-		const sorted = [...members].sort((a, b) => {
-			const sa = signals.get(a.folderPath)!;
-			const sb = signals.get(b.folderPath)!;
-			const ra = rank[sa.state] ?? 9;
-			const rb = rank[sb.state] ?? 9;
-			if (ra !== rb) return ra - rb;
-			// Inside overdue: most overdue first
-			if (sa.state === 'overdue' && sb.state === 'overdue') {
-				return (sb.daysSince ?? 0) - (sa.daysSince ?? 0);
-			}
-			return a.name.localeCompare(b.name);
-		});
-
-		// Header with a "Start 1:1" CTA
+		// Header with a "Start 1:1" CTA + sort/filter toolbar
 		const header = this.container.createDiv({ cls: 'friday-team-header' });
 		header.createEl('h2', { text: 'Team', cls: 'friday-team-title' });
 		const startBtn = header.createEl('button', {
@@ -72,10 +62,73 @@ export class TeamOverviewView {
 		});
 		startBtn.addEventListener('click', () => this.openOneOnOnePicker());
 
+		this.renderToolbar(this.container);
+
+		const visible = this.hideOnLeave ? members.filter(m => m.status !== 'on_leave') : members;
+		const sorted = this.sortMembers(visible, signals);
+
 		const grid = this.container.createDiv({ cls: 'friday-team-grid' });
 		for (const member of sorted) {
 			this.renderCard(grid, member, signals.get(member.folderPath)!);
 		}
+	}
+
+	private renderToolbar(parent: HTMLElement): void {
+		const bar = parent.createDiv({ cls: 'friday-team-toolbar' });
+		bar.createSpan({ cls: 'friday-team-toolbar-label', text: 'Sort:' });
+		const sorts: { key: TeamSort; label: string }[] = [
+			{ key: 'cadence', label: 'Cadence' },
+			{ key: 'load', label: 'Load' },
+			{ key: 'blockers', label: 'Blockers' },
+			{ key: 'name', label: 'Name' },
+		];
+		for (const s of sorts) {
+			const btn = bar.createEl('button', { cls: 'friday-topics-modebtn', text: s.label });
+			if (s.key === this.sortMode) btn.addClass('friday-topics-modebtn-active');
+			btn.addEventListener('click', () => this.onViewStateChange({ sort: s.key, hideOnLeave: this.hideOnLeave }));
+		}
+		const label = bar.createEl('label', { cls: 'friday-team-toolbar-toggle' });
+		const cb = label.createEl('input', { type: 'checkbox' });
+		cb.checked = this.hideOnLeave;
+		label.createSpan({ text: ' Hide on-leave' });
+		cb.addEventListener('change', () => this.onViewStateChange({ sort: this.sortMode, hideOnLeave: cb.checked }));
+	}
+
+	private sortMembers(members: TeamMemberPage[], signals: Map<string, CadenceSignal>): TeamMemberPage[] {
+		const rank: Record<string, number> = { 'overdue': 0, 'due-soon': 1, 'never': 2, 'on-track': 3, 'suspended': 4 };
+		const arr = [...members];
+		switch (this.sortMode) {
+			case 'load':
+				arr.sort((a, b) => this.committedOf(b) - this.committedOf(a) || a.name.localeCompare(b.name));
+				break;
+			case 'blockers':
+				arr.sort((a, b) => this.blockersOf(b) - this.blockersOf(a) || a.name.localeCompare(b.name));
+				break;
+			case 'name':
+				arr.sort((a, b) => a.name.localeCompare(b.name));
+				break;
+			case 'cadence':
+			default:
+				arr.sort((a, b) => {
+					const sa = signals.get(a.folderPath)!;
+					const sb = signals.get(b.folderPath)!;
+					const ra = rank[sa.state] ?? 9;
+					const rb = rank[sb.state] ?? 9;
+					if (ra !== rb) return ra - rb;
+					if (sa.state === 'overdue' && sb.state === 'overdue') return (sb.daysSince ?? 0) - (sa.daysSince ?? 0);
+					return a.name.localeCompare(b.name);
+				});
+		}
+		return arr;
+	}
+
+	private committedOf(m: TeamMemberPage): number {
+		return this.rollupByEmail.get((m.email ?? '').toLowerCase())?.load.committed ?? 0;
+	}
+
+	private blockersOf(m: TeamMemberPage): number {
+		const r = this.rollupByEmail.get((m.email ?? '').toLowerCase());
+		return r ? r.counts.jiraBlocked + r.counts.topicsBlocked : 0;
 	}
 
 	private renderEmptyState(): void {
@@ -113,10 +166,26 @@ export class TeamOverviewView {
 			chipRow.appendChild(createCadenceChip(signal.state, formatCadenceLabel(member, signal)));
 		}
 
-		// Row 2: current focus (first-line extract happens in the caller's model; we don't parse body here)
-		// We only have frontmatter fields available from the scanner — body sections would require an extra read.
-		// For now just surface the role + cadence cadence config as a subtle subtitle. Current-focus text can
-		// be surfaced in Phase 2 by extending the parser to pick up the "## Current Focus" first line.
+		// Row 2: current focus (from the page body) + workload stats (from the roll-up).
+		if (member.currentFocus) {
+			card.createDiv({ cls: 'friday-team-focus', text: member.currentFocus });
+		}
+		const r = this.rollupByEmail.get((member.email ?? '').toLowerCase());
+		if (r) {
+			const stats = card.createDiv({ cls: 'friday-team-stats' });
+			stats.appendChild(createLoadChip(r.load.band, `${r.load.band} · ${r.load.committed}/${r.load.target.toFixed(0)}`));
+			const blocked = r.counts.jiraBlocked + r.counts.topicsBlocked;
+			if (blocked > 0) {
+				stats.createSpan({ cls: 'friday-team-blockbadge', text: `⛔ ${blocked}` })
+					.setAttribute('title', `${blocked} blocked item(s)`);
+			}
+			const driving = [...r.drivingTopics.map(t => t.title), ...r.drivingJira.map(i => i.key)];
+			if (driving.length > 0) {
+				const shown = driving.slice(0, 3).join(', ') + (driving.length > 3 ? ` +${driving.length - 3}` : '');
+				card.createDiv({ cls: 'friday-team-driving', text: `Driving: ${shown}` })
+					.setAttribute('title', driving.join(', '));
+			}
+		}
 
 		// Row 3: action buttons
 		const actions = card.createDiv({ cls: 'friday-team-actions' });
@@ -147,6 +216,60 @@ export class TeamOverviewView {
 			});
 			jiraBtn.addEventListener('click', () => this.openJiraTeamTab());
 		}
+
+		// Drill-down: an expandable panel with this member's topics + JIRA issues.
+		// Toggled in place (no re-render); the expanded set is persisted by the parent.
+		if (r && (r.topics.length > 0 || r.jiraIssues.length > 0)) {
+			const email = (member.email ?? '').toLowerCase();
+			const panel = card.createDiv({ cls: 'friday-team-drill' });
+			if (this.expanded.has(email)) panel.addClass('is-open');
+			this.renderDrillDown(panel, r);
+			const toggleBtn = actions.createEl('button', {
+				cls: 'friday-team-action',
+				text: this.expanded.has(email) ? 'Hide details' : 'Details',
+			});
+			toggleBtn.addEventListener('click', () => {
+				const open = panel.hasClass('is-open');
+				panel.toggleClass('is-open', !open);
+				toggleBtn.setText(!open ? 'Hide details' : 'Details');
+				this.onToggleExpand(email);
+			});
+		}
+	}
+
+	/** Build the (initially hidden) drill-down panel: the member's topics grouped by column
+	 *  and their JIRA issues, both clickable, with blocked/flagged items marked. */
+	private renderDrillDown(panel: HTMLElement, r: MemberRollup): void {
+		if (r.topics.length > 0) {
+			const sec = panel.createDiv({ cls: 'friday-team-drill-sec' });
+			sec.createDiv({ cls: 'friday-team-drill-h', text: 'Topics' });
+			const order: { status: SprintTopic['status']; label: string }[] = [
+				{ status: 'in-progress', label: 'In Progress' },
+				{ status: 'open', label: 'To Do' },
+				{ status: 'backlog', label: 'Backlog' },
+				{ status: 'done', label: 'Done' },
+			];
+			for (const { status, label } of order) {
+				for (const t of r.topics.filter(x => x.status === status)) {
+					const row = sec.createDiv({ cls: 'friday-team-drill-row' });
+					row.createSpan({ cls: 'friday-team-drill-col', text: label });
+					const titleEl = row.createSpan({ cls: 'friday-team-drill-title friday-clickable', text: t.title });
+					if (t.blocked) row.createSpan({ cls: 'friday-team-drill-flag', text: '⛔' });
+					titleEl.addEventListener('click', () => this.openFile(t.filePath));
+				}
+			}
+		}
+		if (r.jiraIssues.length > 0) {
+			const sec = panel.createDiv({ cls: 'friday-team-drill-sec' });
+			sec.createDiv({ cls: 'friday-team-drill-h', text: 'JIRA' });
+			for (const issue of r.jiraIssues) {
+				const row = sec.createDiv({ cls: 'friday-team-drill-row' });
+				const titleEl = row.createSpan({ cls: 'friday-team-drill-title friday-clickable', text: `${issue.key} ${issue.summary}` });
+				row.createSpan({ cls: 'friday-team-drill-col', text: issue.status });
+				if (issue.flagged) row.createSpan({ cls: 'friday-team-drill-flag', text: '⛔' });
+				titleEl.addEventListener('click', () => window.open(issue.issueUrl, '_blank'));
+			}
+		}
 	}
 
 	private async openFile(path: string): Promise<void> {
@@ -173,7 +296,9 @@ export class TeamOverviewView {
 
 	private async startOneOnOne(member: TeamMemberPage): Promise<void> {
 		try {
-			const file = await this.service.startOneOnOne(member, new Date());
+			const r = this.rollupByEmail.get((member.email ?? '').toLowerCase());
+			const agenda = r ? buildOneOnOneAgenda(r) : undefined;
+			const file = await this.service.startOneOnOne(member, new Date(), agenda);
 			const leaf = this.app.workspace.getLeaf(false);
 			await leaf.openFile(file);
 			this.app.workspace.revealLeaf(leaf);

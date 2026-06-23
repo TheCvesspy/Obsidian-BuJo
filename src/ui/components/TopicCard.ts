@@ -22,16 +22,26 @@ export interface TopicCardOptions {
 	/** Number of days after `lastNudged` before a waiting-on chip is marked stale.
 	 *  Default 7. */
 	nudgeThresholdDays?: number;
+	/** Compute the derived block state (manual OR JIRA OR dependency). When provided, the
+	 *  card shows a derived BLOCKED badge with reasons; when omitted, falls back to the
+	 *  manual `topic.blocked` flag only (so callers that don't pass it are unaffected). */
+	deriveBlock?: (topic: SprintTopic) => { state: 'clear' | 'at-risk' | 'blocked'; reasons: string[] };
+	/** Resolve dependency topics for the chip row. Omit to hide it. */
+	dependencyLookup?: (topic: SprintTopic) => { blockedBy: SprintTopic[]; blocks: SprintTopic[] };
+	/** Click handler for a dependency chip (opens that topic). */
+	onDependencyClick?: (topic: SprintTopic) => void;
 }
 
 const STATUS_TRANSITIONS: Record<TopicStatus, { left: TopicStatus | null; right: TopicStatus | null }> = {
-	'open': { left: null, right: 'in-progress' },
+	'backlog': { left: null, right: 'open' },
+	'open': { left: 'backlog', right: 'in-progress' },
 	'in-progress': { left: 'open', right: 'done' },
 	'done': { left: 'in-progress', right: null },
 };
 
 const STATUS_LABELS: Record<TopicStatus, string> = {
-	'open': 'Open',
+	'backlog': 'Backlog',
+	'open': 'To Do',
 	'in-progress': 'In Progress',
 	'done': 'Done',
 };
@@ -84,7 +94,15 @@ export function renderTopicCard(
 			opts.onTitleClick!(topic);
 		});
 	}
-	if (topic.blocked) {
+	const derived = opts.deriveBlock?.(topic);
+	if (derived) {
+		if (derived.state === 'blocked') {
+			const manualOnly = derived.reasons.length === 1 && derived.reasons[0] === 'Manually blocked';
+			const badge = headerEl.createSpan({ cls: 'friday-kanban-card-blocked', text: 'BLOCKED' });
+			if (!manualOnly) badge.addClass('friday-kanban-card-blocked-derived');
+			badge.setAttribute('title', derived.reasons.join(' · '));
+		}
+	} else if (topic.blocked) {
 		headerEl.createSpan({ cls: 'friday-kanban-card-blocked', text: 'BLOCKED' });
 	}
 
@@ -177,6 +195,25 @@ export function renderTopicCard(
 			|| (daysSinceNudge !== null && daysSinceNudge > threshold);
 		if (isStale) chip.addClass('friday-kanban-card-waiting-stale');
 		chip.setAttribute('title', `Waiting on: ${label}${suffix}`);
+	}
+
+	// Dependency chips: "⛓ Blocked by: A, B" (done blockers shown muted/struck-through).
+	const deps = opts.dependencyLookup?.(topic);
+	if (deps && deps.blockedBy.length > 0) {
+		const row = card.createDiv({ cls: 'friday-kanban-card-deps' });
+		row.createSpan({ cls: 'friday-kanban-card-deps-label', text: '⛓ Blocked by: ' });
+		deps.blockedBy.forEach((b, i) => {
+			if (i > 0) row.createSpan({ text: ', ' });
+			const chip = row.createSpan({ cls: 'friday-kanban-card-dep-chip', text: b.title });
+			if (b.status === 'done') chip.addClass('is-done');
+			if (opts.onDependencyClick) {
+				chip.addClass('friday-clickable');
+				chip.addEventListener('click', (e) => {
+					e.stopPropagation();
+					opts.onDependencyClick!(b);
+				});
+			}
+		});
 	}
 
 	// Linked pages

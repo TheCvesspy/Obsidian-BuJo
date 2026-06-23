@@ -5,6 +5,7 @@ import {
     GroupMode,
     FridayViewMode,
     TagCategory,
+    TopicStatus,
     DEFAULT_WORK_TYPES,
     DEFAULT_PURPOSES,
 } from './types';
@@ -116,7 +117,6 @@ export class FridaySettingTab extends PluginSettingTab {
                         [FridayViewMode.Monthly]: 'Monthly',
                         [FridayViewMode.Calendar]: 'Calendar',
                         [FridayViewMode.Unscheduled]: 'Unscheduled',
-                        [FridayViewMode.Sprint]: 'Sprint',
                         [FridayViewMode.Inbox]: 'Inbox',
                         [FridayViewMode.Overdue]: 'Overdue',
                         [FridayViewMode.Overview]: 'Overview',
@@ -233,28 +233,12 @@ export class FridaySettingTab extends PluginSettingTab {
                     })
             );
 
-        // ── Sprints ───────────────────────────────────────────────
-        containerEl.createEl('h2', { text: 'Sprints' });
+        // ── Topics (Kanban board) ─────────────────────────────────
+        containerEl.createEl('h2', { text: 'Topics' });
 
         new Setting(containerEl)
-            .setName('Default sprint length')
-            .setDesc('Length of a sprint in days.')
-            .addText(text =>
-                text
-                    .setPlaceholder('14')
-                    .setValue(String(this.plugin.settings.defaultSprintLength))
-                    .onChange(value => {
-                        const parsed = parseInt(value, 10);
-                        if (!isNaN(parsed) && parsed > 0) {
-                            this.plugin.settings.defaultSprintLength = parsed;
-                            this.debouncedSave(false);
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Sprint topics folder path')
-            .setDesc('Folder where sprint topic files are stored.')
+            .setName('Topics folder path')
+            .setDesc('Folder where topic files (the Kanban board) are stored.')
             .addText(text =>
                 text
                     .setPlaceholder('BuJo/Sprints/Topics')
@@ -266,28 +250,50 @@ export class FridaySettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
-            .setName('Auto-start next sprint')
-            .setDesc('Automatically start a new sprint when the current one ends.')
-            .addToggle(toggle =>
-                toggle
-                    .setValue(this.plugin.settings.autoStartNextSprint)
-                    .onChange(async value => {
-                        this.plugin.settings.autoStartNextSprint = value;
-                        await this.plugin.saveSettings(false);
-                    })
-            );
+            .setName('WIP limits')
+            .setDesc('Max topics per Kanban column before it warns. The board never blocks a move — it only flags the column and shows a notice. Leave a field blank for no limit.')
+            .setHeading();
+
+        const wipColumns: { status: TopicStatus; label: string }[] = [
+            { status: 'backlog', label: 'Backlog' },
+            { status: 'open', label: 'To Do' },
+            { status: 'in-progress', label: 'In Progress' },
+            { status: 'done', label: 'Done' },
+        ];
+        for (const { status, label } of wipColumns) {
+            new Setting(containerEl)
+                .setName(label)
+                .addText(text => {
+                    text.inputEl.type = 'number';
+                    text.inputEl.min = '0';
+                    const current = this.plugin.settings.wipLimits?.[status];
+                    text.setValue(current != null ? String(current) : '');
+                    text.onChange(value => {
+                        if (!this.plugin.settings.wipLimits) {
+                            this.plugin.settings.wipLimits = { backlog: null, open: null, 'in-progress': null, done: null };
+                        }
+                        const parsed = parseInt(value, 10);
+                        this.plugin.settings.wipLimits[status] = (!isNaN(parsed) && parsed > 0) ? parsed : null;
+                        this.debouncedSave(false);
+                    });
+                });
+        }
 
         new Setting(containerEl)
-            .setName('Count work days only')
-            .setDesc('Sprint duration and remaining days count only Mon–Fri (excludes weekends).')
-            .addToggle(toggle =>
-                toggle
-                    .setValue(this.plugin.settings.sprintWorkDaysOnly)
-                    .onChange(async value => {
-                        this.plugin.settings.sprintWorkDaysOnly = value;
-                        await this.plugin.saveSettings(false);
-                    })
-            );
+            .setName('Aging WIP threshold (days)')
+            .setDesc('In Analytics → Flow, flag any non-done topic that has sat in its column at least this many days.')
+            .addText(text => {
+                text.inputEl.type = 'number';
+                text.inputEl.min = '1';
+                text.setValue(String(this.plugin.settings.agingWipThresholdDays ?? 7));
+                text.onChange(value => {
+                    const parsed = parseInt(value, 10);
+                    if (!isNaN(parsed) && parsed > 0) {
+                        this.plugin.settings.agingWipThresholdDays = parsed;
+                        this.debouncedSave(false);
+                    }
+                });
+            });
 
         // ── Archive ──────────────────────────────────────────────
         containerEl.createEl('h2', { text: 'Archive' });
@@ -543,6 +549,19 @@ export class FridaySettingTab extends PluginSettingTab {
                 );
 
             new Setting(containerEl)
+                .setName('Flagged custom field ID')
+                .setDesc('JIRA custom field ID for the Flagged (impediment) field. Usually "customfield_10021". Drives JIRA-derived topic blocking.')
+                .addText(text =>
+                    text
+                        .setPlaceholder('customfield_10021')
+                        .setValue(this.plugin.settings.jiraFlaggedFieldId)
+                        .onChange(value => {
+                            this.plugin.settings.jiraFlaggedFieldId = value.trim();
+                            this.debouncedSave(false);
+                        })
+                );
+
+            new Setting(containerEl)
                 .setName('Test connection')
                 .setDesc('Verify your credentials by calling /rest/api/3/myself.')
                 .addButton(btn =>
@@ -582,6 +601,22 @@ export class FridaySettingTab extends PluginSettingTab {
                             await this.plugin.saveSettings(false);
                         })
                 );
+
+            new Setting(containerEl)
+                .setName('Default capacity (target concurrent items)')
+                .setDesc('Used for members without a per-member target. Drives the workload "committed vs. capacity" band on the Team Dashboard.')
+                .addText(text => {
+                    text.inputEl.type = 'number';
+                    text.inputEl.min = '1';
+                    text.setValue(String(this.plugin.settings.defaultTargetConcurrentItems ?? 5));
+                    text.onChange(value => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n > 0) {
+                            this.plugin.settings.defaultTargetConcurrentItems = n;
+                            this.debouncedSave(false);
+                        }
+                    });
+                });
 
             this.renderTeamMembersList(containerEl);
         }
@@ -1030,6 +1065,40 @@ export class FridaySettingTab extends PluginSettingTab {
             activeLabel.createSpan({ text: ' Active' });
             activeCheck.addEventListener('change', async () => {
                 this.plugin.settings.teamMembers[i].active = activeCheck.checked;
+                await this.plugin.saveSettings(false);
+            });
+
+            // Capacity: target concurrent items + availability %. Blank = use default / 100%.
+            const capInput = controlsRow.createEl('input', {
+                cls: 'friday-team-member-input friday-team-member-input-cap',
+                type: 'number',
+                attr: {
+                    placeholder: 'Target',
+                    min: '0',
+                    title: 'Target concurrent items (capacity). Blank = use default.',
+                    value: members[i].targetConcurrentItems != null ? String(members[i].targetConcurrentItems) : '',
+                },
+            });
+            capInput.addEventListener('change', async () => {
+                const n = parseInt(capInput.value, 10);
+                this.plugin.settings.teamMembers[i].targetConcurrentItems = (!isNaN(n) && n > 0) ? n : undefined;
+                await this.plugin.saveSettings(false);
+            });
+
+            const availInput = controlsRow.createEl('input', {
+                cls: 'friday-team-member-input friday-team-member-input-avail',
+                type: 'number',
+                attr: {
+                    placeholder: 'Avail %',
+                    min: '0',
+                    max: '100',
+                    title: 'Availability % (part-time / OOO). Blank = 100%.',
+                    value: members[i].availabilityPercent != null ? String(members[i].availabilityPercent) : '',
+                },
+            });
+            availInput.addEventListener('change', async () => {
+                const n = parseInt(availInput.value, 10);
+                this.plugin.settings.teamMembers[i].availabilityPercent = (!isNaN(n) && n >= 0 && n <= 100) ? n : undefined;
                 await this.plugin.saveSettings(false);
             });
 

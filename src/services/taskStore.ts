@@ -4,7 +4,6 @@ import {
     TaskStatus,
     Priority,
     GroupMode,
-    Sprint,
     StoreEventType,
     StoreEventCallback
 } from '../types';
@@ -152,13 +151,6 @@ export class TaskStore {
             const due = t.dueDate;
             return due >= start && due <= end;
         });
-    }
-
-    /** Tasks due within a sprint's date range */
-    getTasksForSprint(sprint: Sprint): TaskItem[] {
-        const start = new Date(sprint.startDate);
-        const end = new Date(sprint.endDate);
-        return this.getTasksForDateRange(start, end);
     }
 
     /** Open root tasks with due date before today */

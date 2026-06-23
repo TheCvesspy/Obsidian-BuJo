@@ -73,3 +73,14 @@ export function createCadenceChip(state: string, label: string): HTMLElement {
 	chip.textContent = label;
 	return chip;
 }
+
+/** Workload load-band chip used on the Team Dashboard capacity table.
+ *  `band` maps to a colour via CSS — light=muted, balanced=green, heavy=amber,
+ *  overloaded=red, out=grey. */
+export function createLoadChip(band: string, label: string): HTMLElement {
+	const chip = document.createElement('span');
+	chip.addClass('friday-load-chip');
+	chip.addClass(`friday-load-${band}`);
+	chip.textContent = label;
+	return chip;
+}

@@ -115,7 +115,7 @@ export class TeamMemberService {
 	/** Create a new 1:1 session file at `{member}/1on1/YYYY-MM-DD.md` with the
 	 *  standard template. If the file already exists (e.g. re-opening today's 1:1)
 	 *  just returns the existing TFile — safe to call more than once. */
-	async startOneOnOne(member: TeamMemberPage, date: Date = new Date()): Promise<TFile> {
+	async startOneOnOne(member: TeamMemberPage, date: Date = new Date(), agenda?: string): Promise<TFile> {
 		const iso = formatDateISO(date);
 		const sessionFolder = `${member.folderPath}/1on1`;
 		const sessionPath = `${sessionFolder}/${iso}.md`;
@@ -124,7 +124,7 @@ export class TeamMemberService {
 		if (existing instanceof TFile) return existing;
 
 		await ensureFolderExists(this.vault, sessionFolder);
-		const template = buildOneOnOneTemplate(member.name, iso);
+		const template = buildOneOnOneTemplate(member.name, iso, agenda);
 		return await this.vault.create(sessionPath, template);
 	}
 
@@ -166,13 +166,14 @@ function todayAtMidnight(): Date {
 	return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function buildOneOnOneTemplate(memberName: string, iso: string): string {
+function buildOneOnOneTemplate(memberName: string, iso: string, agenda?: string): string {
+	const prep = agenda && agenda.trim() ? `\n## Prep (auto)\n${agenda.trim()}\n` : '';
 	return `---
 session_date: ${iso}
 ---
 
 # 1:1 with [[${memberName}]] — ${iso}
-
+${prep}
 ## Topics
 -\u0020
 

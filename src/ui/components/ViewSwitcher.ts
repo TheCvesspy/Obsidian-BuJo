@@ -23,9 +23,7 @@ export class ViewSwitcher {
 		//   Daily ← today's work, the morning-review landing tab
 		//   Topics ← strategic units, promoted to the front per user request
 		//   Weekly / Monthly / Calendar ← time-scoped views, ascending granularity
-		//   Unscheduled ← un-dated backlog (lives here, between Calendar and Sprint,
-		//                 as its own tab — used to be a section inside Daily)
-		//   Sprint ← active sprint kanban
+		//   Unscheduled ← un-dated backlog (its own tab — used to be a section inside Daily)
 		//   Inbox / Overdue / Overview / Analytics ← triage + retrospective
 		const tabs: { mode: FridayViewMode; label: string }[] = [
 			{ mode: FridayViewMode.Daily, label: 'Daily' },
@@ -34,7 +32,6 @@ export class ViewSwitcher {
 			{ mode: FridayViewMode.Monthly, label: 'Monthly' },
 			{ mode: FridayViewMode.Calendar, label: 'Calendar' },
 			{ mode: FridayViewMode.Unscheduled, label: 'Unscheduled' },
-			{ mode: FridayViewMode.Sprint, label: 'Sprint' },
 			{ mode: FridayViewMode.Inbox, label: '\u{1F4E5} Inbox' },
 			{ mode: FridayViewMode.Overdue, label: 'Overdue' },
 			{ mode: FridayViewMode.Overview, label: 'Overview' },

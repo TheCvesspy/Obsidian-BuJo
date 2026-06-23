@@ -170,6 +170,18 @@ export function formatWeekId(weekId: string): string {
 }
 
 /**
+ * Whole days between two ISO YYYY-MM-DD dates, computed as (b - a).
+ * Positive when `isoB` is after `isoA`. Returns null for malformed input.
+ */
+export function daysBetween(isoA: string, isoB: string): number | null {
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(isoA) || !/^\d{4}-\d{2}-\d{2}$/.test(isoB)) return null;
+	const a = new Date(isoA + 'T00:00:00').getTime();
+	const b = new Date(isoB + 'T00:00:00').getTime();
+	if (isNaN(a) || isNaN(b)) return null;
+	return Math.round((b - a) / (24 * 60 * 60 * 1000));
+}
+
+/**
  * Get the start of the week containing the given date, respecting configurable week start day.
  * @param date The reference date
  * @param weekStartDay 0=Sunday, 1=Monday, ... 6=Saturday

@@ -40,9 +40,8 @@ export class Toolbar {
 			}, SEARCH_DEBOUNCE_MS);
 		});
 
-		// Grouping — only for Sprint and Overdue views
-		const showGrouping = this.viewMode === FridayViewMode.Sprint ||
-			this.viewMode === FridayViewMode.Overdue ||
+		// Grouping — only for Overdue and Overview views
+		const showGrouping = this.viewMode === FridayViewMode.Overdue ||
 			this.viewMode === FridayViewMode.Overview;
 
 		if (showGrouping) {

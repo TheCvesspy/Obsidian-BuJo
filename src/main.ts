@@ -1,12 +1,11 @@
-import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice, Platform } from 'obsidian';
-import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, FridayViewMode } from './types';
+import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice, Platform, TFile } from 'obsidian';
+import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, FridayViewMode, TopicStatus, WorkloadSnapshot } from './types';
 import { VIEW_TYPE_FRIDAY, VIEW_TYPE_JIRA_DASHBOARD, VIEW_TYPE_TEAM_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
 import { FridaySettingTab } from './settings';
 import { VaultScanner } from './services/vaultScanner';
 import { TaskStore } from './services/taskStore';
 import { TaskWriter } from './services/taskWriter';
 import { DailyNoteService } from './services/dailyNoteService';
-import { SprintService } from './services/sprintService';
 import { SprintTopicService } from './services/sprintTopicService';
 import { MigrationService } from './services/migrationService';
 import { AnalyticsService } from './services/analyticsService';
@@ -17,7 +16,10 @@ import { JiraService } from './services/jiraService';
 import { JiraDashboardService } from './services/jiraDashboardService';
 import { JiraTeamService } from './services/jiraTeamService';
 import { TeamMemberService } from './services/teamMemberService';
+import { TeamRollupService, buildOneOnOneAgenda } from './services/teamRollupService';
+import { TeamDigestService } from './services/teamDigestService';
 import { FridayView } from './ui/FridayView';
+import { TopicsSubMode } from './ui/components/TopicsOverviewView';
 import { JiraDashboardView } from './ui/JiraDashboardView';
 import { TeamDashboardView } from './ui/TeamDashboardView';
 import { MigrationModal } from './ui/MigrationModal';
@@ -28,7 +30,10 @@ import { InsertTaskModal, buildTaskLine, buildTaskBlock } from './ui/InsertTaskM
 import { QuickCaptureModal } from './ui/QuickCaptureModal';
 import { DueDateModal } from './ui/DueDateModal';
 import { SyntaxReferenceModal } from './ui/components/SyntaxReference';
-import { getWeekId } from './utils/dateUtils';
+import { SprintTopicModal } from './ui/SprintTopicModal';
+import { TopicSwitcherModal } from './ui/TopicSwitcherModal';
+import { pickFromList } from './ui/pickers';
+import { getWeekId, isoToPluginDate, pluginDateToIso } from './utils/dateUtils';
 import { McpServer, generateMcpToken, noticeForError } from './mcp/server';
 import { taskTools } from './mcp/tools/tasks';
 import { topicTools } from './mcp/tools/topics';
@@ -41,7 +46,6 @@ export default class FridayPlugin extends Plugin {
 	private store: TaskStore;
 	private writer: TaskWriter;
 	private dailyNoteService: DailyNoteService;
-	private sprintService: SprintService;
 	private sprintTopicService: SprintTopicService;
 	private migrationService: MigrationService;
 	private analyticsService: AnalyticsService;
@@ -52,6 +56,8 @@ export default class FridayPlugin extends Plugin {
 	jiraDashboardService: JiraDashboardService;
 	jiraTeamService: JiraTeamService;
 	teamMemberService: TeamMemberService;
+	private teamRollupService: TeamRollupService;
+	private teamDigestService: TeamDigestService;
 	mcpServer: McpServer;
 	private statusBarEl: HTMLElement;
 
@@ -63,10 +69,14 @@ export default class FridayPlugin extends Plugin {
 		this.data.weeklyHistory = this.data.weeklyHistory ?? [];
 		this.data.lastWeeklyReviewWeek = this.data.lastWeeklyReviewWeek ?? null;
 		this.data.monthlyHistory = this.data.monthlyHistory ?? [];
+		this.data.kanbanMigrationDone = this.data.kanbanMigrationDone ?? false;
+		this.data.workloadHistory = this.data.workloadHistory ?? [];
+		this.data.lastWorkloadSnapshotWeek = this.data.lastWorkloadSnapshotWeek ?? null;
 
 		// Migrate removed view modes: Eisenhower and ImpactEffort (task-level) were repurposed
-		// for Topics. Rewrite stale defaultViewMode values so users don't land on a missing case.
-		const staleModes = ['eisenhower', 'impactEffort'];
+		// for Topics; Sprint was removed when the plugin moved to a continuous Kanban model.
+		// Rewrite stale defaultViewMode values so users don't land on a missing case.
+		const staleModes = ['eisenhower', 'impactEffort', 'sprint'];
 		if (staleModes.includes(this.data.settings.defaultViewMode as string)) {
 			this.data.settings.defaultViewMode = FridayViewMode.Topics;
 		}
@@ -84,7 +94,6 @@ export default class FridayPlugin extends Plugin {
 		this.scanner = new VaultScanner(this.app.vault, () => this.settings);
 		this.scanner.setWriter(this.writer);
 		this.dailyNoteService = new DailyNoteService(this.app.vault, () => this.settings);
-		this.sprintService = new SprintService(() => this.data, () => this.saveSettings());
 		this.sprintTopicService = new SprintTopicService(this.app.vault, () => this.settings);
 		this.migrationService = new MigrationService(
 			this.store,
@@ -106,6 +115,18 @@ export default class FridayPlugin extends Plugin {
 		this.jiraDashboardService = new JiraDashboardService(() => this.settings);
 		this.jiraTeamService = new JiraTeamService(() => this.settings);
 		this.teamMemberService = new TeamMemberService(this.app.vault, this.scanner, () => this.settings);
+		this.teamRollupService = new TeamRollupService(
+			() => this.settings,
+			this.teamMemberService,
+			this.jiraTeamService,
+			() => this.scanner.getAllTopics(),
+		);
+		this.teamDigestService = new TeamDigestService(
+			this.app.vault,
+			() => this.settings,
+			this.teamRollupService,
+			this.jiraTeamService,
+		);
 
 		// Embedded MCP server — opt-in via settings, desktop only. The tool layer is wired
 		// up here so the same instance handles every tool call without re-binding state on
@@ -119,7 +140,6 @@ export default class FridayPlugin extends Plugin {
 				getSettings: () => this.settings,
 			}),
 			...topicTools({
-				sprintService: this.sprintService,
 				sprintTopicService: this.sprintTopicService,
 			}),
 		]);
@@ -136,7 +156,7 @@ export default class FridayPlugin extends Plugin {
 
 		this.registerView(VIEW_TYPE_FRIDAY, (leaf) =>
 			new FridayView(
-				leaf, this.store, this.writer, this.sprintService,
+				leaf, this.store, this.writer,
 				this.sprintTopicService, this.scanner,
 				this.migrationService, this.analyticsService,
 				this.monthlyAnalyticsService, this.monthlyNoteService,
@@ -152,11 +172,16 @@ export default class FridayPlugin extends Plugin {
 			new TeamDashboardView(
 				leaf,
 				this.teamMemberService,
+				this.teamRollupService,
+				this.teamDigestService,
+				this.jiraTeamService,
 				() => this.settings,
 				// Scanner has no unsubscribe API; the view guards on `contentContainer`
 				// being non-null so closures fired post-close are safe.
 				(cb) => this.scanner.onTeamChange(cb),
+				(cb) => this.scanner.onTopicsChange(cb),
 				() => this.activateJiraTeamTab(),
+				() => this.data,
 			)
 		);
 
@@ -171,7 +196,6 @@ export default class FridayPlugin extends Plugin {
 				() => this.saveData(this.data),
 				() => this.scanner.getAllTopics(),
 				this.sprintTopicService,
-				this.sprintService,
 				(cb) => this.scanner.onTopicsChange(cb),
 				this.jiraTeamService,
 			)
@@ -239,6 +263,94 @@ export default class FridayPlugin extends Plugin {
 			callback: () => new SyntaxReferenceModal(this.app).open(),
 		});
 
+		// ── Topic quick-switcher & palette commands (Kanban-aware) ──
+		this.addCommand({
+			id: 'go-to-topic',
+			name: 'Go to topic',
+			callback: () => {
+				const topics = this.scanner.getAllTopics();
+				if (topics.length === 0) { new Notice('No topics found.'); return; }
+				new TopicSwitcherModal(this.app, topics, (t) => { void this.openTopicFile(t.filePath); }, this.settings).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'create-topic',
+			name: 'Create topic',
+			callback: () => {
+				// Scanner picks up the new file and re-renders open views; no manual refresh needed.
+				new SprintTopicModal(this.app, this.sprintTopicService, () => { /* no-op */ }, undefined, undefined, this.settings, this.scanner.getAllTopics()).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'move-topic-to-column',
+			name: 'Move topic to column',
+			callback: async () => {
+				const topics = this.scanner.getAllTopics();
+				if (topics.length === 0) { new Notice('No topics found.'); return; }
+				const topic = await pickFromList(this.app, topics.map(t => ({
+					text: t.title, value: t, hint: this.topicColumnLabel(t.status),
+				})), { placeholder: 'Pick a topic…' });
+				if (!topic) return;
+				const status = await pickFromList<TopicStatus>(this.app, [
+					{ text: 'Backlog', value: 'backlog' },
+					{ text: 'To Do', value: 'open' },
+					{ text: 'In Progress', value: 'in-progress' },
+					{ text: 'Done', value: 'done' },
+				], { placeholder: `Move "${topic.title}" to…` });
+				if (status === null) return;
+				await this.sprintTopicService.setTopicStatus(topic.filePath, status);
+				new Notice(`Moved "${topic.title}" → ${this.topicColumnLabel(status)}`);
+			},
+		});
+
+		this.addCommand({
+			id: 'toggle-topic-blocked',
+			name: 'Toggle topic blocked',
+			callback: async () => {
+				const topics = this.scanner.getAllTopics();
+				if (topics.length === 0) { new Notice('No topics found.'); return; }
+				const topic = await pickFromList(this.app, topics.map(t => ({
+					text: t.title, value: t, hint: t.blocked ? 'blocked' : '',
+				})), { placeholder: 'Toggle blocked on…' });
+				if (!topic) return;
+				await this.sprintTopicService.setTopicBlocked(topic.filePath, !topic.blocked);
+				new Notice(`${topic.blocked ? 'Unblocked' : 'Blocked'}: ${topic.title}`);
+			},
+		});
+
+		this.addCommand({
+			id: 'set-topic-due-date',
+			name: 'Set topic due date',
+			callback: async () => {
+				const topics = this.scanner.getAllTopics();
+				if (topics.length === 0) { new Notice('No topics found.'); return; }
+				const topic = await pickFromList(this.app, topics.map(t => ({
+					text: t.title, value: t, hint: t.dueDate ?? '',
+				})), { placeholder: 'Set due date on…' });
+				if (!topic) return;
+				const current = topic.dueDate ? isoToPluginDate(topic.dueDate) : '';
+				new DueDateModal(this.app, current, async (pluginDate) => {
+					const iso = pluginDate ? pluginDateToIso(pluginDate) : null;
+					await this.sprintTopicService.setTopicDueDate(topic.filePath, iso);
+					new Notice(iso ? `Due ${iso}: ${topic.title}` : `Due date cleared: ${topic.title}`);
+				}).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'open-board',
+			name: 'Open Board',
+			callback: () => { void this.activateViewAtMode(FridayViewMode.Topics, 'board'); },
+		});
+
+		this.addCommand({
+			id: 'open-roadmap',
+			name: 'Open Roadmap',
+			callback: () => { void this.activateViewAtMode(FridayViewMode.Topics, 'roadmap'); },
+		});
+
 		this.addCommand({
 			id: 'monthly-review',
 			name: 'Monthly Review',
@@ -255,6 +367,31 @@ export default class FridayPlugin extends Plugin {
 			id: 'start-1-on-1',
 			name: 'Start 1:1',
 			callback: () => this.openOneOnOnePicker(),
+		});
+
+		this.addCommand({
+			id: 'generate-team-digest',
+			name: 'Generate Team Status Digest',
+			callback: async () => {
+				try {
+					const file = await this.teamDigestService.generateDigest(new Date());
+					const leaf = this.app.workspace.getLeaf(false);
+					await leaf.openFile(file);
+					this.app.workspace.revealLeaf(leaf);
+					new Notice('Team status digest generated.');
+				} catch (e) {
+					new Notice(`Could not generate digest: ${e instanceof Error ? e.message : 'error'}`);
+				}
+			},
+		});
+
+		this.addCommand({
+			id: 'capture-workload-snapshot',
+			name: 'Capture Workload Snapshot',
+			callback: async () => {
+				const ok = await this.captureWorkloadSnapshot(new Date());
+				new Notice(ok ? 'Workload snapshot captured.' : 'No active team members to snapshot.');
+			},
 		});
 
 		this.addCommand({
@@ -404,7 +541,9 @@ export default class FridayPlugin extends Plugin {
 			await this.scanner.fullScan();
 			this.store.setTasks(this.scanner.getAllTasks());
 			this.updateStatusBar();
+			await this.runKanbanMigrationIfNeeded();
 			await this.autoGenerateTeamPagesIfNeeded();
+			await this.captureWorkloadSnapshotIfNeeded();
 			this.checkMigration();
 			this.checkWeeklyReview();
 			await this.applyMcpServerState();
@@ -434,6 +573,77 @@ export default class FridayPlugin extends Plugin {
 		} else {
 			await this.mcpServer.stop();
 		}
+	}
+
+	/** One-time sprint→Kanban data migration. Rewrites topic frontmatter (backlog status +
+	 *  strips dead sprint keys) once, guarded by a persisted flag so it never re-runs. */
+	private async runKanbanMigrationIfNeeded(): Promise<void> {
+		if (this.data.kanbanMigrationDone) return;
+		try {
+			const changed = await this.sprintTopicService.migrateToKanban();
+			this.data.kanbanMigrationDone = true;
+			await this.saveData(this.data);
+			if (changed > 0) {
+				await this.scanner.fullScan();
+				this.store.setTasks(this.scanner.getAllTasks());
+				new Notice(`Friday: migrated ${changed} topic(s) to the Kanban board.`);
+			}
+		} catch (e) {
+			console.error('[Friday] Kanban migration failed:', e);
+		}
+	}
+
+	/** Capture a workload snapshot from the current roll-up. Awaits a JIRA refresh when
+	 *  enabled+stale; records jiraIncluded=false rather than logging zeros if unavailable.
+	 *  Returns false (no-op) when there are no active team members. */
+	private async captureWorkloadSnapshot(now: Date = new Date()): Promise<boolean> {
+		const active = (this.settings.teamMembers ?? []).filter(m => m.active && m.email);
+		if (active.length === 0) return false;
+		if (this.jiraTeamService.isEnabled() && this.jiraTeamService.isStale()) {
+			try { await this.jiraTeamService.refresh(); } catch { /* tolerate — snapshot falls back to topics */ }
+		}
+		const rollup = this.teamRollupService.buildRollup(now);
+		const members: WorkloadSnapshot['members'] = {};
+		const totals = { committed: 0, blocked: 0, inProgress: 0, open: 0, done: 0 };
+		for (const m of rollup.members) {
+			const c = m.counts;
+			const blocked = c.jiraBlocked + c.topicsBlocked;
+			const inProgress = c.jiraInProgress + c.topicsInProgress;
+			const open = c.jiraOpen + c.topicsOpen;
+			const done = c.jiraDone + c.topicsDone;
+			members[m.email] = { displayName: m.displayName, committed: m.load.committed, blocked, inProgress, open, done };
+			totals.committed += m.load.committed;
+			totals.blocked += blocked;
+			totals.inProgress += inProgress;
+			totals.open += open;
+			totals.done += done;
+		}
+		await this.saveWorkloadSnapshot({
+			weekId: getWeekId(now),
+			capturedAt: now.toISOString(),
+			jiraIncluded: rollup.jiraIncluded,
+			members,
+			totals,
+		});
+		return true;
+	}
+
+	private async saveWorkloadSnapshot(snapshot: WorkloadSnapshot): Promise<void> {
+		const MAX_HISTORY = 104;
+		const idx = this.data.workloadHistory.findIndex(s => s.weekId === snapshot.weekId);
+		if (idx >= 0) this.data.workloadHistory[idx] = snapshot;
+		else this.data.workloadHistory.push(snapshot);
+		if (this.data.workloadHistory.length > MAX_HISTORY) {
+			this.data.workloadHistory = this.data.workloadHistory.slice(-MAX_HISTORY);
+		}
+		this.data.lastWorkloadSnapshotWeek = snapshot.weekId;
+		await this.saveData(this.data);
+	}
+
+	/** Weekly opportunistic capture — once per ISO week, when there are active members. */
+	private async captureWorkloadSnapshotIfNeeded(): Promise<void> {
+		if (this.data.lastWorkloadSnapshotWeek === getWeekId(new Date())) return;
+		await this.captureWorkloadSnapshot(new Date());
 	}
 
 	/** One-shot: if the user has a populated `teamMembers[]` list from the JIRA
@@ -516,6 +726,32 @@ export default class FridayPlugin extends Plugin {
 		await this.activateJiraDashboard();
 	}
 
+	/** Open (or focus) the Friday view and switch it to a specific mode. */
+	private async activateViewAtMode(mode: FridayViewMode, topicsSubMode?: TopicsSubMode): Promise<void> {
+		await this.activateView();
+		const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_FRIDAY)[0]?.view;
+		if (view instanceof FridayView) view.setViewMode(mode, topicsSubMode);
+	}
+
+	/** Open a topic markdown file in the active leaf. */
+	private async openTopicFile(path: string): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) { new Notice('Topic file not found.'); return; }
+		const leaf = this.app.workspace.getLeaf(false);
+		await leaf.openFile(file);
+		this.app.workspace.revealLeaf(leaf);
+	}
+
+	private topicColumnLabel(status: TopicStatus): string {
+		switch (status) {
+			case 'backlog': return 'Backlog';
+			case 'open': return 'To Do';
+			case 'in-progress': return 'In Progress';
+			case 'done': return 'Done';
+			default: return status;
+		}
+	}
+
 	/** Open the fuzzy picker for 1:1 start. Separates the "pick" from "start"
 	 *  so the same flow is reachable from a keyboard shortcut (no view open)
 	 *  as well as from the Team Overview button. Scopes to active members —
@@ -529,7 +765,10 @@ export default class FridayPlugin extends Plugin {
 		}
 		new OneOnOneModal(this.app, members, async (member) => {
 			try {
-				const file = await this.teamMemberService.startOneOnOne(member, new Date());
+				const rollup = this.teamRollupService.buildRollup();
+				const r = rollup.members.find(x => x.email.toLowerCase() === (member.email ?? '').toLowerCase());
+				const agenda = r ? buildOneOnOneAgenda(r) : undefined;
+				const file = await this.teamMemberService.startOneOnOne(member, new Date(), agenda);
 				const leaf = this.app.workspace.getLeaf(false);
 				await leaf.openFile(file);
 				this.app.workspace.revealLeaf(leaf);

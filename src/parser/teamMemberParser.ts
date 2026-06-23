@@ -44,6 +44,7 @@ export function parseTeamMemberPage(
 	const startDate = parseISODate(trimOrNull(fm['start_date']));
 
 	const lastOneOnOne = computeLastSessionDate(sessionPaths);
+	const currentFocus = extractSectionFirstLine(content, 'Current Focus');
 
 	return {
 		filePath,
@@ -57,7 +58,25 @@ export function parseTeamMemberPage(
 		jiraIdentity,
 		lastOneOnOne,
 		sessionPaths,
+		currentFocus,
 	};
+}
+
+/** First non-empty, non-bullet-marker line under a `## {heading}` section in a markdown body.
+ *  Returns null when the section is absent or empty. Strips a leading list marker / blockquote. */
+function extractSectionFirstLine(content: string, heading: string): string | null {
+	const lines = content.split('\n');
+	let inSection = false;
+	for (const raw of lines) {
+		if (!inSection) {
+			if (new RegExp(`^##\\s+${heading}\\s*$`, 'i').test(raw)) inSection = true;
+			continue;
+		}
+		if (/^##\s+/.test(raw)) break; // next section
+		const stripped = raw.replace(/^\s*(?:[-*+]\s+|>\s*)?/, '').trim();
+		if (stripped.length > 0) return stripped;
+	}
+	return null;
 }
 
 /**

@@ -1,7 +1,6 @@
-import { App, Modal, Setting, FuzzySuggestModal, TFile } from 'obsidian';
+import { App, Modal, Setting, FuzzySuggestModal, TFile, Notice } from 'obsidian';
 import { SprintTopic, Priority, TopicImpact, TopicEffort, PluginSettings, TeamMember } from '../types';
 import { SprintTopicService } from '../services/sprintTopicService';
-import { SprintService } from '../services/sprintService';
 import { serializeRefs } from '../parser/topicParser';
 
 /** Fuzzy file picker that returns the selected page name */
@@ -27,6 +26,17 @@ class PageSuggestModal extends FuzzySuggestModal<TFile> {
 	}
 }
 
+/** Fuzzy picker over topics — used to add a "Blocked by" dependency. */
+class TopicPickerModal extends FuzzySuggestModal<SprintTopic> {
+	constructor(app: App, private items: SprintTopic[], private onChoose: (t: SprintTopic) => void) {
+		super(app);
+		this.setPlaceholder('Pick a blocking topic…');
+	}
+	getItems(): SprintTopic[] { return this.items; }
+	getItemText(t: SprintTopic): string { return t.title; }
+	onChooseItem(t: SprintTopic): void { this.onChoose(t); }
+}
+
 export class SprintTopicModal extends Modal {
 	private title: string = '';
 	private jira: string = '';
@@ -35,8 +45,6 @@ export class SprintTopicModal extends Modal {
 	private impact: TopicImpact | null = null;
 	private effort: TopicEffort | null = null;
 	private dueDate: string = '';
-	/** '' = Backlog (no sprint assigned). Otherwise a sprint id. */
-	private chosenSprintId: string = '';
 	/** Empty string = unassigned. Otherwise a team member email. */
 	private assignee: string = '';
 	/** Empty string = not waiting. 'other:<text>' means free-text fallback; any other
@@ -48,19 +56,21 @@ export class SprintTopicModal extends Modal {
 	private refs: Array<{ label: string; url: string }> = [];
 	private chipsContainer: HTMLElement | null = null;
 	private refsContainer: HTMLElement | null = null;
+	private blockedBy: string[] = [];
+	private blockerChipsContainer: HTMLElement | null = null;
 
 	constructor(
 		app: App,
 		private topicService: SprintTopicService,
-		private sprintId: string,
 		private onSave: (topic: SprintTopic) => void,
 		private editTopic?: SprintTopic,
-		private sprintService?: SprintService,
 		/** Optional pre-fill for create mode (ignored when editing). Used by the
 		 *  JIRA Dashboard "Create topic from issue" action to seed title/jira/priority. */
 		private prefill?: { title?: string; jira?: string; priority?: Priority },
 		/** Plugin settings — used to populate the Assignee dropdown from `teamMembers`. */
 		private settings?: PluginSettings,
+		/** All topics — used to populate the "Blocked by" dependency picker. */
+		private allTopics: SprintTopic[] = [],
 	) {
 		super(app);
 	}
@@ -78,10 +88,10 @@ export class SprintTopicModal extends Modal {
 			this.impact = this.editTopic.impact;
 			this.effort = this.editTopic.effort;
 			this.dueDate = this.editTopic.dueDate ?? '';
-			this.chosenSprintId = this.editTopic.sprintId ?? '';
 			this.assignee = this.editTopic.assignee ?? '';
 			this.lastNudged = this.editTopic.lastNudged ?? '';
 			this.refs = this.editTopic.refs.map(r => ({ ...r }));
+			this.blockedBy = this.editTopic.blockedBy ? [...this.editTopic.blockedBy] : [];
 			// Seed waitingOn state: match against active team members to decide mode
 			if (this.editTopic.waitingOn) {
 				const members = this.settings?.teamMembers ?? [];
@@ -95,8 +105,6 @@ export class SprintTopicModal extends Modal {
 				}
 			}
 		} else {
-			// For new topics, default to the sprintId passed by the caller (may be '' for backlog).
-			this.chosenSprintId = this.sprintId;
 			// Apply optional prefill (JIRA Dashboard "Create topic from issue" flow).
 			if (this.prefill) {
 				if (this.prefill.title) this.title = this.prefill.title;
@@ -106,7 +114,7 @@ export class SprintTopicModal extends Modal {
 		}
 
 		contentEl.createEl('h2', {
-			text: this.editTopic ? 'Edit Topic' : 'New Sprint Topic',
+			text: this.editTopic ? 'Edit Topic' : 'New Topic',
 		});
 
 		new Setting(contentEl)
@@ -129,47 +137,6 @@ export class SprintTopicModal extends Modal {
 				.setValue(this.jira)
 				.onChange(value => { this.jira = value; })
 			);
-
-		// Sprint picker — lets users create backlog topics from any entry point,
-		// and reassign existing topics between sprints (or back to backlog).
-		if (this.sprintService) {
-			const sprints = this.sprintService.getSprints();
-			const options: Record<string, string> = { '': '(Backlog)' };
-			for (const s of sprints) {
-				const suffix = s.status === 'active' ? ' · active'
-					: s.status === 'completed' ? ' · completed'
-					: '';
-				options[s.id] = `${s.name}${suffix}`;
-			}
-			new Setting(contentEl)
-				.setName('Sprint')
-				.setDesc('Assign to a sprint, or leave in Backlog')
-				.addDropdown(dropdown => dropdown
-					.addOptions(options)
-					.setValue(this.chosenSprintId)
-					.onChange(value => { this.chosenSprintId = value; })
-				);
-
-			// Sprint history — read-only list of sprints this topic has been part of.
-			// Only shown in edit mode; new topics have no history yet.
-			if (this.editTopic && this.editTopic.sprintHistory.length > 0) {
-				const historySetting = new Setting(contentEl)
-					.setName('Sprint history')
-					.setDesc('All sprints this topic has been assigned to (in order)');
-				const listEl = historySetting.settingEl.createDiv({ cls: 'friday-topic-sprint-history' });
-				for (const sprintId of this.editTopic.sprintHistory) {
-					const sprint = sprints.find(s => s.id === sprintId);
-					const label = sprint
-						? `${sprint.name} (${sprint.startDate} → ${sprint.endDate})`
-						: `${sprintId} · deleted`;
-					const chip = listEl.createDiv({ cls: 'friday-topic-sprint-history-chip' });
-					chip.setText(label);
-					if (sprintId === this.editTopic.sprintId) {
-						chip.addClass('friday-topic-sprint-history-current');
-					}
-				}
-			}
-		}
 
 		new Setting(contentEl)
 			.setName('Priority')
@@ -295,6 +262,9 @@ export class SprintTopicModal extends Modal {
 
 		// External references — Confluence, Figma, SAP, etc.
 		this.renderRefsSection(contentEl);
+
+		// Blocked-by dependencies
+		this.renderBlockedBySection(contentEl);
 
 		// Error display
 		const errorEl = contentEl.createDiv({ cls: 'friday-modal-error' });
@@ -424,22 +394,7 @@ export class SprintTopicModal extends Modal {
 				refs: this.refs.length > 0 ? serializeRefs(this.refs) : null,
 			};
 			await this.topicService.updateTopicFrontmatter(this.editTopic.filePath, fmUpdates);
-
-			// Sprint changes must route through assignTopicToSprint so sprintHistory
-			// is updated atomically (captures both the old and new sprint).
-			let newHistory = this.editTopic.sprintHistory;
-			const sprintChanged = this.sprintService
-				&& this.chosenSprintId !== (this.editTopic.sprintId ?? '');
-			if (sprintChanged) {
-				await this.topicService.assignTopicToSprint(this.editTopic.filePath, this.chosenSprintId);
-				// Mirror the service's merge logic for the in-memory SprintTopic returned to callers
-				const seen = new Set(newHistory);
-				const merged = [...newHistory];
-				for (const s of [this.editTopic.sprintId ?? '', this.chosenSprintId]) {
-					if (s && !seen.has(s)) { merged.push(s); seen.add(s); }
-				}
-				newHistory = merged;
-			}
+			await this.applyDependencyChanges(this.editTopic.filePath, this.editTopic.blockedBy);
 
 			// Parse the jira input into a deduplicated array of issue keys.
 			// The input accepts comma-separated (or whitespace-separated) keys; the regex
@@ -463,12 +418,11 @@ export class SprintTopicModal extends Modal {
 				impact: this.impact,
 				effort: this.effort,
 				dueDate: dueDateValue,
-				sprintId: this.sprintService ? (this.chosenSprintId || null) : this.editTopic.sprintId,
-				sprintHistory: newHistory,
 				assignee: this.assignee || null,
 				waitingOn: waitingOnValue,
 				lastNudged: lastNudgedValue,
 				refs: this.refs.map(r => ({ ...r })),
+				blockedBy: [...this.blockedBy],
 			};
 			this.onSave(updated);
 		} else {
@@ -477,7 +431,6 @@ export class SprintTopicModal extends Modal {
 				this.jira.trim() || null,
 				this.priority,
 				this.linkedPages,
-				this.chosenSprintId,
 				this.impact,
 				this.effort,
 				dueDateValue,
@@ -486,6 +439,7 @@ export class SprintTopicModal extends Modal {
 				lastNudgedValue,
 				this.refs,
 			);
+			await this.applyDependencyChanges(topic.filePath, []);
 			this.onSave(topic);
 		}
 		this.close();
@@ -511,6 +465,67 @@ export class SprintTopicModal extends Modal {
 				this.linkedPages = this.linkedPages.filter(p => p !== page);
 				this.renderChips();
 			});
+		}
+	}
+
+	/** "Blocked by" dependency picker — choose other topics that block this one.
+	 *  Self and already-selected topics are excluded; true cycles are caught on save. */
+	private renderBlockedBySection(contentEl: HTMLElement): void {
+		const setting = new Setting(contentEl)
+			.setName('Blocked by')
+			.setDesc('Other topics that must finish first. Cycles are rejected on save.')
+			.addButton(btn => btn
+				.setButtonText('+ Add blocker')
+				.onClick(() => {
+					const selfPath = this.editTopic?.filePath;
+					const candidates = this.allTopics.filter(t =>
+						t.filePath !== selfPath && !this.blockedBy.includes(t.filePath));
+					if (candidates.length === 0) {
+						new Notice('No other topics available to add.');
+						return;
+					}
+					new TopicPickerModal(this.app, candidates, (t) => {
+						this.blockedBy.push(t.filePath);
+						this.renderBlockerChips();
+					}).open();
+				})
+			);
+		this.blockerChipsContainer = setting.settingEl.createDiv({ cls: 'friday-page-chips' });
+		this.renderBlockerChips();
+	}
+
+	private renderBlockerChips(): void {
+		if (!this.blockerChipsContainer) return;
+		this.blockerChipsContainer.empty();
+		if (this.blockedBy.length === 0) {
+			this.blockerChipsContainer.createSpan({ cls: 'friday-page-chips-empty', text: 'No blockers' });
+			return;
+		}
+		for (const path of this.blockedBy) {
+			const topic = this.allTopics.find(t => t.filePath === path);
+			const label = topic ? topic.title : (path.split('/').pop()?.replace(/\.md$/, '') ?? path);
+			const chip = this.blockerChipsContainer.createDiv({ cls: 'friday-page-chip' });
+			chip.createSpan({ text: label });
+			const removeBtn = chip.createSpan({ cls: 'friday-page-chip-remove', text: '×' });
+			removeBtn.addEventListener('click', () => {
+				this.blockedBy = this.blockedBy.filter(p => p !== path);
+				this.renderBlockerChips();
+			});
+		}
+	}
+
+	/** Apply the modal's blockedBy selection against the stored set: add new, remove dropped.
+	 *  The service rejects cycles/self; we surface the first rejection as a Notice. */
+	private async applyDependencyChanges(filePath: string, original: string[]): Promise<void> {
+		const target = this.blockedBy;
+		const toAdd = target.filter(p => !original.includes(p));
+		const toRemove = original.filter(p => !target.includes(p));
+		for (const p of toRemove) {
+			await this.topicService.removeDependency(filePath, p);
+		}
+		for (const p of toAdd) {
+			const res = await this.topicService.addDependency(filePath, p);
+			if (!res.ok) new Notice(`Skipped blocker: ${res.reason ?? 'rejected'}`);
 		}
 	}
 
