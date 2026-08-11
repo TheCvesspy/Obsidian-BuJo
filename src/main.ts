@@ -1,18 +1,20 @@
 import { Plugin, WorkspaceLeaf, Editor, MarkdownView, Menu, Notice, Platform, TFile } from 'obsidian';
-import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, FridayViewMode, TopicStatus, WorkloadSnapshot } from './types';
-import { VIEW_TYPE_FRIDAY, VIEW_TYPE_JIRA_DASHBOARD, VIEW_TYPE_TEAM_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX } from './constants';
+import { PluginData, DEFAULT_PLUGIN_DATA, PluginSettings, TaskStatus, WeeklySnapshot, MonthlySnapshot, FridayViewMode, TopicStatus, WorkloadSnapshot, SprintTopic } from './types';
+import { VIEW_TYPE_FRIDAY, VIEW_TYPE_JIRA_DASHBOARD, VIEW_TYPE_TEAM_DASHBOARD, PRIORITY_TAG_REGEX, DUE_DATE_REGEX, SNOOZE_DATE_REGEX, SOMEDAY_TAG_REGEX } from './constants';
 import { FridaySettingTab } from './settings';
 import { VaultScanner } from './services/vaultScanner';
 import { TaskStore } from './services/taskStore';
 import { TaskWriter } from './services/taskWriter';
 import { DailyNoteService } from './services/dailyNoteService';
+import { TasksInboxService } from './services/tasksInboxService';
 import { SprintTopicService } from './services/sprintTopicService';
 import { MigrationService } from './services/migrationService';
-import { AnalyticsService } from './services/analyticsService';
+import { AnalyticsService, WeeklyStats } from './services/analyticsService';
 import { MonthlyNoteService } from './services/monthlyNoteService';
 import { MonthlyAnalyticsService } from './services/monthlyAnalyticsService';
 import { ArchiveService } from './services/archiveService';
 import { JiraService } from './services/jiraService';
+import { createTopicFromJiraInfo, syncTopicDependenciesFromJira } from './services/topicFromJira';
 import { JiraDashboardService } from './services/jiraDashboardService';
 import { JiraTeamService } from './services/jiraTeamService';
 import { TeamMemberService } from './services/teamMemberService';
@@ -31,9 +33,10 @@ import { QuickCaptureModal } from './ui/QuickCaptureModal';
 import { DueDateModal } from './ui/DueDateModal';
 import { SyntaxReferenceModal } from './ui/components/SyntaxReference';
 import { SprintTopicModal } from './ui/SprintTopicModal';
+import { JiraKeyPromptModal } from './ui/JiraKeyPromptModal';
 import { TopicSwitcherModal } from './ui/TopicSwitcherModal';
 import { pickFromList } from './ui/pickers';
-import { getWeekId, isoToPluginDate, pluginDateToIso } from './utils/dateUtils';
+import { getWeekId, getWeekStartConfigurable, isoToPluginDate, pluginDateToIso } from './utils/dateUtils';
 import { McpServer, generateMcpToken, noticeForError } from './mcp/server';
 import { taskTools } from './mcp/tools/tasks';
 import { topicTools } from './mcp/tools/topics';
@@ -46,6 +49,7 @@ export default class FridayPlugin extends Plugin {
 	private store: TaskStore;
 	private writer: TaskWriter;
 	private dailyNoteService: DailyNoteService;
+	private tasksInboxService: TasksInboxService;
 	private sprintTopicService: SprintTopicService;
 	private migrationService: MigrationService;
 	private analyticsService: AnalyticsService;
@@ -76,15 +80,21 @@ export default class FridayPlugin extends Plugin {
 		// Migrate removed view modes: Eisenhower and ImpactEffort (task-level) were repurposed
 		// for Topics; Sprint was removed when the plugin moved to a continuous Kanban model.
 		// Rewrite stale defaultViewMode values so users don't land on a missing case.
-		const staleModes = ['eisenhower', 'impactEffort', 'sprint'];
+		// v3 retired the task-side tabs (Daily/Weekly/Monthly/Overdue/Overview/Inbox/
+		// Unscheduled/Analytics) in favor of Today/Upcoming/Triage/Someday. Redirect those
+		// plus the older removed modes so a stale saved default never opens a hidden tab.
+		const staleModes = [
+			'eisenhower', 'impactEffort', 'sprint',
+			'daily', 'weekly', 'monthly', 'overdue', 'overview', 'inbox', 'unscheduled', 'analytics',
+		];
 		if (staleModes.includes(this.data.settings.defaultViewMode as string)) {
-			this.data.settings.defaultViewMode = FridayViewMode.Topics;
+			this.data.settings.defaultViewMode = FridayViewMode.Today;
 		}
 		// `team` was briefly a tab in the Friday view; now a standalone workspace view.
 		// Redirect the default so users who had it pinned land on Daily instead of
 		// hitting a removed switch case.
 		if ((this.data.settings.defaultViewMode as string) === 'team') {
-			this.data.settings.defaultViewMode = FridayViewMode.Daily;
+			this.data.settings.defaultViewMode = FridayViewMode.Today;
 		}
 
 		this.settings = this.data.settings;
@@ -94,7 +104,8 @@ export default class FridayPlugin extends Plugin {
 		this.scanner = new VaultScanner(this.app.vault, () => this.settings);
 		this.scanner.setWriter(this.writer);
 		this.dailyNoteService = new DailyNoteService(this.app.vault, () => this.settings);
-		this.sprintTopicService = new SprintTopicService(this.app.vault, () => this.settings);
+		this.tasksInboxService = new TasksInboxService(this.app.vault, () => this.settings);
+		this.sprintTopicService = new SprintTopicService(this.app.vault, () => this.settings, this.app);
 		this.migrationService = new MigrationService(
 			this.store,
 			this.writer,
@@ -141,6 +152,8 @@ export default class FridayPlugin extends Plugin {
 			}),
 			...topicTools({
 				sprintTopicService: this.sprintTopicService,
+				jiraService: this.jiraService,
+				getSettings: () => this.settings,
 			}),
 		]);
 
@@ -203,6 +216,17 @@ export default class FridayPlugin extends Plugin {
 
 		const refs = this.scanner.registerEvents();
 		refs.forEach(ref => this.registerEvent(ref));
+
+		// Keep blockedBy dependency edges intact when a topic file is renamed —
+		// whether via the edit modal or manually in the file explorer.
+		this.registerEvent(
+			this.app.vault.on('rename', (file, oldPath) => {
+				const topicsFolder = this.settings.sprintTopicsPath + '/';
+				if (file instanceof TFile && oldPath.startsWith(topicsFolder)) {
+					void this.sprintTopicService.handleTopicRename(oldPath, file.path);
+				}
+			})
+		);
 
 		this.addRibbonIcon('check-square', 'Open Friday', () => this.activateView());
 		this.addRibbonIcon('layout-dashboard', 'Open JIRA Dashboard', () => this.activateJiraDashboard());
@@ -280,6 +304,97 @@ export default class FridayPlugin extends Plugin {
 			callback: () => {
 				// Scanner picks up the new file and re-renders open views; no manual refresh needed.
 				new SprintTopicModal(this.app, this.sprintTopicService, () => { /* no-op */ }, undefined, undefined, this.settings, this.scanner.getAllTopics()).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'create-topic-from-jira',
+			name: 'Create topic from JIRA issue',
+			callback: () => {
+				if (!this.jiraService.isEnabled()) {
+					new Notice('Enable the JIRA module in Settings to create topics from issues.');
+					return;
+				}
+				// Prompt accepts one or more keys. A single key creates the topic and opens the new
+				// note for review; several batch-create and report a summary. Keys already linked to a
+				// topic are skipped (no duplicates); the shared helper fills basic info + wires blockers.
+				new JiraKeyPromptModal(this.app, async (raw) => {
+					const keys = this.jiraService.extractAllIssueKeys(raw.toUpperCase());
+					if (keys.length === 0) return `No JIRA issue key found in "${raw}" (expected e.g. PROJ-123).`;
+
+					const allTopics = this.scanner.getAllTopics();
+					const todayIso = new Date().toISOString().slice(0, 10);
+					const created: SprintTopic[] = [];
+					const linked: { key: string; topic: SprintTopic }[] = [];
+					const failed: { key: string; reason: string }[] = [];
+
+					for (const key of keys) {
+						const existing = allTopics.find(t => t.jira.includes(key));
+						if (existing) { linked.push({ key, topic: existing }); continue; }
+						const info = await this.jiraService.fetchIssue(key);
+						if (!info) {
+							failed.push({ key, reason: this.jiraService.getError(key) ?? 'fetch failed' });
+							continue;
+						}
+						try {
+							const topic = await createTopicFromJiraInfo(this.sprintTopicService, info, {
+								teamMembers: this.settings.teamMembers ?? [],
+								todayIso,
+							});
+							created.push(topic);
+							allTopics.push(topic); // later keys can dedupe against this one
+						} catch (e) {
+							failed.push({ key, reason: e instanceof Error ? e.message : 'create failed' });
+						}
+					}
+
+					// Single key: act and close, unless it hard-failed (keep the prompt open with the reason).
+					if (keys.length === 1) {
+						if (created.length === 1) {
+							new Notice(`Topic created from ${keys[0]}: ${created[0].title}`);
+							void this.openTopicFile(created[0].filePath);
+							return null;
+						}
+						if (linked.length === 1) {
+							new Notice(`${keys[0]} is already linked — opening existing topic.`);
+							void this.openTopicFile(linked[0].topic.filePath);
+							return null;
+						}
+						return `Couldn't create from ${keys[0]} — ${failed[0]?.reason ?? 'unknown error'}.`;
+					}
+
+					// Bulk: summarize and close (unless nothing happened at all).
+					const parts: string[] = [];
+					if (created.length) parts.push(`created ${created.length}`);
+					if (linked.length) parts.push(`skipped ${linked.length} already-linked`);
+					if (failed.length) parts.push(`${failed.length} failed`);
+					new Notice(`JIRA → topics: ${parts.join(', ')}.`);
+					if (created.length === 0 && linked.length === 0) {
+						return `None created. ${failed.map(f => `${f.key}: ${f.reason}`).join('; ')}`;
+					}
+					return null;
+				}).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'sync-topic-dependencies-from-jira',
+			name: 'Sync topic dependencies from JIRA',
+			callback: async () => {
+				if (!this.jiraService.isEnabled()) {
+					new Notice('Enable the JIRA module in Settings to sync dependencies.');
+					return;
+				}
+				const topics = this.scanner.getAllTopics();
+				const linkedCount = topics.filter(t => t.jira.length > 0).length;
+				if (linkedCount === 0) { new Notice('No topics are linked to JIRA issues.'); return; }
+
+				new Notice(`Syncing dependencies from JIRA for ${linkedCount} topic(s)…`);
+				const { added, rejected } = await syncTopicDependenciesFromJira(
+					this.sprintTopicService, this.jiraService, topics,
+				);
+				const tail = rejected > 0 ? ` (${rejected} skipped — cycle/invalid)` : '';
+				new Notice(added > 0 ? `Dependency sync: added ${added} link(s)${tail}.` : `Dependency sync: nothing new${tail}.`);
 			},
 		});
 
@@ -411,6 +526,62 @@ export default class FridayPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: 'sweep-daily-inbox',
+			name: 'Sweep daily Inbox → Tasks.md',
+			callback: async () => {
+				const path = this.tasksInboxService.todayDailyPath(new Date());
+				const moved = await this.tasksInboxService.sweepDailyInbox(path);
+				if (moved === 0) {
+					new Notice('Nothing in today\'s Inbox to sweep.');
+				} else {
+					await this.scanner.fullScan();
+					this.store.setTasks(this.scanner.getAllTasks());
+					new Notice(`Swept ${moved} item(s) into Tasks.md.`);
+				}
+			},
+		});
+
+		// ── v3 postpone commands (operate on the checkbox line at the cursor) ──
+		this.addCommand({
+			id: 'snooze-task',
+			name: 'Snooze task…',
+			editorCallback: (editor: Editor) => {
+				const line = editor.getCursor().line;
+				if (!/^\s*-\s*\[[ x><!/-]\]/i.test(editor.getLine(line))) {
+					new Notice('Put the cursor on a task line first.');
+					return;
+				}
+				new DueDateModal(this.app, '', (pluginDate) => {
+					if (!pluginDate) return;
+					const iso = pluginDateToIso(pluginDate);
+					this.setLineSnooze(editor, line, this.settings.dateFormat === 'dmy' ? pluginDate : iso);
+				}).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'send-to-someday',
+			name: 'Send task to Someday',
+			editorCallback: (editor: Editor) => {
+				const line = editor.getCursor().line;
+				if (!/^\s*-\s*\[[ x><!/-]\]/i.test(editor.getLine(line))) {
+					new Notice('Put the cursor on a task line first.');
+					return;
+				}
+				this.setLineSomeday(editor, line, true);
+			},
+		});
+
+		this.addCommand({
+			id: 'wake-task',
+			name: 'Wake task (clear snooze / Someday)',
+			editorCallback: (editor: Editor) => {
+				const line = editor.getCursor().line;
+				this.wakeLine(editor, line);
+			},
+		});
+
 		// Quick create task command (works globally)
 		this.addCommand({
 			id: 'insert-task-with-details',
@@ -429,9 +600,9 @@ export default class FridayPlugin extends Plugin {
 						const insertedLines = block.split('\n').length;
 						editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
 					} else {
-						// No active editor — append to today's daily note
-						await this.dailyNoteService.addRawTaskLine(block, new Date());
-						new Notice('Task added to today\'s daily note');
+						// No active editor — land in the central Tasks.md inbox (v3).
+						await this.tasksInboxService.appendLines(block.split('\n'));
+						new Notice('Task added to Tasks.md');
 					}
 				}, this.settings.workTypes, this.settings.purposes).open();
 			},
@@ -531,6 +702,35 @@ export default class FridayPlugin extends Plugin {
 								}).open();
 							});
 					});
+
+					// ── v3 postpone actions ──
+					menu.addSeparator();
+					menu.addItem(item => {
+						item.setTitle('Friday: Snooze…')
+							.setIcon('alarm-clock')
+							.onClick(() => {
+								new DueDateModal(this.app, '', (pluginDate) => {
+									if (!pluginDate) return;
+									const iso = pluginDateToIso(pluginDate);
+									this.setLineSnooze(editor, cursor.line, this.settings.dateFormat === 'dmy' ? pluginDate : iso);
+								}).open();
+							});
+					});
+					const isSomeday = SOMEDAY_TAG_REGEX.test(currentLine);
+					const isSnoozed = SNOOZE_DATE_REGEX.test(currentLine);
+					if (isSomeday || isSnoozed) {
+						menu.addItem(item => {
+							item.setTitle('Friday: Wake (clear snooze / Someday)')
+								.setIcon('sun')
+								.onClick(() => this.wakeLine(editor, cursor.line));
+						});
+					} else {
+						menu.addItem(item => {
+							item.setTitle('Friday: Send to Someday')
+								.setIcon('moon')
+								.onClick(() => this.setLineSomeday(editor, cursor.line, true));
+						});
+					}
 				}
 			})
 		);
@@ -544,6 +744,7 @@ export default class FridayPlugin extends Plugin {
 			await this.runKanbanMigrationIfNeeded();
 			await this.autoGenerateTeamPagesIfNeeded();
 			await this.captureWorkloadSnapshotIfNeeded();
+			await this.runInboxCleanupIfNeeded();
 			this.checkMigration();
 			this.checkWeeklyReview();
 			await this.applyMcpServerState();
@@ -612,11 +813,15 @@ export default class FridayPlugin extends Plugin {
 			const open = c.jiraOpen + c.topicsOpen;
 			const done = c.jiraDone + c.topicsDone;
 			members[m.email] = { displayName: m.displayName, committed: m.load.committed, blocked, inProgress, open, done };
-			totals.committed += m.load.committed;
-			totals.blocked += blocked;
-			totals.inProgress += inProgress;
-			totals.open += open;
-			totals.done += done;
+			// On-leave / OOO members ('out' band) are excluded from team totals so their frozen
+			// pre-leave backlog doesn't make the team trend look busier than it is during the leave.
+			if (m.load.band !== 'out') {
+				totals.committed += m.load.committed;
+				totals.blocked += blocked;
+				totals.inProgress += inProgress;
+				totals.open += open;
+				totals.done += done;
+			}
 		}
 		await this.saveWorkloadSnapshot({
 			weekId: getWeekId(now),
@@ -778,6 +983,24 @@ export default class FridayPlugin extends Plugin {
 		}).open();
 	}
 
+	/** v3 auto-cleaning: on startup, sweep completed tasks that have aged out of the central
+	 *  Tasks.md into the archive so the inbox only ever shows live work. No-op when the
+	 *  threshold is 0 (manual-only) or there's nothing to move. */
+	private async runInboxCleanupIfNeeded(): Promise<void> {
+		const days = this.settings.archiveCompletedAfterDays;
+		if (days == null || days <= 0) return;
+		try {
+			const result = await this.archiveService.cleanupInbox(days, this.settings.tasksFilePath);
+			if (result.archived > 0) {
+				await this.scanner.fullScan();
+				this.store.setTasks(this.scanner.getAllTasks());
+				new Notice(`Friday: archived ${result.archived} completed task(s) from ${this.settings.tasksFilePath.split('/').pop()}.`);
+			}
+		} catch (e) {
+			console.error('[Friday] Inbox cleanup failed:', e);
+		}
+	}
+
 	private checkMigration(): void {
 		if (this.settings.migrationPromptOnStartup && this.migrationService.needsMigration()) {
 			this.showMigrationModal();
@@ -806,13 +1029,14 @@ export default class FridayPlugin extends Plugin {
 		this.statusBarEl.setText(`${this.store.getPendingCount()} pending`);
 	}
 
-	private showWeeklyReview(): void {
+	private showWeeklyReview(precomputedStats?: WeeklyStats): void {
 		new WeeklyReviewModal(
 			this.app,
 			this.analyticsService,
 			this.settings,
 			this.data.weeklyHistory,
 			(snapshot) => this.saveWeeklySnapshot(snapshot),
+			precomputedStats,
 		).open();
 	}
 
@@ -821,10 +1045,13 @@ export default class FridayPlugin extends Plugin {
 		const currentWeekId = getWeekId(new Date());
 		if (this.data.lastWeeklyReviewWeek === currentWeekId) return;
 
-		// New week detected — auto-snapshot previous week if there's data
+		// New week detected — auto-snapshot the just-ended (previous) week if there's data.
+		// Pass the previous week's stats explicitly; without them the modal would fall back
+		// to getCurrentWeekStats() and snapshot the new, nearly-empty week instead.
 		if (this.data.lastWeeklyReviewWeek !== null) {
-			// Compute stats for previous week and show review
-			this.showWeeklyReview();
+			const prevWeekStart = getWeekStartConfigurable(new Date(), this.settings.weekStartDay);
+			prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+			this.showWeeklyReview(this.analyticsService.getStatsForWeek(prevWeekStart));
 		}
 	}
 
@@ -896,6 +1123,38 @@ export default class FridayPlugin extends Plugin {
 		// Add new priority if specified
 		if (priority) line += ` #priority/${priority}`;
 		editor.setLine(lineNum, line);
+	}
+
+	/** Add or replace the @snooze annotation on a line (v3). Leaves @due untouched. */
+	private setLineSnooze(editor: Editor, lineNum: number, dateRaw: string): void {
+		let line = editor.getLine(lineNum);
+		line = SNOOZE_DATE_REGEX.test(line)
+			? line.replace(SNOOZE_DATE_REGEX, `@snooze ${dateRaw}`)
+			: `${line.trimEnd()} @snooze ${dateRaw}`;
+		editor.setLine(lineNum, line.replace(/\s{2,}/g, ' ').trimEnd());
+		new Notice('Task snoozed.');
+	}
+
+	/** Toggle #someday on a line (v3). Turning on strips @due and @snooze (Someday is dateless). */
+	private setLineSomeday(editor: Editor, lineNum: number, on: boolean): void {
+		let line = editor.getLine(lineNum);
+		if (on) {
+			line = line.replace(DUE_DATE_REGEX, '').replace(SNOOZE_DATE_REGEX, '');
+			if (!SOMEDAY_TAG_REGEX.test(line)) line = `${line.replace(/\s{2,}/g, ' ').trimEnd()} #someday`;
+		} else {
+			line = line.replace(SOMEDAY_TAG_REGEX, '');
+		}
+		editor.setLine(lineNum, line.replace(/\s{2,}/g, ' ').trimEnd());
+		new Notice(on ? 'Sent to Someday.' : 'Removed from Someday.');
+	}
+
+	/** Remove any @snooze and #someday from a line (v3), reactivating the task. */
+	private wakeLine(editor: Editor, lineNum: number): void {
+		const line = editor.getLine(lineNum);
+		const woken = line.replace(SNOOZE_DATE_REGEX, '').replace(SOMEDAY_TAG_REGEX, '').replace(/\s{2,}/g, ' ').trimEnd();
+		if (woken === line) { new Notice('Nothing to wake on this line.'); return; }
+		editor.setLine(lineNum, woken);
+		new Notice('Task woken.');
 	}
 
 	onunload(): void {

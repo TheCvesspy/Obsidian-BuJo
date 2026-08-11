@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownView } from 'obsidian';
+import { ItemView, WorkspaceLeaf, MarkdownView, Menu, Notice } from 'obsidian';
 import { FridayViewMode, GroupMode, TaskItem, TaskStatus, PluginSettings, PluginData, SprintTopic, WeeklySnapshot, MonthlySnapshot, StoreEventCallback } from '../types';
 import { VIEW_TYPE_FRIDAY, REFRESH_DEBOUNCE_MS } from '../constants';
 import { TaskStore } from '../services/taskStore';
@@ -12,6 +12,10 @@ import { VaultScanner } from '../services/vaultScanner';
 import { JiraService } from '../services/jiraService';
 import { ViewSwitcher } from './components/ViewSwitcher';
 import { Toolbar } from './components/Toolbar';
+import { TodayView } from './components/TodayView';
+import { UpcomingView } from './components/UpcomingView';
+import { TriageView } from './components/TriageView';
+import { SomedayView } from './components/SomedayView';
 import { DailyView } from './components/DailyView';
 import { WeeklyView } from './components/WeeklyView';
 import { MonthlyView } from './components/MonthlyView';
@@ -25,8 +29,10 @@ import { CalendarView } from './components/CalendarView';
 import { SyntaxReferenceModal } from './components/SyntaxReference';
 import { AddTaskBar } from './components/AddTaskBar';
 import { SprintTopicModal } from './SprintTopicModal';
+import { DueDateModal } from './DueDateModal';
 import { TaskItemRowCallbacks } from './components/TaskItemRow';
 import { SubtaskConfirmModal } from './SubtaskConfirmModal';
+import { formatDateISO, formatDateDMY, pluginDateToIso } from '../utils/dateUtils';
 
 export class FridayView extends ItemView {
 	private currentMode: FridayViewMode;
@@ -162,6 +168,15 @@ export class FridayView extends ItemView {
 
 				await this.writer.setStatus(task, newStatus);
 			},
+			onSnooze: (task: TaskItem, evt: MouseEvent) => this.showSnoozeMenu(task, evt),
+			onSomeday: async (task: TaskItem) => {
+				await this.writer.setSomeday(task, true);
+				new Notice(`Sent to Someday: ${task.text}`);
+			},
+			onWake: async (task: TaskItem) => {
+				if (task.someday) await this.writer.setSomeday(task, false);
+				if (task.snoozeDate) await this.writer.clearSnooze(task);
+			},
 			onClickSource: async (task: TaskItem) => {
 				const file = this.app.vault.getAbstractFileByPath(task.sourcePath);
 				if (!file) return;
@@ -191,6 +206,48 @@ export class FridayView extends ItemView {
 		};
 	}
 
+	/** Format a Date for write-back honoring the configured date format (ISO by default). */
+	private formatForWrite(d: Date): string {
+		return this.settings.dateFormat === 'dmy' ? formatDateDMY(d) : formatDateISO(d);
+	}
+
+	/** Today + N days at midnight (absolute — snooze dates must be absolute, never relative,
+	 *  or a relative "@snooze next week" would keep sliding and never fire). */
+	private daysFromNow(n: number): Date {
+		const d = new Date();
+		d.setHours(0, 0, 0, 0);
+		d.setDate(d.getDate() + n);
+		return d;
+	}
+
+	/** Snooze presets + a custom date picker, shown at the cursor. */
+	private showSnoozeMenu(task: TaskItem, evt: MouseEvent): void {
+		const menu = new Menu();
+		const presets: [string, number][] = [
+			['Tomorrow', 1],
+			['In 3 days', 3],
+			['Next week', 7],
+			['In 2 weeks', 14],
+			['In a month', 30],
+		];
+		for (const [label, days] of presets) {
+			menu.addItem(item => item.setTitle(label).setIcon('alarm-clock').onClick(async () => {
+				await this.writer.setSnooze(task, this.formatForWrite(this.daysFromNow(days)));
+				new Notice(`Snoozed until ${label.toLowerCase()}: ${task.text}`);
+			}));
+		}
+		menu.addSeparator();
+		menu.addItem(item => item.setTitle('Pick a date…').setIcon('calendar').onClick(() => {
+			new DueDateModal(this.app, '', async (pluginDate) => {
+				if (!pluginDate) return;
+				const iso = pluginDateToIso(pluginDate);
+				await this.writer.setSnooze(task, this.settings.dateFormat === 'dmy' ? pluginDate : iso);
+				new Notice(`Snoozed until ${iso}: ${task.text}`);
+			}).open();
+		}));
+		menu.showAtMouseEvent(evt);
+	}
+
 	/** Coalesce rapid store events into a single refresh */
 	private scheduleRefresh(): void {
 		// Suppress refresh during drag-and-drop to prevent board rebuilds mid-drag
@@ -214,6 +271,22 @@ export class FridayView extends ItemView {
 		this.contentContainer.empty();
 
 		switch (this.currentMode) {
+			case FridayViewMode.Today: {
+				new TodayView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery).render();
+				break;
+			}
+			case FridayViewMode.Upcoming: {
+				new UpcomingView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery).render();
+				break;
+			}
+			case FridayViewMode.Triage: {
+				new TriageView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery).render();
+				break;
+			}
+			case FridayViewMode.Someday: {
+				new SomedayView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery).render();
+				break;
+			}
 			case FridayViewMode.Daily: {
 				const view = new DailyView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery);
 				view.render();

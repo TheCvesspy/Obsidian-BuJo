@@ -1,5 +1,5 @@
 import { TaskItem, TaskStatus, Priority, ItemCategory } from '../types';
-import { CHECKBOX_REGEX, HEADING_REGEX, PRIORITY_TAG_REGEX, TYPE_TAG_REGEX, DUE_DATE_REGEX, MIGRATED_FROM_REGEX, WORK_TYPE_REGEX, PURPOSE_REGEX } from '../constants';
+import { CHECKBOX_REGEX, HEADING_REGEX, PRIORITY_TAG_REGEX, TYPE_TAG_REGEX, DUE_DATE_REGEX, SNOOZE_DATE_REGEX, SOMEDAY_TAG_REGEX, DONE_DATE_REGEX, TRAILING_WIKILINK_REGEX, MIGRATED_FROM_REGEX, WORK_TYPE_REGEX, PURPOSE_REGEX } from '../constants';
 import { HeadingClassifier } from './headingClassifier';
 import { parseDueDate } from './dateParser';
 import { TagCategory } from '../types';
@@ -57,6 +57,20 @@ export function parseTasksFromContent(
 	const lines = content.split('\n');
 	const tasks: TaskItem[] = [];
 
+	// Skip YAML frontmatter so its keys can never parse as headings or checkboxes.
+	// Only a properly closed block is skipped; an unclosed leading `---` is treated
+	// as regular content. Loop index stays file-absolute so task ids/lineNumbers hold.
+	let bodyStart = 0;
+	if (lines[0]?.trim() === '---') {
+		for (let j = 1; j < lines.length; j++) {
+			const t = lines[j].trim();
+			if (t === '---' || t === '...') {
+				bodyStart = j + 1;
+				break;
+			}
+		}
+	}
+
 	// Heading tracking for nested classification
 	let categoryHeading: string | null = null;  // The heading text that defined the active category
 	let categoryLevel = 0;                       // The heading level (number of #s) that set the category
@@ -68,12 +82,28 @@ export function parseTasksFromContent(
 	// Track the last parsed task for description collection
 	let lastTask: TaskItem | null = null;
 	let lastTaskIndentChars = 0;
+	// Opening marker of the fenced code block we're inside, or null. Inside a fence,
+	// heading/checkbox recognition is suppressed so example tasks in code blocks never
+	// become real tasks (write-back would mutate fence content). Description collection
+	// still runs, so indented code under a task is captured as its description.
+	let fenceMarker: string | null = null;
 
-	for (let i = 0; i < lines.length; i++) {
+	for (let i = bodyStart; i < lines.length; i++) {
 		const line = lines[i];
 
+		const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
+		if (fenceMatch) {
+			if (fenceMarker === null) {
+				fenceMarker = fenceMatch[1];
+			} else if (fenceMatch[1][0] === fenceMarker[0] && fenceMatch[1].length >= fenceMarker.length) {
+				// Closing fence: same character, at least as long (CommonMark)
+				fenceMarker = null;
+			}
+		}
+		const inFence = fenceMarker !== null;
+
 		// Check for heading
-		const headingMatch = line.match(HEADING_REGEX);
+		const headingMatch = inFence ? null : line.match(HEADING_REGEX);
 		if (headingMatch) {
 			lastTask = null;
 			// Build hierarchy for tasks accumulated under the previous heading
@@ -107,7 +137,7 @@ export function parseTasksFromContent(
 		}
 
 		// Check for checkbox
-		const checkboxMatch = line.match(CHECKBOX_REGEX);
+		const checkboxMatch = inFence ? null : line.match(CHECKBOX_REGEX);
 		if (!checkboxMatch) {
 			// Collect description lines: non-checkbox, non-heading, non-empty lines
 			// that are indented deeper than the last task
@@ -158,6 +188,31 @@ export function parseTasksFromContent(
 			text = text.replace(DUE_DATE_REGEX, '');
 		}
 
+		// Extract snooze/defer date (v3)
+		let snoozeDate: Date | null = null;
+		let snoozeDateRaw: string | null = null;
+		const snoozeMatch = text.match(SNOOZE_DATE_REGEX);
+		if (snoozeMatch) {
+			snoozeDateRaw = snoozeMatch[1];
+			snoozeDate = parseDueDate(snoozeDateRaw);
+			text = text.replace(SNOOZE_DATE_REGEX, '');
+		}
+
+		// Extract #someday tag (v3 dateless backlog)
+		let someday = false;
+		if (SOMEDAY_TAG_REGEX.test(text)) {
+			someday = true;
+			text = text.replace(SOMEDAY_TAG_REGEX, '');
+		}
+
+		// Extract @done completion stamp (v3)
+		let completedDate: Date | null = null;
+		const doneMatch = text.match(DONE_DATE_REGEX);
+		if (doneMatch) {
+			completedDate = parseDueDate(doneMatch[1]);
+			text = text.replace(DONE_DATE_REGEX, '');
+		}
+
 		// Parse migration source annotation: (from [[filename]])
 		let migratedFrom: string | null = null;
 		const migratedMatch = text.match(MIGRATED_FROM_REGEX);
@@ -180,6 +235,15 @@ export function parseTasksFromContent(
 		if (purposeMatch) {
 			purpose = resolveTagCategory(purposeMatch[1], purposes || []);
 			text = text.replace(PURPOSE_REGEX, '');
+		}
+
+		// Extract trailing [[Topic or Page]] link (v3). Only a link in tail position (after
+		// tags were stripped above) is treated as the task's Topic link and removed from display.
+		let topicLink: string | null = null;
+		const linkMatch = text.match(TRAILING_WIKILINK_REGEX);
+		if (linkMatch) {
+			topicLink = linkMatch[1].split('|')[0].trim(); // honor [[target|alias]]
+			text = text.replace(TRAILING_WIKILINK_REGEX, '');
 		}
 
 		// Clean up display text
@@ -216,6 +280,11 @@ export function parseTasksFromContent(
 			parentId: null,
 			childrenIds: [],
 			description: null,
+			snoozeDate,
+			snoozeDateRaw,
+			someday,
+			topicLink,
+			completedDate,
 		};
 		tasks.push(taskItem);
 		currentHeadingTasks.push(taskItem);

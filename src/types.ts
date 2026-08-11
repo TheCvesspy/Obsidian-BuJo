@@ -29,11 +29,17 @@ export enum GroupMode {
 }
 
 export enum FridayViewMode {
+	// ─── v3 streamlined task views ───
+	Today = 'today',
+	Upcoming = 'upcoming',
+	Triage = 'triage',
+	Someday = 'someday',
+	Calendar = 'calendar',
+	Topics = 'topics',
+	// ─── legacy modes (retired from the tab bar; kept for settings back-compat) ───
 	Daily = 'daily',
 	Weekly = 'weekly',
 	Monthly = 'monthly',
-	Calendar = 'calendar',
-	Topics = 'topics',
 	Overview = 'overview',
 	Overdue = 'overdue',
 	Inbox = 'inbox',
@@ -123,6 +129,20 @@ export interface TaskItem {
 	childrenIds: string[];
 	/** Multi-line description text from indented non-checkbox lines below the task */
 	description: string | null;
+	/** Snooze/defer date: while today < snoozeDate the task is hidden from Today & Overdue,
+	 *  then wakes automatically. A suppression modifier, NOT a second scheduling date — the
+	 *  deadline stays on `dueDate`. Null when not snoozed. */
+	snoozeDate: Date | null;
+	/** Raw @snooze string as written in the file (for write-back). Null when not snoozed. */
+	snoozeDateRaw: string | null;
+	/** True when the task carries `#someday` — dateless backlog, hidden from all dated views. */
+	someday: boolean;
+	/** For a loose task in Tasks.md, the trailing `[[Topic or Page]]` link that ties it to a
+	 *  Topic/page. Null when absent. Topic-embedded tasks derive their source from `sourcePath`. */
+	topicLink: string | null;
+	/** Completion date parsed from the `@done YYYY-MM-DD` stamp the plugin writes when a task
+	 *  is marked Done/Cancelled. Drives age-based inbox cleanup. Null when open or unstamped. */
+	completedDate: Date | null;
 }
 
 /** Kanban column a topic sits in. 'open' renders as "To Do" in the UI;
@@ -162,6 +182,10 @@ export interface SprintTopic {
 	effort: TopicEffort | null;
 	/** Due date (ISO YYYY-MM-DD) used for Eisenhower urgency. Null when not set. */
 	dueDate: string | null;
+	/** Planned/estimated start (ISO YYYY-MM-DD). Drives the roadmap bar's left edge.
+	 *  Distinct from `startedAt` (the actual in-progress timestamp): this is an estimate
+	 *  the user sets to schedule the topic. The bar's right edge is `dueDate`. Null when not set. */
+	startDate: string | null;
 	/** ISO YYYY-MM-DD the topic entered its current status (aging-WIP signal). Null on legacy topics. */
 	statusSince: string | null;
 	/** ISO YYYY-MM-DD the topic first entered 'in-progress' (cycle-time start). Never overwritten. Null if never started. */
@@ -206,6 +230,16 @@ export interface PluginSettings {
 	defaultViewMode: FridayViewMode;
 	/** Folder path for daily log notes */
 	dailyNotePath: string;
+	/** Path to the central loose-task inbox file (v3). Tasks not tied to a Topic live here.
+	 *  Quick-add and the daily-inbox sweep target this file. */
+	tasksFilePath: string;
+	/** v3 cleaning: completed (Done/Cancelled) tasks in `tasksFilePath` are auto-archived
+	 *  once they've been closed for at least this many days. 0 disables (manual archive only). */
+	archiveCompletedAfterDays: number;
+	/** v3: how many days ahead the Upcoming view looks (also the snooze-wake window). */
+	upcomingWindowDays: number;
+	/** v3: preferred date format for @due / @snooze written by the plugin. */
+	dateFormat: 'iso' | 'dmy';
 	/** Show migration prompt on startup if there are pending migrations */
 	migrationPromptOnStartup: boolean;
 	/** Heading names that classify items as Tasks (case-insensitive) */
@@ -242,6 +276,12 @@ export interface PluginSettings {
 	/** Days a non-done topic can sit in its current column before it's flagged as aging
 	 *  work-in-progress in the Flow analytics. Default 7. */
 	agingWipThresholdDays: number;
+	/** Hide items that have been done/closed for more than this many days from the default
+	 *  dashboard surfaces: the JIRA Dashboard (resolved issues) and the Topics views (done
+	 *  topics). Keeps recently-completed work visible for follow-up while decluttering old
+	 *  closed items. The Topics "Done" scope filter still shows everything, and full JIRA
+	 *  history stays available in JIRA. Clamped to a minimum of 1 day. Default 14. */
+	hideDoneAfterDays: number;
 	/** Folder path for team member person pages. Each person lives in its own subfolder:
 	 *  `{teamFolderPath}/Alice Smith/Alice Smith.md`, with 1:1s under `1on1/YYYY-MM-DD.md`. */
 	teamFolderPath: string;
@@ -384,6 +424,16 @@ export interface JiraIssueInfo {
 	statusCategory: 'new' | 'indeterminate' | 'done' | 'unknown';
 	/** Assignee display name, or null if unassigned */
 	assignee: string | null;
+	/** Assignee email, when the JIRA tenant exposes it (often hidden for GDPR). Preferred
+	 *  over display name when matching a topic assignee to a team member. Null if hidden/unset. */
+	assigneeEmail: string | null;
+	/** JIRA priority name (e.g. "High"), or null if unset. Used to seed a topic's priority. */
+	priority: string | null;
+	/** Due date (ISO YYYY-MM-DD), or null if unset. Used to seed a topic's due date. */
+	dueDate: string | null;
+	/** Plain-text rendering of the issue description (flattened from JIRA's ADF), or null.
+	 *  Used to seed a topic's Notes section. */
+	description: string | null;
 	/** True if JIRA's Flagged (impediment) field is set on this issue. */
 	flagged: boolean;
 	/** Inward "is blocked by" issue links — the issues blocking this one, with done state. */
@@ -414,9 +464,13 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	folderStates: {},
 	showCompletedTasks: true,
 	defaultGroupMode: GroupMode.ByPage,
-	defaultViewMode: FridayViewMode.Topics,
+	defaultViewMode: FridayViewMode.Today,
 	dailyNotePath: 'BuJo/Daily',
-	migrationPromptOnStartup: true,
+	tasksFilePath: 'BuJo/Tasks.md',
+	archiveCompletedAfterDays: 7,
+	upcomingWindowDays: 14,
+	dateFormat: 'iso',
+	migrationPromptOnStartup: false,
 	taskHeadings: ['Tasks', 'TODO', 'Action Items'],
 	openPointHeadings: ['Open Points', 'Questions', 'Discussion Points'],
 	inboxHeadings: ['Inbox', 'Triage'],
@@ -432,6 +486,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	nudgeThresholdDays: 7,
 	wipLimits: { backlog: null, open: null, 'in-progress': 5, done: null },
 	agingWipThresholdDays: 7,
+	hideDoneAfterDays: 14,
 	teamFolderPath: 'BuJo/Team',
 	defaultTargetConcurrentItems: 5,
 	// JIRA module defaults — OFF until explicitly configured

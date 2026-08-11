@@ -1,25 +1,65 @@
 import { Vault, TFile } from 'obsidian';
 import { TaskItem, TaskStatus } from '../types';
-import { CHECKBOX_REGEX, DUE_DATE_REGEX, SYNC_CLEAR_DELAY_MS } from '../constants';
+import { CHECKBOX_REGEX, DUE_DATE_REGEX, SNOOZE_DATE_REGEX, SOMEDAY_TAG_REGEX, DONE_DATE_REGEX, SYNC_CLEAR_DELAY_MS } from '../constants';
+import { locateTaskLine } from '../utils/lineLocator';
+
+/** Collapse the double-spaces and dangling trailing whitespace left after a tag is stripped
+ *  from a line, while preserving the leading indentation (tabs/spaces) that encodes hierarchy. */
+function tidy(line: string): string {
+    const indent = line.match(/^(\s*)/)?.[1] ?? '';
+    const body = line.slice(indent.length).replace(/[ \t]{2,}/g, ' ').replace(/\s+$/, '');
+    return indent + body;
+}
+
+/** Toggle a checkbox line's status char AND manage the @done stamp: closing (Done/Cancelled)
+ *  adds `@done <today>` if absent; reopening (any other status) strips it. */
+function withStatus(line: string, newStatus: TaskStatus): string {
+    let out = line.replace(/\[([ xX><!/-])\]/, `[${newStatus}]`);
+    const closed = newStatus === TaskStatus.Done || newStatus === TaskStatus.Cancelled;
+    if (closed) {
+        if (!DONE_DATE_REGEX.test(out)) {
+            const iso = new Date().toISOString().slice(0, 10);
+            out = `${tidy(out)} @done ${iso}`;
+        }
+    } else {
+        out = out.replace(DONE_DATE_REGEX, '');
+    }
+    return tidy(out);
+}
 
 export class TaskWriter {
-    // Depth counter (not boolean): overlapping syncs can't prematurely clear each other.
-    // Decrement is deferred via setTimeout(SYNC_CLEAR_DELAY_MS) so the vault modify event
-    // and the scanner's ~300ms debounced scan both still see isSyncing=true.
-    private syncDepth = 0;
+    // Paths with an in-flight sync write, with a per-path depth counter so overlapping
+    // syncs to the same file can't prematurely clear each other. Decrement is deferred
+    // via setTimeout(SYNC_CLEAR_DELAY_MS) so the vault modify event and the scanner's
+    // ~300ms debounced scan both still see the path as a sync target. Tracking the
+    // specific path (instead of a global flag) means edits to unrelated files during
+    // the window are processed normally.
+    private syncTargets = new Map<string, number>();
 
     constructor(private vault: Vault) {}
 
-    /** Whether a sync write is in progress (used to avoid re-scan loops) */
-    get isSyncing(): boolean {
-        return this.syncDepth > 0;
+    /** Whether `path` was just written by a two-way sync. The scanner uses this to
+     *  suppress sync *detection* for that file (preventing sync→scan→sync loops)
+     *  while still re-parsing it so the store stays fresh. */
+    isSyncTarget(path: string): boolean {
+        return (this.syncTargets.get(path) ?? 0) > 0;
+    }
+
+    private markSyncTarget(path: string): void {
+        this.syncTargets.set(path, (this.syncTargets.get(path) ?? 0) + 1);
+    }
+
+    private scheduleSyncTargetClear(path: string): void {
+        setTimeout(() => {
+            const depth = (this.syncTargets.get(path) ?? 0) - 1;
+            if (depth <= 0) this.syncTargets.delete(path);
+            else this.syncTargets.set(path, depth);
+        }, SYNC_CLEAR_DELAY_MS);
     }
 
     /** Update the status checkbox of a task in its source file */
     async setStatus(task: TaskItem, newStatus: TaskStatus): Promise<boolean> {
-        return this.processTaskLine(task, line =>
-            line.replace(/\[([ x><!-])\]/i, `[${newStatus}]`),
-        );
+        return this.processTaskLine(task, line => withStatus(line, newStatus));
     }
 
     /** Update the @due date of a task in its source file */
@@ -29,6 +69,36 @@ export class TaskWriter {
                 ? line.replace(DUE_DATE_REGEX, `@due ${newDateRaw}`)
                 : `${line} @due ${newDateRaw}`,
         );
+    }
+
+    /** Snooze a task until `newDateRaw` — suppresses it from Today/Overdue until then.
+     *  Leaves the @due deadline untouched. Adds or replaces the @snooze annotation. */
+    async setSnooze(task: TaskItem, newDateRaw: string): Promise<boolean> {
+        return this.processTaskLine(task, line =>
+            tidy(
+                SNOOZE_DATE_REGEX.test(line)
+                    ? line.replace(SNOOZE_DATE_REGEX, `@snooze ${newDateRaw}`)
+                    : `${line} @snooze ${newDateRaw}`,
+            ),
+        );
+    }
+
+    /** Remove any @snooze annotation, waking the task immediately. */
+    async clearSnooze(task: TaskItem): Promise<boolean> {
+        return this.processTaskLine(task, line => tidy(line.replace(SNOOZE_DATE_REGEX, '')));
+    }
+
+    /** Toggle the `#someday` deferral. Turning it on strips @due and @snooze (a Someday
+     *  task is dateless); turning it off just removes the tag so the user can re-date it. */
+    async setSomeday(task: TaskItem, on: boolean): Promise<boolean> {
+        return this.processTaskLine(task, line => {
+            if (on) {
+                let out = line.replace(DUE_DATE_REGEX, '').replace(SNOOZE_DATE_REGEX, '');
+                if (!SOMEDAY_TAG_REGEX.test(out)) out = `${tidy(out)} #someday`;
+                return tidy(out);
+            }
+            return tidy(line.replace(SOMEDAY_TAG_REGEX, ''));
+        });
     }
 
     /**
@@ -47,7 +117,7 @@ export class TaskWriter {
         const cleanText = task.text.trim();
         let found = false;
 
-        this.syncDepth++;
+        this.markSyncTarget(originalFile.path);
         try {
             await this.vault.process(originalFile, content => {
                 const lines = content.split('\n');
@@ -67,7 +137,7 @@ export class TaskWriter {
                         .trim();
 
                     if (lineText === cleanText) {
-                        lines[i] = lines[i].replace(/\[([ x><!-])\]/i, `[${newStatus}]`);
+                        lines[i] = withStatus(lines[i], newStatus);
                         found = true;
                         break;
                     }
@@ -77,8 +147,8 @@ export class TaskWriter {
             });
         } finally {
             // Deferred decrement so the ensuing modify event + scan debounce
-            // still observe isSyncing=true and skip the re-scan.
-            setTimeout(() => { this.syncDepth--; }, SYNC_CLEAR_DELAY_MS);
+            // still observe the path as a sync target and skip sync detection.
+            this.scheduleSyncTargetClear(originalFile.path);
         }
 
         return found;
@@ -105,13 +175,14 @@ export class TaskWriter {
             await this.vault.process(abstract, content => {
                 const lines = content.split('\n');
                 let mutated = false;
+                // Track claimed indices so tasks sharing an identical rawLine don't
+                // both resolve to the same line (which would over-count `count`).
+                const usedIndices = new Set<number>();
                 for (const task of fileTasks) {
-                    const index = this.locateTaskLine(task, lines);
+                    const index = locateTaskLine(task, lines, usedIndices);
                     if (index === -1) continue;
-                    lines[index] = lines[index].replace(
-                        /\[([ x><!-])\]/i,
-                        `[${newStatus}]`,
-                    );
+                    usedIndices.add(index);
+                    lines[index] = withStatus(lines[index], newStatus);
                     count++;
                     mutated = true;
                 }
@@ -142,7 +213,7 @@ export class TaskWriter {
         let matched = false;
         await this.vault.process(file, content => {
             const lines = content.split('\n');
-            const index = this.locateTaskLine(task, lines);
+            const index = locateTaskLine(task, lines);
             if (index === -1) return content;
             const updated = transform(lines[index]);
             if (updated === lines[index]) return content;
@@ -151,18 +222,5 @@ export class TaskWriter {
             return lines.join('\n');
         });
         return matched;
-    }
-
-    /** Locate a task's line in freshly-read content. Prefers the recorded
-     *  lineNumber when rawLine still matches; falls back to exact-line search. */
-    private locateTaskLine(task: TaskItem, lines: string[]): number {
-        if (
-            task.lineNumber >= 0 &&
-            task.lineNumber < lines.length &&
-            lines[task.lineNumber] === task.rawLine
-        ) {
-            return task.lineNumber;
-        }
-        return lines.indexOf(task.rawLine);
     }
 }

@@ -9,6 +9,12 @@ export interface TaskItemRowCallbacks {
 	onClickSource: (task: TaskItem) => void;
 	onToggleCollapse?: (taskId: string) => void;
 	getTaskById?: (id: string) => TaskItem | undefined;
+	/** Open the snooze menu for a task (v3). When provided, a ⏰ action renders on open rows. */
+	onSnooze?: (task: TaskItem, evt: MouseEvent) => void;
+	/** Defer a task to Someday (v3). When provided, a 💤 action renders on eligible rows. */
+	onSomeday?: (task: TaskItem) => void;
+	/** Wake a task — clears snooze and/or #someday (v3). Rendered on snoozed/someday rows. */
+	onWake?: (task: TaskItem) => void;
 }
 
 export class TaskItemRow {
@@ -98,6 +104,38 @@ export class TaskItemRow {
 		if (meta.dueDate) {
 			const overdue = task.status === TaskStatus.Open && isOverdue(meta.dueDate);
 			this.el.appendChild(createDueBadge(formatDateDisplay(meta.dueDate), overdue));
+		}
+
+		// Snooze badge (v3): a snoozed task shows when it wakes; clicking it wakes it now.
+		if (task.snoozeDate && task.status === TaskStatus.Open) {
+			const badge = this.el.createSpan({ cls: 'friday-snooze-badge' });
+			badge.textContent = `💤 ${formatDateDisplay(task.snoozeDate)}`;
+			badge.setAttribute('title', 'Snoozed — click to wake now');
+			if (callbacks.onWake) {
+				badge.addClass('friday-clickable');
+				badge.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onWake!(task); });
+			}
+		}
+
+		// Row actions (v3): snooze / someday / wake. Only rendered when the host view wires
+		// the callbacks (Today/Upcoming/Triage/Someday do; legacy views don't).
+		if (task.status === TaskStatus.Open) {
+			const isDeferred = task.someday || task.snoozeDate != null;
+			if (callbacks.onSnooze && !isDeferred) {
+				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '⏰' });
+				btn.setAttribute('title', 'Snooze…');
+				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSnooze!(task, e as MouseEvent); });
+			}
+			if (callbacks.onSomeday && !isDeferred) {
+				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '💤' });
+				btn.setAttribute('title', 'Send to Someday');
+				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSomeday!(task); });
+			}
+			if (callbacks.onWake && task.someday) {
+				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '↩︎' });
+				btn.setAttribute('title', 'Wake — remove from Someday');
+				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onWake!(task); });
+			}
 		}
 
 		// Source file link

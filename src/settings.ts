@@ -209,8 +209,67 @@ export class FridaySettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
+            .setName('Tasks inbox file')
+            .setDesc('Central file for loose tasks (the v3 capture home). Quick-add and the daily-Inbox sweep land here.')
+            .addText(text =>
+                text
+                    .setPlaceholder('BuJo/Tasks.md')
+                    .setValue(this.plugin.settings.tasksFilePath)
+                    .onChange(value => {
+                        this.plugin.settings.tasksFilePath = value.trim();
+                        this.debouncedSave(false);
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Upcoming window (days)')
+            .setDesc('How many days ahead the Upcoming view looks — also the snooze-wake horizon.')
+            .addText(text =>
+                text
+                    .setPlaceholder('14')
+                    .setValue(String(this.plugin.settings.upcomingWindowDays))
+                    .onChange(value => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n > 0) {
+                            this.plugin.settings.upcomingWindowDays = n;
+                            this.debouncedSave(false);
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Auto-archive completed after (days)')
+            .setDesc('Completed tasks in the Tasks inbox are swept to the archive once closed this long. 0 = manual only.')
+            .addText(text =>
+                text
+                    .setPlaceholder('7')
+                    .setValue(String(this.plugin.settings.archiveCompletedAfterDays))
+                    .onChange(value => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 0) {
+                            this.plugin.settings.archiveCompletedAfterDays = n;
+                            this.debouncedSave(false);
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Date format')
+            .setDesc('Format the plugin writes for @due / @snooze. ISO matches daily-note names and topic frontmatter.')
+            .addDropdown(dd =>
+                dd
+                    .addOption('iso', 'ISO — 2026-08-20')
+                    .addOption('dmy', 'Day-Month-Year — 20-08-2026')
+                    .setValue(this.plugin.settings.dateFormat)
+                    .onChange(async value => {
+                        this.plugin.settings.dateFormat = value as 'iso' | 'dmy';
+                        await this.plugin.saveSettings(false);
+                    })
+            );
+
+        new Setting(containerEl)
             .setName('Migration prompt on startup')
-            .setDesc('Prompt to migrate incomplete tasks when Obsidian starts.')
+            .setDesc('Legacy morning-review carry-forward. Off in v3 — tasks float by date instead.')
             .addToggle(toggle =>
                 toggle
                     .setValue(this.plugin.settings.migrationPromptOnStartup)
@@ -361,6 +420,24 @@ export class FridaySettingTab extends PluginSettingTab {
                         }
                     })
             );
+
+        new Setting(containerEl)
+            .setName('Hide done items after (days)')
+            .setDesc('Hide JIRA issues and topics that have been done/closed for longer than this many days from the dashboards. Recently-completed work stays visible for follow-up; the Topics "Done" filter still shows everything, and full history stays in JIRA. Minimum 1. Default 14.')
+            .addText(text => {
+                text.inputEl.type = 'number';
+                text.inputEl.min = '1';
+                text
+                    .setPlaceholder('14')
+                    .setValue(String(this.plugin.settings.hideDoneAfterDays ?? 14))
+                    .onChange(value => {
+                        const parsed = parseInt(value, 10);
+                        if (!isNaN(parsed) && parsed >= 1) {
+                            this.plugin.settings.hideDoneAfterDays = parsed;
+                            this.debouncedSave(false);
+                        }
+                    });
+            });
 
         // ── Analytics ─────────────────────────────────────────────
         containerEl.createEl('h2', { text: 'Analytics' });

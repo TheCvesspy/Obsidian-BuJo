@@ -1,6 +1,7 @@
 import { Vault, TFile, TFolder } from 'obsidian';
 import { TaskItem, TaskStatus, PluginSettings } from '../types';
 import { TaskStore } from './taskStore';
+import { locateTaskLine } from '../utils/lineLocator';
 
 export interface ArchiveResult {
 	archived: number;
@@ -17,11 +18,17 @@ export class ArchiveService {
 
 	/**
 	 * Archive all completed (Done + Cancelled) tasks from the vault.
-	 * Moves task lines to archive files and removes them from source files.
-	 * Tasks whose rawLine can no longer be located in the source (file edited
-	 * since last scan) are counted under `skipped` and left in place.
+	 * Moves task lines (with their description continuations) to archive files
+	 * and removes them from source files.
+	 *
+	 * Three phases: (1) locate every task in a fresh read and capture its verbatim
+	 * block — tasks that can't be located are counted under `skipped` and never
+	 * archived, so retries are idempotent; (2) append the captured blocks to the
+	 * archive files; (3) remove the blocks from the source files. Archive-before-
+	 * remove ordering is kept: on a mid-flight edit we prefer over-archiving to
+	 * losing content from the source.
 	 */
-	async archiveCompleted(): Promise<ArchiveResult> {
+	async archiveCompleted(extraFilter?: (t: TaskItem) => boolean): Promise<ArchiveResult> {
 		const settings = this.getSettings();
 
 		// Get all completed root tasks
@@ -33,24 +40,15 @@ export class ArchiveService {
 		];
 
 		const completedTasks = allTasks.filter(t =>
-			t.status === TaskStatus.Done || t.status === TaskStatus.Cancelled,
+			(t.status === TaskStatus.Done || t.status === TaskStatus.Cancelled)
+			&& (!extraFilter || extraFilter(t)),
 		);
 
 		if (completedTasks.length === 0) {
 			return { archived: 0, files: [], skipped: 0 };
 		}
 
-		// Group tasks by archive file path
-		const archiveGroups = new Map<string, TaskItem[]>();
-		for (const task of completedTasks) {
-			const archivePath = this.getArchivePath(task, settings);
-			if (!archiveGroups.has(archivePath)) {
-				archiveGroups.set(archivePath, []);
-			}
-			archiveGroups.get(archivePath)!.push(task);
-		}
-
-		// Group tasks by source file for removal
+		// Group tasks by source file
 		const sourceGroups = new Map<string, TaskItem[]>();
 		for (const task of completedTasks) {
 			if (!sourceGroups.has(task.sourcePath)) {
@@ -59,27 +57,87 @@ export class ArchiveService {
 			sourceGroups.get(task.sourcePath)!.push(task);
 		}
 
-		const touchedFiles = new Set<string>();
+		// Phase 1 — locate every task against a fresh read and capture its verbatim
+		// block: the task line plus description continuations, original indentation
+		// intact. Unlocatable tasks (file edited since scan) never enter the archive.
+		const blocks = new Map<TaskItem, string>();
 		let skipped = 0;
+		for (const [sourcePath, tasks] of sourceGroups) {
+			const file = this.vault.getAbstractFileByPath(sourcePath);
+			if (!(file instanceof TFile)) {
+				skipped += tasks.length;
+				continue;
+			}
+			const lines = (await this.vault.read(file)).split('\n');
+			const usedIndices = new Set<number>();
+			for (const task of tasks) {
+				const idx = locateTaskLine(task, lines, usedIndices);
+				if (idx === -1) {
+					skipped++;
+					continue;
+				}
+				usedIndices.add(idx);
+				const blockLines = new Set<number>([idx]);
+				this.collectDescriptionLines(lines, idx, blockLines);
+				const sorted = [...blockLines].sort((a, b) => a - b);
+				blocks.set(task, sorted.map(i => lines[i]).join('\n'));
+			}
+		}
 
-		// Write to archive files first — if anything goes wrong we prefer over-archiving
-		// to data loss in the source file.
+		if (blocks.size === 0) {
+			return { archived: 0, files: [], skipped };
+		}
+
+		// Phase 2 — group located tasks by archive file and append their blocks.
+		const archiveGroups = new Map<string, TaskItem[]>();
+		for (const task of completedTasks) {
+			if (!blocks.has(task)) continue;
+			const archivePath = this.getArchivePath(task, settings);
+			if (!archiveGroups.has(archivePath)) {
+				archiveGroups.set(archivePath, []);
+			}
+			archiveGroups.get(archivePath)!.push(task);
+		}
+
+		const touchedFiles = new Set<string>();
 		for (const [archivePath, tasks] of archiveGroups) {
-			await this.appendToArchive(archivePath, tasks);
+			await this.appendToArchive(archivePath, tasks, blocks);
 			touchedFiles.add(archivePath);
 		}
 
-		// Remove archived lines from source files. Tasks whose rawLine can't be
-		// re-located (file edited since scan) are left alone.
+		// Phase 3 — remove archived blocks from source files (re-locates against the
+		// content inside vault.process). A task that moved since phase 1 stays in the
+		// source; it was already archived, which is the preferred failure direction.
+		let notRemoved = 0;
 		for (const [sourcePath, tasks] of sourceGroups) {
-			skipped += await this.removeFromSource(sourcePath, tasks);
+			const located = tasks.filter(t => blocks.has(t));
+			if (located.length === 0) continue;
+			notRemoved += await this.removeFromSource(sourcePath, located);
 		}
 
 		return {
-			archived: completedTasks.length - skipped,
+			archived: blocks.size - notRemoved,
 			files: Array.from(touchedFiles),
-			skipped,
+			skipped: skipped + notRemoved,
 		};
+	}
+
+	/**
+	 * v3 inbox cleanup. Archives completed (Done/Cancelled) tasks that live in the central
+	 * `tasksFilePath` and have been closed for at least `afterDays` (judged by the `@done`
+	 * stamp; unstamped legacy items are treated as eligible). Topic files and daily notes are
+	 * intentionally left untouched — Topics keep their completed tasks as a permanent record.
+	 * Returns a no-op result when disabled (afterDays < 0) or no inbox path is configured.
+	 */
+	async cleanupInbox(afterDays: number, tasksFilePath: string): Promise<ArchiveResult> {
+		if (!tasksFilePath || afterDays < 0) return { archived: 0, files: [], skipped: 0 };
+		const cutoff = new Date();
+		cutoff.setHours(0, 0, 0, 0);
+		cutoff.setDate(cutoff.getDate() - afterDays);
+		return this.archiveCompleted(t =>
+			t.sourcePath === tasksFilePath
+			&& (t.completedDate == null || t.completedDate.getTime() <= cutoff.getTime()),
+		);
 	}
 
 	/** Resolve the archive file path for a task.
@@ -135,12 +193,16 @@ export class ArchiveService {
 		}
 	}
 
-	private async appendToArchive(archivePath: string, tasks: TaskItem[]): Promise<void> {
+	private async appendToArchive(
+		archivePath: string,
+		tasks: TaskItem[],
+		blocks: Map<TaskItem, string>,
+	): Promise<void> {
 		const folder = archivePath.substring(0, archivePath.lastIndexOf('/'));
 		await this.ensureFolder(folder);
 
 		const existing = this.vault.getAbstractFileByPath(archivePath);
-		const appended = this.buildArchiveSection(tasks);
+		const appended = this.buildArchiveSection(tasks, blocks);
 
 		if (existing instanceof TFile) {
 			// Atomic read-modify-write: guarantees concurrent edits don't clobber.
@@ -154,8 +216,10 @@ export class ArchiveService {
 		}
 	}
 
-	/** Build the "## From [[…]]" sections for a batch of tasks. */
-	private buildArchiveSection(tasks: TaskItem[]): string {
+	/** Build the "## From [[…]]" sections for a batch of tasks. Each task's captured
+	 *  block (task line + description continuations) is emitted verbatim so notes
+	 *  under a task survive archiving. */
+	private buildArchiveSection(tasks: TaskItem[], blocks: Map<TaskItem, string>): string {
 		const bySource = new Map<string, TaskItem[]>();
 		for (const task of tasks) {
 			if (!bySource.has(task.sourcePath)) {
@@ -170,7 +234,7 @@ export class ArchiveService {
 			lines.push(`## From [[${sourceName}]]`);
 			lines.push('');
 			for (const task of sourceTasks) {
-				lines.push(task.rawLine);
+				lines.push(blocks.get(task) ?? task.rawLine);
 			}
 			lines.push('');
 		}
@@ -189,13 +253,18 @@ export class ArchiveService {
 
 			// Re-locate every task against the freshly-read content. Stored lineNumbers
 			// may be stale if the file was edited between scan and archive.
+			// `usedIndices` prevents two tasks with an identical rawLine (e.g. the same
+			// `- [x] …` on two days) from both resolving to the same physical line —
+			// which would leave one behind while the archive already holds both.
+			const usedIndices = new Set<number>();
 			const taskLocations: number[] = [];
 			for (const task of tasks) {
-				const idx = this.locateTaskLine(task, lines);
+				const idx = locateTaskLine(task, lines, usedIndices);
 				if (idx === -1) {
 					skipped++;
 					continue;
 				}
+				usedIndices.add(idx);
 				taskLocations.push(idx);
 			}
 			if (taskLocations.length === 0) return content;
@@ -248,19 +317,5 @@ export class ArchiveService {
 			out.add(j);
 			if (/^\s*```/.test(nextLine)) inFence = true;
 		}
-	}
-
-	/** Locate a task's line in freshly-read content: prefer stored lineNumber
-	 *  (O(1) check); fall back to exact rawLine search. Returns -1 if the task
-	 *  can't be found (e.g., file edited since scan). */
-	private locateTaskLine(task: TaskItem, lines: string[]): number {
-		if (
-			task.lineNumber >= 0 &&
-			task.lineNumber < lines.length &&
-			lines[task.lineNumber] === task.rawLine
-		) {
-			return task.lineNumber;
-		}
-		return lines.indexOf(task.rawLine);
 	}
 }

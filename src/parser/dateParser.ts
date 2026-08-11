@@ -96,10 +96,21 @@ function parseNaturalDate(raw: string): Date | null {
 	return null;
 }
 
+/** Build a validated Date from numeric parts, rejecting overflow (e.g. Feb 30 → null). */
+function makeDate(year: number, month: number, day: number): Date | null {
+	if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
+	if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+	const date = new Date(year, month - 1, day);
+	if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+		return null;
+	}
+	return date;
+}
+
 /**
  * Parses due-date strings.
  * Tries natural language first (today, tomorrow, next friday, in 3 days, etc.),
- * then falls back to DD-MM-YYYY or DD-MM format.
+ * then numeric formats: ISO YYYY-MM-DD (preferred), DD-MM-YYYY (legacy), or DD-MM.
  * DD-MM resolves to the nearest future occurrence of that date.
  */
 export function parseDueDate(raw: string): Date | null {
@@ -107,26 +118,22 @@ export function parseDueDate(raw: string): Date | null {
 	const natural = parseNaturalDate(raw.trim());
 	if (natural) return natural;
 
-	// Fall back to DD-MM-YYYY or DD-MM numeric parsing
-	const parts = raw.split('-');
+	// Numeric parsing
+	const parts = raw.trim().split('-');
 	if (parts.length < 2 || parts.length > 3) return null;
+
+	if (parts.length === 3) {
+		// ISO YYYY-MM-DD when the first component is a 4-digit year; else legacy DD-MM-YYYY.
+		if (parts[0].length === 4) {
+			return makeDate(parseInt(parts[0], 10), parseInt(parts[1], 10), parseInt(parts[2], 10));
+		}
+		return makeDate(parseInt(parts[2], 10), parseInt(parts[1], 10), parseInt(parts[0], 10));
+	}
 
 	const day = parseInt(parts[0], 10);
 	const month = parseInt(parts[1], 10);
-
 	if (isNaN(day) || isNaN(month) || month < 1 || month > 12 || day < 1 || day > 31) {
 		return null;
-	}
-
-	if (parts.length === 3) {
-		const year = parseInt(parts[2], 10);
-		if (isNaN(year)) return null;
-		const date = new Date(year, month - 1, day);
-		// Validate the date components didn't overflow (e.g. Feb 30)
-		if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
-			return null;
-		}
-		return date;
 	}
 
 	// DD-MM only: resolve to nearest future occurrence
@@ -145,7 +152,12 @@ export function parseDueDate(raw: string): Date | null {
 		return candidate;
 	}
 
-	// Date is in the past this year, use next year
+	// Date is in the past this year, use next year. Re-validate: a day valid in a leap
+	// year (e.g. 29-02) overflows in a following non-leap year (JS silently rolls it to
+	// Mar 1) — reject rather than return a date the user never typed.
 	const nextYear = new Date(thisYear + 1, month - 1, day);
+	if (nextYear.getMonth() !== month - 1 || nextYear.getDate() !== day) {
+		return null;
+	}
 	return nextYear;
 }

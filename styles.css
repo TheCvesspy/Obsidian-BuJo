@@ -1209,6 +1209,7 @@
     gap: 16px;
     margin-bottom: 8px;
     align-items: center;
+    flex-wrap: wrap;
 }
 .friday-roadmap-toggle {
     display: flex;
@@ -1219,74 +1220,200 @@
     font-size: 11px;
     color: var(--text-muted);
 }
-.friday-roadmap-chart {
+.friday-roadmap-hint {
+    font-size: 11px;
+    color: var(--text-faint, #999);
+    margin-left: auto;
+}
+
+/* Scroll viewport: fixed pixels-per-day timeline, scrolls horizontally; height hugs
+   content so only a horizontal scrollbar appears. Drag-to-pan via pointer events. */
+.friday-roadmap-scroll {
     position: relative;
+    overflow: auto;
+    /* Cap the height so a long board scrolls vertically inside the roadmap (with the time
+       axis pinned) instead of growing the whole view and pushing the scrollbar out of reach. */
+    max-height: 62vh;
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
-    padding: 8px;
-    overflow: hidden;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
 }
-.friday-roadmap-axis {
+.friday-roadmap-scroll.is-grabbing { cursor: grabbing; }
+.friday-roadmap-canvas {
     position: relative;
-    height: 18px;
-    margin-left: 160px;
-    border-bottom: 1px solid var(--background-modifier-border);
-    margin-bottom: 6px;
+    min-height: 80px;
 }
-.friday-roadmap-tick {
+
+/* Grid overlay: sits behind the lanes (left/width/top set inline to the track box). */
+.friday-roadmap-grid {
+    position: absolute;
+    bottom: 0;
+    z-index: 0;
+    pointer-events: none;
+}
+.friday-roadmap-weekend {
     position: absolute;
     top: 0;
-    transform: translateX(-50%);
-    font-size: 10px;
-    color: var(--text-faint, #999);
-    white-space: nowrap;
+    bottom: 0;
+    background: var(--background-modifier-hover);
+    opacity: 0.4;
+}
+.friday-roadmap-gridline {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--background-modifier-border);
+    opacity: 0.35;
+}
+.friday-roadmap-gridline.is-week { opacity: 0.7; }
+.friday-roadmap-gridline.is-month {
+    opacity: 1;
+    background: var(--background-modifier-border-hover, var(--background-modifier-border));
+    width: 2px;
 }
 .friday-roadmap-today {
     position: absolute;
     top: 0;
-    height: 600px;
+    bottom: 0;
     width: 2px;
     background: var(--interactive-accent, #4a8af4);
-    opacity: 0.5;
-    z-index: 1;
+    z-index: 2;
 }
+
+/* Two-tier axis header. Corner is frozen at the left; the whole axis is pinned to the top
+   so it stays visible while the rows scroll vertically. Solid background so rows scroll under it. */
+.friday-roadmap-axis {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--background-primary);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.friday-roadmap-axis-corner {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    flex: 0 0 auto;
+    background: var(--background-primary);
+    border-right: 1px solid var(--background-modifier-border);
+}
+.friday-roadmap-axis-track {
+    position: relative;
+    flex: 0 0 auto;
+}
+.friday-roadmap-axis-tier1 {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 19px;
+}
+.friday-roadmap-axis-tier2 {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 17px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+.friday-roadmap-tick1 {
+    position: absolute;
+    top: 2px;
+    padding-left: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.friday-roadmap-tick2 {
+    position: absolute;
+    top: 1px;
+    padding-left: 3px;
+    font-size: 10px;
+    color: var(--text-faint, #999);
+    white-space: nowrap;
+}
+.friday-roadmap-tick2.is-weekend { color: var(--text-error, #c0563f); opacity: 0.8; }
+
+/* Lanes + rows. Group headers and row labels are frozen in the left column. */
+.friday-roadmap-lanes { position: relative; z-index: 1; }
+.friday-roadmap-lane { border-top: 1px solid var(--background-modifier-border); }
+.friday-roadmap-lane:first-child { border-top: none; }
 .friday-roadmap-lane-header {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    padding: 4px 8px 2px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin: 6px 0 2px;
+    background: var(--background-primary);
+    border-right: 1px solid var(--background-modifier-border);
 }
 .friday-roadmap-row {
     display: flex;
     align-items: center;
-    height: 24px;
+    height: 26px;
 }
 .friday-roadmap-row-label {
-    width: 160px;
-    flex-shrink: 0;
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    height: 100%;
     font-size: 12px;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
-    padding-right: 8px;
+    padding: 0 8px;
+    background: var(--background-primary);
+    border-right: 1px solid var(--background-modifier-border);
 }
+.friday-roadmap-row-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.friday-roadmap-row-title:hover { color: var(--text-accent, #a060f0); }
 .friday-roadmap-track {
     position: relative;
-    flex: 1;
+    flex: 0 0 auto;
     height: 100%;
 }
 .friday-roadmap-bar {
     position: absolute;
     top: 5px;
-    height: 14px;
+    height: 16px;
+    display: flex;
+    align-items: center;
     background: var(--interactive-accent, #4a8af4);
     border-radius: 4px;
     cursor: pointer;
     min-width: 6px;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+.friday-roadmap-bar-label {
+    padding: 0 5px;
+    font-size: 10px;
+    line-height: 16px;
+    color: var(--text-on-accent, #fff);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
 }
 .friday-roadmap-bar.is-blocked { background: var(--color-orange, #e68a00); }
-.friday-roadmap-bar.is-done { background: var(--color-green, #08b94e); opacity: 0.5; }
+.friday-roadmap-bar.is-done { background: var(--color-green, #08b94e); opacity: 0.55; }
 .friday-roadmap-bar.is-overdue { outline: 2px solid var(--color-red, #e03e3e); }
 .friday-roadmap-bar.is-critical { box-shadow: 0 0 0 2px var(--text-accent, #a060f0); }
 .friday-roadmap-undated {
@@ -1472,6 +1599,85 @@
     background: var(--background-modifier-hover);
 }
 
+/* Inline quick-edit dropdowns on topic cards (status / priority / impact / effort / owner) */
+.friday-topic-quickedit {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.friday-topic-quickedit .friday-topic-qe {
+    font-size: 11px;
+    padding: 1px 4px;
+    max-width: 100%;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.friday-topic-quickedit .friday-topic-qe:hover {
+    color: var(--text-normal);
+    border-color: var(--interactive-accent);
+}
+
+.friday-topic-quickedit .friday-topic-qe:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 1px;
+}
+
+/* First-run onboarding panel for the Topics view (shown when no topic files exist) */
+.friday-topics-firstrun {
+    max-width: 520px;
+    margin: 40px auto;
+    padding: 28px 32px;
+    text-align: center;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+}
+
+.friday-topics-firstrun-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    color: var(--text-normal);
+}
+
+.friday-topics-firstrun-body {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+
+.friday-topics-firstrun-cta {
+    margin-bottom: 16px;
+}
+
+.friday-topics-firstrun-note {
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+/* "Clear filters" affordance on the filtered-empty state */
+.friday-topics-clear-filters {
+    margin-left: 10px;
+    padding: 2px 10px;
+    font-size: 12px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    cursor: pointer;
+}
+
+.friday-topics-clear-filters:hover {
+    background: var(--background-modifier-hover);
+}
+
 .friday-kanban-blocked-active {
     background: var(--color-red, #e03e3e) !important;
     color: #fff !important;
@@ -1637,6 +1843,12 @@
     color: var(--text-error, var(--color-red, #e03e3e));
     font-size: 13px;
     min-height: 1.2em;
+}
+
+.friday-jira-prompt-desc {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: 0 0 12px;
 }
 
 /* ─── Migration Modal Details ─── */
@@ -3819,4 +4031,43 @@ a.friday-topics-table-jirakey:hover {
     background: var(--background-secondary);
     border-radius: 3px;
     font-size: 12px;
+}
+
+/* ─── v3 streamlined tasks: postpone actions, snooze badge, section accents ─── */
+.friday-row-action {
+    cursor: pointer;
+    margin-left: 6px;
+    padding: 0 4px;
+    border-radius: 4px;
+    opacity: 0.35;
+    font-size: 13px;
+    transition: opacity 120ms ease, background 120ms ease;
+}
+.friday-task-row:hover .friday-row-action {
+    opacity: 0.8;
+}
+.friday-row-action:hover {
+    opacity: 1;
+    background: var(--background-modifier-hover);
+}
+
+.friday-snooze-badge {
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--background-modifier-border);
+    white-space: nowrap;
+}
+.friday-snooze-badge.friday-clickable {
+    cursor: pointer;
+}
+.friday-snooze-badge.friday-clickable:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.friday-section-overdue .friday-section-header {
+    color: var(--text-error);
 }

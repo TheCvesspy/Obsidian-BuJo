@@ -153,17 +153,95 @@ export class TaskStore {
         });
     }
 
-    /** Open root tasks with due date before today */
+    /** Midnight today, computed once per call. */
+    private todayRef(): Date {
+        const n = new Date();
+        return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    }
+
+    /** A task is "asleep" while today is strictly before its snooze date. On the snooze
+     *  date it wakes. Tasks with no snooze date are never asleep. */
+    private isSnoozed(t: TaskItem, today: Date): boolean {
+        return t.snoozeDate != null && t.snoozeDate.getTime() > today.getTime();
+    }
+
+    /** Open, not deferred to Someday, and not currently snoozed — i.e. eligible for the
+     *  dated task surfaces (Today / Upcoming / Overdue). */
+    private isActive(t: TaskItem, today: Date): boolean {
+        return t.status === TaskStatus.Open && !t.someday && !this.isSnoozed(t, today);
+    }
+
+    /** Open root tasks with due date before today. Excludes snoozed & someday. */
     getOverdueTasks(): TaskItem[] {
+        const today = this.todayRef();
         return this.taskItems.filter(
-            t => t.parentId === null && t.dueDate != null && isOverdue(t.dueDate) && t.status === TaskStatus.Open
+            t => t.parentId === null && t.dueDate != null && isOverdue(t.dueDate, today) && this.isActive(t, today)
         );
     }
 
-    /** Open root tasks with no due date */
-    getUnscheduledTasks(): TaskItem[] {
+    /** The daily driver: active root tasks due today or overdue (snoozed & someday excluded). */
+    getToday(): TaskItem[] {
+        const today = this.todayRef();
         return this.taskItems.filter(
-            t => t.parentId === null && t.dueDate == null && t.status === TaskStatus.Open
+            t => t.parentId === null && t.dueDate != null && t.dueDate.getTime() <= today.getTime() && this.isActive(t, today)
+        );
+    }
+
+    /** Active root tasks due after today and within `windowDays` (default 14). */
+    getUpcoming(windowDays = 14): TaskItem[] {
+        const today = this.todayRef();
+        const horizon = new Date(today.getTime());
+        horizon.setDate(horizon.getDate() + windowDays);
+        return this.taskItems.filter(
+            t => t.parentId === null && t.dueDate != null
+                && t.dueDate.getTime() > today.getTime()
+                && t.dueDate.getTime() <= horizon.getTime()
+                && this.isActive(t, today)
+        );
+    }
+
+    /** Snoozed root tasks that wake within `windowDays` (shown in Upcoming as "waking"). */
+    getWakingSnoozed(windowDays = 14): TaskItem[] {
+        const today = this.todayRef();
+        const horizon = new Date(today.getTime());
+        horizon.setDate(horizon.getDate() + windowDays);
+        return this.taskItems.filter(
+            t => t.parentId === null && t.status === TaskStatus.Open && !t.someday
+                && t.snoozeDate != null
+                && t.snoozeDate.getTime() > today.getTime()
+                && t.snoozeDate.getTime() <= horizon.getTime()
+        );
+    }
+
+    /** Open root tasks deferred to Someday (dateless backlog). */
+    getSomedayTasks(): TaskItem[] {
+        return this.taskItems.filter(
+            t => t.parentId === null && t.status === TaskStatus.Open && t.someday
+        );
+    }
+
+    /** Triage: loose, undecided items awaiting a decision — no date, no Topic link, not
+     *  snoozed or someday. Draws from the Inbox category plus the central `tasksFilePath`. */
+    getTriage(tasksFilePath: string): TaskItem[] {
+        const today = this.todayRef();
+        const seen = new Set<string>();
+        const out: TaskItem[] = [];
+        const add = (t: TaskItem) => { if (!seen.has(t.id)) { seen.add(t.id); out.push(t); } };
+        for (const t of this.inboxItems) {
+            if (t.parentId === null && this.isActive(t, today) && t.dueDate == null && t.topicLink == null) add(t);
+        }
+        for (const t of this.taskItems) {
+            if (t.parentId === null && t.sourcePath === tasksFilePath
+                && this.isActive(t, today) && t.dueDate == null && t.topicLink == null) add(t);
+        }
+        return out;
+    }
+
+    /** Open root tasks with no due date. Excludes snoozed & someday. */
+    getUnscheduledTasks(): TaskItem[] {
+        const today = this.todayRef();
+        return this.taskItems.filter(
+            t => t.parentId === null && t.dueDate == null && this.isActive(t, today)
         );
     }
 
