@@ -346,18 +346,18 @@ export class VaultScanner {
             return;
         }
 
-        // Skip scan if this modify was triggered by a sync write
-        if (this.writer?.isSyncing) return;
-
         // Use vault.read() instead of cachedRead() to get the latest content
         const content = await this.vault.read(file);
         const classifier = this.cachedClassifier ??
             new HeadingClassifier(settings.taskHeadings, settings.openPointHeadings, settings.inboxHeadings);
         const newTasks = parseTasksFromContent(content, file.path, classifier, settings.workTypes, settings.purposes);
 
-        // Detect status changes on migrated copies for two-way sync
+        // Detect status changes on migrated copies for two-way sync — but not when
+        // this modify was itself produced by a sync write to this file (would loop).
+        // The scan itself always proceeds, so the store reflects synced content
+        // immediately and edits to other files during the window are never dropped.
         const oldTasks = this.tasksByFile.get(file.path) ?? [];
-        if (this.writer) {
+        if (this.writer && !this.writer.isSyncTarget(file.path)) {
             this.detectAndSyncStatusChanges(oldTasks, newTasks);
         }
 
@@ -395,16 +395,34 @@ export class VaultScanner {
     /**
      * Detect tasks with migratedFrom that changed to done/cancelled.
      * Trigger sync to update the original task.
+     *
+     * Old and new copies are paired by a STABLE key (migration source + normalized
+     * text), NOT by the task id. Task ids are line-index based (`${sourcePath}:${i}`,
+     * see taskParser), so if the user inserts/deletes a line above a forwarded task
+     * AND checks it done within the same ~300ms scan debounce window, the task's line
+     * — and thus its id — shifts. An id-keyed lookup would then miss the old copy,
+     * skip the open→terminal transition, and leave the original `[>]` line open
+     * forever (tasksByFile is overwritten with the terminal copy, so no later scan
+     * re-fires it). The stable key is invariant to line movement, so the transition
+     * is still detected. Text is identical across scans since it's parsed from the
+     * checkbox content independently of the line index.
      */
     private detectAndSyncStatusChanges(oldTasks: TaskItem[], newTasks: TaskItem[]): void {
         if (!this.writer) return;
 
-        const oldById = new Map(oldTasks.map(t => [t.id, t]));
+        // NUL separator can't appear in either component, so keys never collide
+        // across the migratedFrom/text boundary.
+        const stableKey = (t: TaskItem): string => `${t.migratedFrom} ${t.text.trim()}`;
+
+        const oldByKey = new Map<string, TaskItem>();
+        for (const t of oldTasks) {
+            if (t.migratedFrom) oldByKey.set(stableKey(t), t);
+        }
 
         for (const newTask of newTasks) {
             if (!newTask.migratedFrom) continue;
 
-            const oldTask = oldById.get(newTask.id);
+            const oldTask = oldByKey.get(stableKey(newTask));
             if (!oldTask) continue;
 
             // Status changed to done or cancelled

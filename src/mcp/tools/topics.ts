@@ -4,8 +4,11 @@ import {
 	TopicImpact,
 	TopicEffort,
 	Priority,
+	PluginSettings,
 } from '../../types';
 import { SprintTopicService } from '../../services/sprintTopicService';
+import { JiraService } from '../../services/jiraService';
+import { createTopicFromJiraInfo, syncTopicDependenciesFromJira } from '../../services/topicFromJira';
 import {
 	McpTool,
 	McpToolResult,
@@ -20,6 +23,8 @@ import {
 
 interface TopicsDeps {
 	sprintTopicService: SprintTopicService;
+	jiraService: JiraService;
+	getSettings: () => PluginSettings;
 }
 
 const TOPIC_STATUS = ['backlog', 'open', 'in-progress', 'done'] as const;
@@ -33,6 +38,8 @@ export function topicTools(deps: TopicsDeps): McpTool[] {
 		topicsListTool(deps),
 		topicGetTool(deps),
 		topicCreateTool(deps),
+		topicCreateFromJiraTool(deps),
+		topicSyncDependenciesTool(deps),
 		topicUpdateTool(deps),
 		topicLinkTool(deps),
 	];
@@ -119,7 +126,8 @@ function topicCreateTool(deps: TopicsDeps): McpTool {
 				priority: { type: 'string', enum: [...TOPIC_PRIORITY] },
 				impact: { type: 'string', enum: [...TOPIC_IMPACT] },
 				effort: { type: 'string', enum: [...TOPIC_EFFORT] },
-				dueDate: { type: 'string', description: 'ISO YYYY-MM-DD.' },
+				dueDate: { type: 'string', description: 'ISO YYYY-MM-DD. Doubles as the roadmap bar end.' },
+				startDate: { type: 'string', description: 'Planned roadmap start, ISO YYYY-MM-DD.' },
 				assignee: { type: 'string', description: 'Team member email.' },
 				waitingOn: { type: 'string', description: 'Email or free text.' },
 				linkedPages: {
@@ -139,6 +147,7 @@ function topicCreateTool(deps: TopicsDeps): McpTool {
 				const impact = optionalEnum(args, 'impact', TOPIC_IMPACT) ?? null;
 				const effort = optionalEnum(args, 'effort', TOPIC_EFFORT) ?? null;
 				const dueDate = optionalIsoDate(args, 'dueDate') ?? null;
+				const startDate = optionalIsoDate(args, 'startDate') ?? null;
 				const assignee = optionalString(args, 'assignee') ?? null;
 				const waitingOn = optionalString(args, 'waitingOn') ?? null;
 
@@ -167,8 +176,97 @@ function topicCreateTool(deps: TopicsDeps): McpTool {
 					assignee,
 					waitingOn,
 					null,
+					[],
+					startDate,
 				);
 				return jsonResult({ ok: true, topic: toTopicDto(topic) });
+			} catch (err) {
+				if (err instanceof ToolError) return errorResult(err.message);
+				if (err instanceof Error) return errorResult(err.message);
+				throw err;
+			}
+		},
+	};
+}
+
+// ─── topic_create_from_jira ──────────────────────────────────────────────────
+
+function topicCreateFromJiraTool(deps: TopicsDeps): McpTool {
+	return {
+		name: 'topic_create_from_jira',
+		description:
+			'Create a Kanban topic from a JIRA issue key. Fetches the issue and fills the topic: title ' +
+			'from the summary, links the key, maps the priority, copies the due date, seeds a roadmap start ' +
+			'date, resolves the assignee to a team member, and drops the description into the Notes section. ' +
+			'If a topic already links the key, returns that topic (alreadyLinked: true) instead of creating a ' +
+			'duplicate. Does not wire blocked-by links — use topic dependency tools or the in-app sync for that. ' +
+			'Requires the JIRA module to be enabled.',
+		inputSchema: {
+			type: 'object',
+			properties: { key: { type: 'string', description: 'JIRA issue key, e.g. PROJ-123.' } },
+			required: ['key'],
+			additionalProperties: false,
+		},
+		handler: async (args): Promise<McpToolResult> => {
+			try {
+				const rawKey = requireString(args, 'key');
+				if (!deps.jiraService.isEnabled()) {
+					return errorResult('JIRA module is disabled. Enable it in Friday settings to create topics from issues.');
+				}
+				const key = deps.jiraService.extractIssueKey(rawKey.toUpperCase());
+				if (!key) return errorResult(`"${rawKey}" is not a valid JIRA issue key (expected e.g. PROJ-123).`);
+
+				const all = await deps.sprintTopicService.getAllTopics();
+				const existing = all.find(t => t.jira.includes(key));
+				if (existing) {
+					return jsonResult({ ok: true, alreadyLinked: true, topic: toTopicDto(existing) });
+				}
+
+				const info = await deps.jiraService.fetchIssue(key);
+				if (!info) {
+					const err = deps.jiraService.getError(key);
+					return errorResult(err ? `Couldn't fetch ${key}: ${err}` : `Couldn't fetch ${key}.`);
+				}
+
+				const todayIso = new Date().toISOString().slice(0, 10);
+				const topic = await createTopicFromJiraInfo(
+					deps.sprintTopicService,
+					info,
+					{ teamMembers: deps.getSettings().teamMembers ?? [], todayIso },
+				);
+				return jsonResult({ ok: true, created: true, topic: toTopicDto(topic) });
+			} catch (err) {
+				if (err instanceof ToolError) return errorResult(err.message);
+				if (err instanceof Error) return errorResult(err.message);
+				throw err;
+			}
+		},
+	};
+}
+
+// ─── topic_sync_dependencies ─────────────────────────────────────────────────
+
+function topicSyncDependenciesTool(deps: TopicsDeps): McpTool {
+	return {
+		name: 'topic_sync_dependencies',
+		description:
+			'Wire topic blocked-by dependencies from JIRA across the whole board. For every topic linked ' +
+			'to a JIRA issue, reads that issue\'s "is blocked by" links and adds a topic dependency wherever ' +
+			'the blocking issue is also linked to a topic (self/cycles/duplicates skipped). Idempotent. ' +
+			'Returns counts (scanned, added, rejected). Requires the JIRA module to be enabled.',
+		inputSchema: {
+			type: 'object',
+			properties: {},
+			additionalProperties: false,
+		},
+		handler: async (): Promise<McpToolResult> => {
+			try {
+				if (!deps.jiraService.isEnabled()) {
+					return errorResult('JIRA module is disabled. Enable it in Friday settings to sync dependencies.');
+				}
+				const all = await deps.sprintTopicService.getAllTopics();
+				const result = await syncTopicDependenciesFromJira(deps.sprintTopicService, deps.jiraService, all);
+				return jsonResult({ ok: true, ...result });
 			} catch (err) {
 				if (err instanceof ToolError) return errorResult(err.message);
 				if (err instanceof Error) return errorResult(err.message);
@@ -186,7 +284,7 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 		description:
 			'Update one or more frontmatter fields on a topic in place. Only the fields you pass ' +
 			'are touched; omitting a field leaves it unchanged. Pass `null` for impact / effort / ' +
-			'dueDate / assignee / waitingOn to clear them. Status / blocked / priority require a value. ' +
+			'dueDate / startDate / assignee / waitingOn to clear them. Status / blocked / priority require a value. ' +
 			'Setting status stamps the Kanban flow timestamps automatically.',
 		inputSchema: {
 			type: 'object',
@@ -203,6 +301,9 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 				},
 				dueDate: {
 					anyOf: [{ type: 'string', description: 'ISO YYYY-MM-DD' }, { type: 'null' }],
+				},
+				startDate: {
+					anyOf: [{ type: 'string', description: 'Planned roadmap start, ISO YYYY-MM-DD' }, { type: 'null' }],
 				},
 				assignee: { anyOf: [{ type: 'string' }, { type: 'null' }] },
 				waitingOn: { anyOf: [{ type: 'string' }, { type: 'null' }] },
@@ -281,6 +382,19 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 						}
 					}
 				}
+				if ('startDate' in args) {
+					const raw = args.startDate;
+					if (raw === null) {
+						await deps.sprintTopicService.setTopicStartDate(path, null);
+						changes.push('startDate=null');
+					} else {
+						const v = optionalIsoDate(args, 'startDate');
+						if (v) {
+							await deps.sprintTopicService.setTopicStartDate(path, v);
+							changes.push(`startDate=${v}`);
+						}
+					}
+				}
 				if ('assignee' in args) {
 					const raw = args.assignee;
 					if (raw === null) {
@@ -309,7 +423,7 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 				}
 
 				if (changes.length === 0) {
-					return errorResult('No update fields provided. Pass one or more of: status, blocked, priority, impact, effort, dueDate, assignee, waitingOn.');
+					return errorResult('No update fields provided. Pass one or more of: status, blocked, priority, impact, effort, dueDate, startDate, assignee, waitingOn.');
 				}
 
 				const after = await deps.sprintTopicService.getAllTopics();
@@ -381,6 +495,7 @@ function toTopicDto(t: SprintTopic): Record<string, unknown> {
 		impact: t.impact,
 		effort: t.effort,
 		dueDate: t.dueDate,
+		startDate: t.startDate,
 		jira: t.jira,
 		linkedPages: t.linkedPages,
 		taskTotal: t.taskTotal,

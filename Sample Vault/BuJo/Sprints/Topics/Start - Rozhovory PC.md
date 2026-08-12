@@ -1,10 +1,12 @@
 ---
 status: open
-jira: 
 priority: medium
+jira: 
+startDate: 2026-07-06
+dueDate: 2026-08-14
 blocked: false
-sprint: sprint-1774025875336
 sortOrder: 999
+sprint: sprint-1774025875336
 ---
 # Start - Rozhovory PC
 

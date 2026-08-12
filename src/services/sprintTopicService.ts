@@ -1,6 +1,6 @@
-import { Vault, TFile, TFolder } from 'obsidian';
+import { App, Vault, TFile, TFolder } from 'obsidian';
 import { SprintTopic, TopicStatus, Priority, PluginSettings, TopicImpact, TopicEffort } from '../types';
-import { parseTopicFile, parseFrontmatter, serializeFrontmatter, serializeRefs, foldedScalar } from '../parser/topicParser';
+import { parseTopicFile, parseFrontmatterForRewrite, serializeFrontmatter, serializeRefs, foldedScalar, orderTopicFrontmatterEntries } from '../parser/topicParser';
 
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
 
@@ -8,6 +8,9 @@ export class SprintTopicService {
 	constructor(
 		private vault: Vault,
 		private getSettings: () => PluginSettings,
+		/** Needed for fileManager.renameFile (updates wiki-links vault-wide on rename).
+		 *  Optional so headless callers can construct the service without an App. */
+		private app?: App,
 	) {}
 
 	/** Get the topics folder path from settings */
@@ -39,6 +42,8 @@ export class SprintTopicService {
 		waitingOn: string | null = null,
 		lastNudged: string | null = null,
 		refs: Array<{ label: string; url: string }> = [],
+		startDate: string | null = null,
+		notesBody: string | null = null,
 	): Promise<SprintTopic> {
 		const filePath = this.getTopicFilePath(title);
 
@@ -51,19 +56,21 @@ export class SprintTopicService {
 		// Null-valued keys are omitted by serializeFrontmatter — keeps YAML clean.
 		// New topics start in the Backlog column; statusSince stamps the flow clock.
 		const today = new Date().toISOString().slice(0, 10);
+		// Keys are listed in TOPIC_FRONTMATTER_ORDER so new topics are written canonically.
 		const frontmatter = serializeFrontmatter({
 			status: 'backlog',
-			jira: jira || null,
 			priority: priority === Priority.None ? 'none' : priority,
-			blocked: false,
-			sortOrder: 999,
-			impact,
-			effort,
-			dueDate,
-			statusSince: today,
+			jira: jira || null,
 			assignee,
 			waitingOn,
 			lastNudged,
+			startDate,
+			dueDate,
+			impact,
+			effort,
+			blocked: false,
+			sortOrder: 999,
+			statusSince: today,
 			refs: refs.length > 0 ? foldedScalar(serializeRefs(refs)) : null,
 		});
 
@@ -79,9 +86,11 @@ export class SprintTopicService {
 		//   impact: critical | high | medium | low  (Impact/Effort + Eisenhower matrix)
 		//   effort: xs | s | m | l | xl             (Impact/Effort matrix)
 		//   dueDate: YYYY-MM-DD                     (Eisenhower urgency)
+		//   startDate: YYYY-MM-DD                    (planned roadmap start — estimated; bar end = dueDate)
 		//   statusSince / startedAt / doneAt: YYYY-MM-DD (Kanban flow timestamps)
 		//   jira: <ticket>
-		const content = `${frontmatter}\n# ${title}\n\n## Linked Pages\n${linkedSection}\n\n## Tasks\n\n## Notes\n`;
+		const notesSection = notesBody && notesBody.trim() ? `${notesBody.trim()}\n` : '';
+		const content = `${frontmatter}\n# ${title}\n\n## Linked Pages\n${linkedSection}\n\n## Tasks\n\n## Notes\n${notesSection}`;
 
 		await this.vault.create(filePath, content);
 		return parseTopicFile(content, filePath);
@@ -104,9 +113,9 @@ export class SprintTopicService {
 		if (!(file instanceof TFile)) return;
 
 		await this.vault.process(file, content => {
-			const fm = parseFrontmatter(content);
+			const { fields: fm, passthrough } = parseFrontmatterForRewrite(content);
 			this.applyFrontmatterUpdates(fm, updates);
-			return this.rebuildWithFrontmatter(content, fm);
+			return this.rebuildWithFrontmatter(content, fm, passthrough);
 		});
 	}
 
@@ -128,10 +137,13 @@ export class SprintTopicService {
 	/** Serialize a frontmatter object and splice it back into the original content.
 	 *  Empty-string values are retained — legacy callers rely on that.
 	 *  Values containing newlines are emitted as a YAML folded scalar (`key: |`) so
-	 *  multi-line fields like `refs:` round-trip correctly. */
-	private rebuildWithFrontmatter(content: string, fm: Record<string, string>): string {
+	 *  multi-line fields like `refs:` round-trip correctly.
+	 *  `passthrough` blocks (frontmatter entries the plugin doesn't manage — tags,
+	 *  aliases, YAML lists, user keys) are re-emitted verbatim after the managed keys. */
+	private rebuildWithFrontmatter(content: string, fm: Record<string, string>, passthrough: string[] = []): string {
 		const fmLines = ['---'];
-		for (const [key, value] of Object.entries(fm)) {
+		// Emit in the canonical key order so edits normalize a topic's frontmatter layout.
+		for (const [key, value] of orderTopicFrontmatterEntries(Object.entries(fm))) {
 			if (value.includes('\n')) {
 				fmLines.push(`${key}: |`);
 				for (const bodyLine of value.split('\n')) {
@@ -140,6 +152,9 @@ export class SprintTopicService {
 			} else {
 				fmLines.push(`${key}: ${value}`);
 			}
+		}
+		for (const block of passthrough) {
+			fmLines.push(block);
 		}
 		fmLines.push('---');
 		const newFm = fmLines.join('\n');
@@ -156,7 +171,7 @@ export class SprintTopicService {
 		if (!(file instanceof TFile)) return;
 		const today = new Date().toISOString().slice(0, 10);
 		await this.vault.process(file, content => {
-			const fm = parseFrontmatter(content);
+			const { fields: fm, passthrough } = parseFrontmatterForRewrite(content);
 			const updates: Partial<Record<string, string | number | boolean | null>> = {
 				status,
 				statusSince: today,
@@ -165,13 +180,97 @@ export class SprintTopicService {
 			if (status === 'done') updates.doneAt = today;
 			else if (fm['doneAt']) updates.doneAt = null;
 			this.applyFrontmatterUpdates(fm, updates);
-			return this.rebuildWithFrontmatter(content, fm);
+			return this.rebuildWithFrontmatter(content, fm, passthrough);
 		});
 	}
 
 	/** Set the blocked flag on a topic */
 	async setTopicBlocked(filePath: string, blocked: boolean): Promise<void> {
 		await this.updateTopicFrontmatter(filePath, { blocked });
+	}
+
+	/** Replace the wiki-link bullets in a topic's `## Linked Pages` section with `pages`.
+	 *  Non-bullet lines in the section (user notes) are kept, after the new bullets.
+	 *  If the section is missing it is appended at the end of the file. */
+	async updateLinkedPagesSection(filePath: string, pages: string[]): Promise<void> {
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return;
+
+		await this.vault.process(file, content => {
+			const bullets = pages.map(p => `- [[${p}]]`);
+			const lines = content.split('\n');
+			const start = lines.findIndex(l => /^##\s+Linked Pages\s*$/i.test(l));
+			if (start === -1) {
+				if (bullets.length === 0) return content;
+				return content.trimEnd() + '\n\n## Linked Pages\n' + bullets.join('\n') + '\n';
+			}
+			let end = start + 1;
+			while (end < lines.length && !/^##\s+/.test(lines[end])) end++;
+			const kept = lines.slice(start + 1, end).filter(l => {
+				const t = l.trim();
+				return t.length > 0 && !/^-\s*\[\[[^\]]+\]\]\s*$/.test(t);
+			});
+			const section = [lines[start], ...bullets, ...kept];
+			if (end < lines.length) section.push('');
+			return [...lines.slice(0, start), ...section, ...lines.slice(end)].join('\n');
+		});
+	}
+
+	/** Rename a topic: rewrites the body H1 and renames the file. Uses
+	 *  fileManager.renameFile when available so wiki-links across the vault update.
+	 *  Returns the new file path (unchanged when the sanitized name is identical).
+	 *  Throws when the title sanitizes to nothing or the target already exists. */
+	async renameTopic(filePath: string, newTitle: string): Promise<string> {
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) throw new Error('Topic file not found.');
+
+		const newPath = this.getTopicFilePath(newTitle);
+		const newBasename = newPath.split('/').pop()!.replace(/\.md$/, '');
+		if (!newBasename) throw new Error('Title contains no characters usable in a filename.');
+		if (newPath !== filePath && this.vault.getAbstractFileByPath(newPath)) {
+			throw new Error(`A topic named "${newBasename}" already exists.`);
+		}
+
+		// Rewrite the first body H1 (skipping frontmatter, where a `# comment` could lurk)
+		await this.vault.process(file, content => {
+			const m = content.match(FRONTMATTER_REGEX);
+			const bodyStart = m ? m[0].length : 0;
+			const body = content.slice(bodyStart);
+			if (!/^#\s+.*$/m.test(body)) return content; // no H1 — filename rename is enough
+			return content.slice(0, bodyStart) + body.replace(/^#\s+.*$/m, `# ${newTitle}`);
+		});
+
+		if (newPath === filePath) return filePath;
+		if (this.app) {
+			await this.app.fileManager.renameFile(file, newPath);
+		} else {
+			await this.vault.rename(file, newPath);
+		}
+		return newPath;
+	}
+
+	/** After a topic file was renamed (via the edit modal or manually in the file
+	 *  explorer), rewrite `blockedBy` entries in every other topic that referenced
+	 *  the old path — dependency edges must not silently break. */
+	async handleTopicRename(oldPath: string, newPath: string): Promise<void> {
+		const folder = this.vault.getAbstractFileByPath(this.getTopicsFolderPath());
+		if (!(folder instanceof TFolder)) return;
+
+		for (const child of folder.children) {
+			if (!(child instanceof TFile) || child.extension !== 'md') continue;
+			// Cheap pre-check so untouched topics aren't rewritten at all
+			const snapshot = await this.vault.cachedRead(child);
+			if (!snapshot.includes(oldPath)) continue;
+
+			await this.vault.process(child, content => {
+				const { fields: fm, passthrough } = parseFrontmatterForRewrite(content);
+				const deps = (fm['blockedBy'] || '').split('\n').map(s => s.trim()).filter(Boolean);
+				if (!deps.includes(oldPath)) return content;
+				const next = deps.map(p => (p === oldPath ? newPath : p));
+				this.applyFrontmatterUpdates(fm, { blockedBy: next.join('\n') });
+				return this.rebuildWithFrontmatter(content, fm, passthrough);
+			});
+		}
 	}
 
 	/** Add `blockerPath` to a topic's blockedBy list (this topic becomes blocked-by it).
@@ -188,11 +287,11 @@ export class SprintTopicService {
 		const file = this.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) return { ok: false, reason: 'Topic file not found.' };
 		await this.vault.process(file, content => {
-			const fm = parseFrontmatter(content);
+			const { fields: fm, passthrough } = parseFrontmatterForRewrite(content);
 			const existing = (fm['blockedBy'] || '').split('\n').map(s => s.trim()).filter(Boolean);
 			if (!existing.includes(blockerPath)) existing.push(blockerPath);
 			this.applyFrontmatterUpdates(fm, { blockedBy: existing.length > 0 ? existing.join('\n') : null });
-			return this.rebuildWithFrontmatter(content, fm);
+			return this.rebuildWithFrontmatter(content, fm, passthrough);
 		});
 		return { ok: true };
 	}
@@ -202,12 +301,12 @@ export class SprintTopicService {
 		const file = this.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) return;
 		await this.vault.process(file, content => {
-			const fm = parseFrontmatter(content);
+			const { fields: fm, passthrough } = parseFrontmatterForRewrite(content);
 			const next = (fm['blockedBy'] || '')
 				.split('\n').map(s => s.trim()).filter(Boolean)
 				.filter(p => p !== blockerPath);
 			this.applyFrontmatterUpdates(fm, { blockedBy: next.length > 0 ? next.join('\n') : null });
-			return this.rebuildWithFrontmatter(content, fm);
+			return this.rebuildWithFrontmatter(content, fm, passthrough);
 		});
 	}
 
@@ -243,6 +342,11 @@ export class SprintTopicService {
 		await this.updateTopicFrontmatter(filePath, { dueDate });
 	}
 
+	/** Set the planned roadmap start date on a topic (null clears the field) */
+	async setTopicStartDate(filePath: string, startDate: string | null): Promise<void> {
+		await this.updateTopicFrontmatter(filePath, { startDate });
+	}
+
 	/** Update the sort order of a topic within its column */
 	async updateSortOrder(filePath: string, sortOrder: number): Promise<void> {
 		await this.updateTopicFrontmatter(filePath, { sortOrder });
@@ -261,7 +365,7 @@ export class SprintTopicService {
 			if (!(child instanceof TFile) || child.extension !== 'md') continue;
 			let didChange = false;
 			await this.vault.process(child, content => {
-				const fm = parseFrontmatter(content);
+				const { fields: fm, passthrough } = parseFrontmatterForRewrite(content);
 				const hadSprintKeys = 'sprint' in fm || 'sprintHistory' in fm;
 				const hasSprint = !!(fm['sprint'] && fm['sprint'].trim());
 				const status = (fm['status'] || '').toLowerCase();
@@ -279,7 +383,7 @@ export class SprintTopicService {
 
 				didChange = true;
 				this.applyFrontmatterUpdates(fm, updates);
-				return this.rebuildWithFrontmatter(content, fm);
+				return this.rebuildWithFrontmatter(content, fm, passthrough);
 			});
 			if (didChange) changed++;
 		}

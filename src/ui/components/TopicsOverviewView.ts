@@ -4,7 +4,7 @@ import { SprintTopicService } from '../../services/sprintTopicService';
 import { JiraService } from '../../services/jiraService';
 import { deriveTopicBlock, toJiraSignal } from '../../services/topicStatus';
 import { buildTopicIndex, TopicIndex, criticalPath } from '../../services/topicGraph';
-import { getWeekStartConfigurable, getWeekId, formatWeekId } from '../../utils/dateUtils';
+import { getWeekStartConfigurable, getISOWeekNumber, resolveDoneWindowDays, daysSinceIso } from '../../utils/dateUtils';
 import { renderTopicCard } from './TopicCard';
 
 /**
@@ -52,11 +52,30 @@ interface RoadmapItem {
 
 const ROADMAP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** Roadmap timeline zoom levels and their fixed pixels-per-day scale.
+ *  day = fine-grained (day columns), week = balanced default, month = far-out overview. */
+type RoadmapZoom = 'day' | 'week' | 'month';
+const ROADMAP_PX_PER_DAY: Record<RoadmapZoom, number> = { day: 30, week: 13, month: 4.4 };
+const DAY_MS = 86400000;
+/** Width of the frozen left column (group/topic labels). Must match CSS --friday-roadmap-label-w. */
+const ROADMAP_LABEL_W = 168;
+/** Height of the two-tier time axis header. */
+const ROADMAP_AXIS_H = 38;
+/** Past / future scroll room guaranteed around today, in days, regardless of topic dates. */
+const ROADMAP_PAST_PAD = 60;
+const ROADMAP_FUTURE_PAD = 240;
+/** Above this many days, day-zoom stops drawing per-day gridlines/labels (keeps the DOM light). */
+const ROADMAP_MAX_DAY_TICKS = 540;
+
 export class TopicsOverviewView {
 	private el: HTMLElement;
 	private subMode: TopicsSubMode = 'board';
-	private roadmapZoom: 'week' | 'month' = 'week';
+	private roadmapZoom: RoadmapZoom = 'week';
 	private roadmapGroupBy: 'assignee' | 'status' = 'assignee';
+	/** Timeline date (ms) kept at the viewport centre across zoom + repaint. null = centre on today. */
+	private roadmapCenterMs: number | null = null;
+	/** The element the roadmap paints into — lets zoom/group/today repaint without a full view re-render. */
+	private roadmapBody: HTMLElement | null = null;
 	private scope: ScopeFilter = 'all';
 	/** 'all' | 'unassigned' | team member email. Persists across re-renders of this view instance. */
 	private assigneeFilter: string = 'all';
@@ -114,7 +133,7 @@ export class TopicsOverviewView {
 		// Render sub-mode body
 		const body = this.el.createDiv({ cls: 'friday-topics-body' });
 		if (filtered.length === 0) {
-			body.createDiv({ cls: 'friday-empty', text: 'No topics match the current filter.' });
+			this.renderEmptyState(body);
 			return;
 		}
 
@@ -131,6 +150,39 @@ export class TopicsOverviewView {
 			case 'roadmap':
 				this.renderRoadmap(body, filtered);
 				break;
+		}
+	}
+
+	/** Empty body. Distinguishes a genuine first run (no topic files at all) from an
+	 *  over-eager filter, so a fresh install — which lands here, since Topics is the default
+	 *  view — gets guided onboarding instead of a misleading "no match" message. */
+	private renderEmptyState(body: HTMLElement): void {
+		if (this.topics.length === 0) {
+			const panel = body.createDiv({ cls: 'friday-topics-firstrun' });
+			panel.createDiv({ cls: 'friday-topics-firstrun-title', text: 'No topics yet' });
+			panel.createDiv({
+				cls: 'friday-topics-firstrun-body',
+				text: 'Topics are the strategic layer above your tasks — one note per initiative, each with a Kanban status, priority, owner, and optional JIRA link. Track them on the Board, size them on the Impact / Effort matrix, or schedule them on the Roadmap.',
+			});
+			const cta = panel.createEl('button', { cls: 'friday-btn friday-topics-firstrun-cta', text: '+ Create your first topic' });
+			cta.addEventListener('click', () => this.onNewTopic());
+			panel.createDiv({
+				cls: 'friday-topics-firstrun-note',
+				text: `Topic files live in ${this.settings.sprintTopicsPath} — change this under Settings → Topics.`,
+			});
+			return;
+		}
+
+		// Topics exist but the current scope/assignee/search hides them all.
+		const empty = body.createDiv({ cls: 'friday-empty' });
+		empty.createSpan({ text: 'No topics match the current filter.' });
+		if (this.scope !== 'all' || this.assigneeFilter !== 'all') {
+			const clear = empty.createEl('button', { cls: 'friday-topics-clear-filters', text: 'Clear filters' });
+			clear.addEventListener('click', () => {
+				this.scope = 'all';
+				this.assigneeFilter = 'all';
+				this.render();
+			});
 		}
 	}
 
@@ -217,6 +269,21 @@ export class TopicsOverviewView {
 					return true;
 			}
 		});
+
+		// Native done-window filter: hide topics that have been Done for longer than the
+		// configured window (settings.hideDoneAfterDays, default 14) so the default surfaces
+		// stay focused on live + recently-finished work. Mirrors the JIRA Dashboard filter.
+		// The "Done" scope is the escape hatch that still shows every completed topic. Dates
+		// each topic by doneAt (falling back to statusSince); undateable topics are kept.
+		if (this.scope !== 'archived') {
+			const windowDays = resolveDoneWindowDays(this.settings.hideDoneAfterDays);
+			filtered = filtered.filter(t => {
+				if (t.status !== 'done') return true;
+				const age = daysSinceIso(t.doneAt ?? t.statusSince);
+				if (age === null) return true;
+				return age <= windowDays;
+			});
+		}
 
 		if (this.searchQuery) {
 			const q = this.searchQuery.toLowerCase();
@@ -373,7 +440,10 @@ export class TopicsOverviewView {
 
 	/** True when an ISO YYYY-MM-DD due date is strictly before today (local). */
 	private isOverdue(dueIso: string): boolean {
-		const due = new Date(dueIso);
+		// Parse as LOCAL midnight (matches computeTopicSpan / daysBetween). A bare `new Date(dueIso)`
+		// parses YYYY-MM-DD as UTC midnight, which flags due-today topics overdue a day early in
+		// UTC-negative timezones.
+		const due = new Date(dueIso + 'T00:00:00');
 		if (isNaN(due.getTime())) return false;
 		const today = new Date();
 		today.setHours(0, 0, 0, 0);
@@ -426,7 +496,7 @@ export class TopicsOverviewView {
 				continue;
 			}
 
-			const sorted = [...group].sort((a, b) => this.sortByPriorityImpact(a, b));
+			const sorted = [...group].sort((a, b) => this.sortByOrder(a, b));
 			for (const topic of sorted) {
 				this.renderOverviewCard(cardGrid, topic, { draggable: true });
 			}
@@ -455,6 +525,10 @@ export class TopicsOverviewView {
 				return;
 			}
 
+			// Capture the drop position within the target column BEFORE any async write —
+			// the DOM is torn down on the re-render that the writes trigger.
+			const dropIndex = this.computeDropIndex(zone, e.clientY, filePath);
+
 			try {
 				if (topic.status !== targetStatus) {
 					await this.topicService.setTopicStatus(filePath, targetStatus);
@@ -474,10 +548,41 @@ export class TopicsOverviewView {
 				if (topic.blocked && targetStatus === 'done') {
 					await this.topicService.setTopicBlocked(filePath, false);
 				}
+				// Persist the intra-column position so hand-ordering survives the next refresh.
+				await this.persistColumnOrder(targetStatus, topic, dropIndex);
 			} finally {
 				this.isDragging.value = false;
 			}
 		});
+	}
+
+	/** How many non-dragged cards in this column sit above the pointer — the insertion index. */
+	private computeDropIndex(zone: HTMLElement, clientY: number, draggedPath: string): number {
+		const cards = Array.from(zone.querySelectorAll<HTMLElement>('.friday-kanban-card'));
+		let idx = 0;
+		for (const card of cards) {
+			if (card.dataset.filepath === draggedPath) continue;
+			const rect = card.getBoundingClientRect();
+			if (clientY > rect.top + rect.height / 2) idx++;
+			else break;
+		}
+		return idx;
+	}
+
+	/** Renumber the `status` column so `dropped` lands at `dropIndex`, writing only the
+	 *  cards whose sortOrder actually changes. Sequential 0..n keeps later inserts (default
+	 *  sortOrder 999) sorting to the end until they too are dragged. */
+	private async persistColumnOrder(status: TopicStatus, dropped: SprintTopic, dropIndex: number): Promise<void> {
+		const column = this.topics
+			.filter(t => t.status === status && t.filePath !== dropped.filePath)
+			.sort((a, b) => this.sortByOrder(a, b));
+		const clamped = Math.max(0, Math.min(dropIndex, column.length));
+		column.splice(clamped, 0, dropped);
+		const writes: Promise<void>[] = [];
+		column.forEach((t, i) => {
+			if ((t.sortOrder ?? 999) !== i) writes.push(this.topicService.updateSortOrder(t.filePath, i));
+		});
+		await Promise.all(writes);
 	}
 
 	// ── Impact/Effort sub-mode ────────────────────────────────────
@@ -556,7 +661,7 @@ export class TopicsOverviewView {
 	): void {
 		const jiraLookup = this.makeJiraLookup();
 		const assigneeLookup = this.makeAssigneeLookup();
-		renderTopicCard(parent, topic, {
+		const card = renderTopicCard(parent, topic, {
 			draggable: opts.draggable ?? false,
 			isDragging: this.isDragging,
 			showMatrixMetadata: true,
@@ -576,17 +681,93 @@ export class TopicsOverviewView {
 		});
 
 		// Add an "Edit" affordance — clicking the card title opens the file; a small edit
-		// button opens the modal so users can tweak impact/effort/due without leaving the matrix.
-		const lastCard = parent.lastElementChild as HTMLElement | null;
-		if (lastCard) {
-			const actions = lastCard.querySelector('.friday-kanban-card-actions')
-				|| lastCard.createDiv({ cls: 'friday-kanban-card-actions' });
-			const editBtn = (actions as HTMLElement).createEl('button', { text: 'Edit' });
-			editBtn.setAttribute('title', 'Edit topic details');
-			editBtn.addEventListener('click', (e) => {
+		// button opens the full modal for the long tail of fields.
+		const actions = (card.querySelector('.friday-kanban-card-actions') as HTMLElement | null)
+			|| card.createDiv({ cls: 'friday-kanban-card-actions' });
+		const editBtn = actions.createEl('button', { text: 'Edit' });
+		editBtn.setAttribute('title', 'Edit topic details');
+		editBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.onEditTopic(topic);
+		});
+
+		// Inline quick-edit for the high-churn triage fields, so common tweaks don't need the modal.
+		this.addQuickEdit(card, topic);
+	}
+
+	/** Compact inline dropdowns for the fields a lead changes most while grooming — status,
+	 *  priority, impact, effort, assignee. Especially the Impact/Effort "Inbox", whose whole
+	 *  job is sizing topics. Interactions are isolated from the card's drag/click handlers. */
+	private addQuickEdit(card: HTMLElement, topic: SprintTopic): void {
+		const row = card.createDiv({ cls: 'friday-topic-quickedit' });
+		// Don't let interacting with a control start a card drag or open the file.
+		row.addEventListener('click', (e) => e.stopPropagation());
+		row.addEventListener('pointerdown', (e) => e.stopPropagation());
+		row.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
+
+		const addSelect = (
+			title: string,
+			options: Array<{ value: string; label: string }>,
+			current: string,
+			onPick: (value: string) => void | Promise<void>,
+		): void => {
+			const sel = row.createEl('select', { cls: 'friday-topic-qe' });
+			sel.setAttribute('title', title);
+			sel.setAttribute('aria-label', title);
+			for (const opt of options) {
+				const o = sel.createEl('option', { text: opt.label });
+				o.value = opt.value;
+				if (opt.value === current) o.selected = true;
+			}
+			sel.addEventListener('change', (e) => {
 				e.stopPropagation();
-				this.onEditTopic(topic);
+				void onPick(sel.value);
 			});
+		};
+
+		addSelect('Status', [
+			{ value: 'backlog', label: 'Backlog' },
+			{ value: 'open', label: 'To Do' },
+			{ value: 'in-progress', label: 'In Progress' },
+			{ value: 'done', label: 'Done' },
+		], topic.status, (v) => this.topicService.setTopicStatus(topic.filePath, v as TopicStatus));
+
+		addSelect('Priority', [
+			{ value: Priority.None, label: 'Prio —' },
+			{ value: Priority.High, label: 'Prio: High' },
+			{ value: Priority.Medium, label: 'Prio: Med' },
+			{ value: Priority.Low, label: 'Prio: Low' },
+		], topic.priority, (v) => this.topicService.updateTopicFrontmatter(topic.filePath, { priority: v }));
+
+		addSelect('Impact', [
+			{ value: '', label: 'Impact —' },
+			{ value: 'critical', label: 'Impact: Critical' },
+			{ value: 'high', label: 'Impact: High' },
+			{ value: 'medium', label: 'Impact: Medium' },
+			{ value: 'low', label: 'Impact: Low' },
+		], topic.impact ?? '', (v) => this.topicService.setTopicImpact(topic.filePath, (v || null) as TopicImpact | null));
+
+		addSelect('Effort', [
+			{ value: '', label: 'Effort —' },
+			{ value: 'xs', label: 'Effort: XS' },
+			{ value: 's', label: 'Effort: S' },
+			{ value: 'm', label: 'Effort: M' },
+			{ value: 'l', label: 'Effort: L' },
+			{ value: 'xl', label: 'Effort: XL' },
+		], topic.effort ?? '', (v) => this.topicService.setTopicEffort(topic.filePath, (v || null) as TopicEffort | null));
+
+		const members = (this.settings.teamMembers ?? []).filter(m => m.active);
+		if (members.length > 0) {
+			const opts = [
+				{ value: '', label: 'Owner —' },
+				...members.map(m => ({ value: m.email, label: m.nickname || m.fullName || m.email })),
+			];
+			// Preserve an out-of-team current assignee so the select doesn't silently clear it.
+			if (topic.assignee && !members.some(m => m.email === topic.assignee)) {
+				opts.push({ value: topic.assignee, label: topic.assignee });
+			}
+			addSelect('Assignee', opts, topic.assignee ?? '',
+				(v) => this.topicService.updateTopicFrontmatter(topic.filePath, { assignee: v || null }));
 		}
 	}
 
@@ -599,6 +780,15 @@ export class TopicsOverviewView {
 		const bPrio = PRIORITY_ORDER[b.priority] ?? 3;
 		if (aPrio !== bPrio) return aPrio - bPrio;
 		return a.title.localeCompare(b.title);
+	}
+
+	/** Board column ordering: honor the manual sortOrder first (lower = higher), falling back
+	 *  to priority/impact for topics that have never been hand-ordered (default 999). */
+	private sortByOrder(a: SprintTopic, b: SprintTopic): number {
+		const ao = a.sortOrder ?? 999;
+		const bo = b.sortOrder ?? 999;
+		if (ao !== bo) return ao - bo;
+		return this.sortByPriorityImpact(a, b);
 	}
 
 	/** Kick off a prefetch for every JIRA key on every visible topic. No-op if module disabled. */
@@ -651,29 +841,59 @@ export class TopicsOverviewView {
 		};
 	}
 
-	// ── Roadmap sub-mode (time-based, due-date driven) ────────────
+	// ── Roadmap sub-mode (planned start→end timeline) ─────────────
+	//
+	// A scrollable, zoomable Gantt-style timeline. Distances are meaningful: it uses a
+	// fixed pixels-per-day scale (per zoom level) rather than fitting everything to width.
+	// The user scrolls past/future (scrollbar, drag-to-pan, or Shift+wheel) and zooms
+	// between day / week / month. It opens centred on the current week. Each bar runs the
+	// topic's startDate → dueDate (falling back to startedAt) so topics scheduled only via a
+	// due date still appear.
 
 	private renderRoadmap(parent: HTMLElement, topics: SprintTopic[]): void {
+		this.roadmapBody = parent;
+		parent.empty();
+
+		// Completed topics are dropped from the roadmap to conserve vertical space — unless the
+		// user has explicitly scoped to "Done" (the archived filter), where showing them is the point.
+		const roadmapTopics = this.scope === 'archived' ? topics : topics.filter(t => t.status !== 'done');
+		const hiddenDone = topics.length - roadmapTopics.length;
+
 		const controls = parent.createDiv({ cls: 'friday-roadmap-controls' });
 		this.renderRoadmapToggle(controls, 'Zoom', [
+			{ key: 'day', label: 'Day' },
 			{ key: 'week', label: 'Week' },
 			{ key: 'month', label: 'Month' },
-		], this.roadmapZoom, (k) => { this.roadmapZoom = k as 'week' | 'month'; this.render(); });
+		], this.roadmapZoom, (k) => this.setRoadmapZoom(k as RoadmapZoom));
 		this.renderRoadmapToggle(controls, 'Group', [
 			{ key: 'assignee', label: 'Assignee' },
 			{ key: 'status', label: 'Status' },
-		], this.roadmapGroupBy, (k) => { this.roadmapGroupBy = k as 'assignee' | 'status'; this.render(); });
+		], this.roadmapGroupBy, (k) => { this.roadmapGroupBy = k as 'assignee' | 'status'; this.repaintRoadmap(); });
+
+		const todayBtn = controls.createEl('button', { cls: 'friday-topics-modebtn', text: '⌖ Today' });
+		todayBtn.setAttribute('title', 'Recentre the timeline on the current week');
+		todayBtn.addEventListener('click', () => { this.roadmapCenterMs = null; this.repaintRoadmap(); });
+
+		const hint = hiddenDone > 0
+			? `Drag to pan · Shift+scroll · ${hiddenDone} done hidden`
+			: 'Drag to pan · Shift+scroll';
+		controls.createSpan({ cls: 'friday-roadmap-hint', text: hint });
 
 		const dated: RoadmapItem[] = [];
 		const undated: SprintTopic[] = [];
-		for (const t of topics) {
+		for (const t of roadmapTopics) {
 			const span = this.computeTopicSpan(t);
 			if (span) dated.push({ topic: t, startMs: span.startMs, endMs: span.endMs });
 			else undated.push(t);
 		}
 
 		if (dated.length === 0) {
-			parent.createDiv({ cls: 'friday-empty', text: 'No topics with a due date to place on the roadmap.' });
+			parent.createDiv({
+				cls: 'friday-empty',
+				text: roadmapTopics.length === 0 && hiddenDone > 0
+					? `All ${hiddenDone} topic(s) here are done and hidden from the roadmap — use the 'Done' scope filter to view them.`
+					: 'No topics with a start, end, or due date to place on the roadmap. Set a Roadmap schedule (Start → End) on a topic to add it here.',
+			});
 		} else {
 			this.renderRoadmapChart(parent, dated);
 		}
@@ -687,6 +907,19 @@ export class TopicsOverviewView {
 				chip.addEventListener('click', () => this.onTopicClick(t));
 			}
 		}
+	}
+
+	/** Repaint just the roadmap (zoom / group / recenter) without tearing down the whole view. */
+	private repaintRoadmap(): void {
+		if (this.roadmapBody) this.renderRoadmap(this.roadmapBody, this.applyFilters(this.topics));
+	}
+
+	/** Change zoom level. The scroll handler keeps roadmapCenterMs current, so repainting
+	 *  at the new scale lands the same date back under the viewport centre. */
+	private setRoadmapZoom(zoom: RoadmapZoom): void {
+		if (zoom === this.roadmapZoom) return;
+		this.roadmapZoom = zoom;
+		this.repaintRoadmap();
 	}
 
 	private renderRoadmapToggle(
@@ -705,94 +938,260 @@ export class TopicsOverviewView {
 		}
 	}
 
-	/** A topic's time span [start → due]. start = startedAt when earlier than due, else due
-	 *  (a point marker). Null when the topic has no due date (→ the "No date" bucket). */
+	/** A topic's planned span [start → end] in ms. The bar runs startDate → dueDate:
+	 *  start prefers the explicit estimate (startDate), falling back to the actual start
+	 *  (startedAt) then dueDate; end prefers dueDate, falling back to startDate / startedAt.
+	 *  So a topic scheduled only via a due date still renders (as a point/short bar). Null
+	 *  only when the topic carries none of these dates (→ the "No date" tray). */
 	private computeTopicSpan(topic: SprintTopic): { startMs: number; endMs: number } | null {
-		if (!topic.dueDate) return null;
-		const endMs = new Date(topic.dueDate + 'T00:00:00').getTime();
-		if (isNaN(endMs)) return null;
-		let startMs = endMs;
-		if (topic.startedAt) {
-			const s = new Date(topic.startedAt + 'T00:00:00').getTime();
-			if (!isNaN(s) && s < endMs) startMs = s;
-		}
+		const toMs = (iso: string | null): number | null => {
+			if (!iso) return null;
+			const t = new Date(iso + 'T00:00:00').getTime();
+			return isNaN(t) ? null : t;
+		};
+		const sd = toMs(topic.startDate);
+		const started = toMs(topic.startedAt);
+		const due = toMs(topic.dueDate);
+		const startMs = sd ?? started ?? due;
+		let endMs = due ?? sd ?? started;
+		if (startMs == null || endMs == null) return null;
+		if (endMs < startMs) endMs = startMs;
 		return { startMs, endMs };
 	}
 
 	private renderRoadmapChart(parent: HTMLElement, dated: RoadmapItem[]): void {
+		const pxPerDay = ROADMAP_PX_PER_DAY[this.roadmapZoom];
+		const weekStartDay = this.settings.weekStartDay ?? 1;
+
 		const now = new Date();
 		const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-		const DAY = 86400000;
-		const minMs = Math.min(todayMs, ...dated.map(d => d.startMs)) - 2 * DAY;
-		const maxMs = Math.max(todayMs, ...dated.map(d => d.endMs)) + 2 * DAY;
-		const span = Math.max(maxMs - minMs, DAY);
-		const pct = (ms: number) => ((ms - minMs) / span) * 100;
-		const unit: 'week' | 'month' = (this.roadmapZoom === 'month' || span / (7 * DAY) > 26) ? 'month' : 'week';
 
-		const chart = parent.createDiv({ cls: 'friday-roadmap-chart' });
+		// Domain spans all dated topics, but always guarantees scroll room around today.
+		let earliest = Math.min(todayMs, ...dated.map(d => d.startMs));
+		let latest = Math.max(todayMs, ...dated.map(d => d.endMs));
+		earliest = Math.min(earliest, todayMs - ROADMAP_PAST_PAD * DAY_MS);
+		latest = Math.max(latest, todayMs + ROADMAP_FUTURE_PAD * DAY_MS);
+		// Align the canvas start to a week boundary (clean week gridlines) and pad both ends.
+		const canvasStartMs = getWeekStartConfigurable(new Date(earliest), weekStartDay).getTime() - 7 * DAY_MS;
+		const canvasEndMs = latest + 14 * DAY_MS;
+		const totalDays = Math.max(1, Math.round((canvasEndMs - canvasStartMs) / DAY_MS));
+		const totalPx = totalDays * pxPerDay;
+		const dayOffset = (ms: number): number => Math.round(((ms - canvasStartMs) / DAY_MS) * pxPerDay);
 
-		const axis = chart.createDiv({ cls: 'friday-roadmap-axis' });
-		for (const tick of this.buildTicks(minMs, maxMs, unit)) {
-			const tx = pct(tick.ms);
-			if (tx < 0 || tx > 100) continue;
-			const tickEl = axis.createDiv({ cls: 'friday-roadmap-tick' });
-			tickEl.style.left = `${tx}%`;
-			tickEl.createSpan({ cls: 'friday-roadmap-tick-label', text: tick.label });
+		const scroll = parent.createDiv({ cls: 'friday-roadmap-scroll' });
+		const canvas = scroll.createDiv({ cls: 'friday-roadmap-canvas' });
+		canvas.style.width = `${ROADMAP_LABEL_W + totalPx}px`;
+
+		// ── Grid overlay (behind the lanes): weekend shading, gridlines, today line.
+		const grid = canvas.createDiv({ cls: 'friday-roadmap-grid' });
+		grid.style.left = `${ROADMAP_LABEL_W}px`;
+		grid.style.width = `${totalPx}px`;
+		grid.style.top = `${ROADMAP_AXIS_H}px`;
+
+		const showDays = this.roadmapZoom === 'day' && totalDays <= ROADMAP_MAX_DAY_TICKS;
+		// Walk real dates (not fixed-ms steps) so getDay()/getDate() stay correct across DST.
+		const gridWalker = new Date(canvasStartMs);
+		for (let i = 0; i <= totalDays; i++, gridWalker.setDate(gridWalker.getDate() + 1)) {
+			const x = i * pxPerDay;
+			const dow = gridWalker.getDay();
+			const isWeekStart = dow === weekStartDay;
+			if (showDays) {
+				if (dow === 0 || dow === 6) {
+					const wk = grid.createDiv({ cls: 'friday-roadmap-weekend' });
+					wk.style.left = `${x}px`;
+					wk.style.width = `${pxPerDay}px`;
+				}
+				const gl = grid.createDiv({ cls: `friday-roadmap-gridline${isWeekStart ? ' is-week' : ''}` });
+				gl.style.left = `${x}px`;
+			} else if (isWeekStart && this.roadmapZoom !== 'month') {
+				const gl = grid.createDiv({ cls: 'friday-roadmap-gridline is-week' });
+				gl.style.left = `${x}px`;
+			}
 		}
-		const todayLine = axis.createDiv({ cls: 'friday-roadmap-today' });
-		todayLine.style.left = `${pct(todayMs)}%`;
+		// Month gridlines (the primary lines at month zoom; section dividers otherwise).
+		for (let m = new Date(new Date(canvasStartMs).getFullYear(), new Date(canvasStartMs).getMonth(), 1);
+			m.getTime() <= canvasEndMs; m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+			if (m.getTime() < canvasStartMs) continue;
+			const gl = grid.createDiv({ cls: 'friday-roadmap-gridline is-month' });
+			gl.style.left = `${dayOffset(m.getTime())}px`;
+		}
+		const todayLine = grid.createDiv({ cls: 'friday-roadmap-today' });
+		todayLine.style.left = `${dayOffset(todayMs)}px`;
 		todayLine.setAttribute('title', 'Today');
 
+		// ── Two-tier time axis header.
+		const axis = canvas.createDiv({ cls: 'friday-roadmap-axis' });
+		axis.style.height = `${ROADMAP_AXIS_H}px`;
+		const axisCorner = axis.createDiv({ cls: 'friday-roadmap-axis-corner' });
+		axisCorner.style.width = `${ROADMAP_LABEL_W}px`;
+		const axisTrack = axis.createDiv({ cls: 'friday-roadmap-axis-track' });
+		axisTrack.style.width = `${totalPx}px`;
+		const tier1 = axisTrack.createDiv({ cls: 'friday-roadmap-axis-tier1' });
+		const tier2 = axisTrack.createDiv({ cls: 'friday-roadmap-axis-tier2' });
+		this.buildAxisTiers(tier1, tier2, canvasStartMs, canvasEndMs, dayOffset, weekStartDay);
+
+		// ── Lanes (grouped) with bars.
 		const critical = new Set(criticalPath(this.topics));
 		const deriveBlock = this.makeDeriveBlock();
+		const lanes = canvas.createDiv({ cls: 'friday-roadmap-lanes' });
 
 		for (const [groupLabel, items] of this.groupForRoadmap(dated)) {
-			const lane = chart.createDiv({ cls: 'friday-roadmap-lane' });
-			lane.createDiv({ cls: 'friday-roadmap-lane-header', text: groupLabel });
+			const lane = lanes.createDiv({ cls: 'friday-roadmap-lane' });
+			const laneHeader = lane.createDiv({ cls: 'friday-roadmap-lane-header', text: groupLabel });
+			laneHeader.style.width = `${ROADMAP_LABEL_W}px`;
 			for (const { topic, startMs, endMs } of items) {
 				const row = lane.createDiv({ cls: 'friday-roadmap-row' });
 				const labelEl = row.createDiv({ cls: 'friday-roadmap-row-label' });
+				labelEl.style.width = `${ROADMAP_LABEL_W}px`;
 				if (topic.blockedBy.length > 0) {
 					const glyph = labelEl.createSpan({ text: '⛓ ' });
 					const blockers = (this.depIndex?.blockersOf(topic) ?? []).map(b => b.title).join(', ');
 					glyph.setAttribute('title', blockers ? `Blocked by: ${blockers}` : 'Has dependencies');
 				}
-				labelEl.createSpan({ text: topic.title });
+				const titleSpan = labelEl.createSpan({ cls: 'friday-roadmap-row-title', text: topic.title });
+				titleSpan.addEventListener('click', () => this.onTopicClick(topic));
 
 				const track = row.createDiv({ cls: 'friday-roadmap-track' });
-				const left = pct(startMs);
-				const width = Math.max(pct(endMs) - left, 1.5);
+				track.style.width = `${totalPx}px`;
+				const left = dayOffset(startMs);
+				// End day is inclusive, so a span of N calendar days is (N+1) day-columns wide.
+				const width = Math.max(dayOffset(endMs) - left + pxPerDay, Math.max(pxPerDay, 6));
 				const bar = track.createDiv({ cls: 'friday-roadmap-bar' });
-				bar.style.left = `${left}%`;
-				bar.style.width = `${width}%`;
+				bar.style.left = `${left}px`;
+				bar.style.width = `${width}px`;
+				const deadline = topic.dueDate;
 				if (deriveBlock(topic).state === 'blocked') bar.addClass('is-blocked');
 				if (topic.status === 'done') bar.addClass('is-done');
-				if (topic.status !== 'done' && this.isOverdue(topic.dueDate!)) bar.addClass('is-overdue');
+				if (topic.status !== 'done' && deadline && this.isOverdue(deadline)) bar.addClass('is-overdue');
 				if (critical.has(topic.filePath)) bar.addClass('is-critical');
-				bar.setAttribute('title', `${topic.title} · due ${topic.dueDate}`);
-				bar.addEventListener('click', () => this.onTopicClick(topic));
+				bar.setAttribute('title', `${topic.title} · ${this.formatSpanLabel(topic, startMs, endMs)}`);
+				if (width > 54) bar.createSpan({ cls: 'friday-roadmap-bar-label', text: topic.title });
+				bar.addEventListener('click', (e) => { e.stopPropagation(); this.onTopicClick(topic); });
+			}
+		}
+
+		// ── Interaction: drag-to-pan, keep centre date current on scroll, open centred.
+		this.installRoadmapPan(scroll);
+		scroll.addEventListener('scroll', () => {
+			const visibleTrack = Math.max(0, scroll.clientWidth - ROADMAP_LABEL_W);
+			const offsetPx = scroll.scrollLeft + visibleTrack / 2;
+			this.roadmapCenterMs = canvasStartMs + (offsetPx / pxPerDay) * DAY_MS;
+		});
+		this.centerRoadmap(scroll, canvasStartMs, pxPerDay, todayMs);
+	}
+
+	/** Build the two axis tiers. Tier 1 is the coarse band (months, or years at month zoom);
+	 *  tier 2 is the fine ruler (day numbers / week numbers / month names). */
+	private buildAxisTiers(
+		tier1: HTMLElement,
+		tier2: HTMLElement,
+		canvasStartMs: number,
+		canvasEndMs: number,
+		dayOffset: (ms: number) => number,
+		weekStartDay: number,
+	): void {
+		const place = (parent: HTMLElement, cls: string, x: number, text: string): void => {
+			const el = parent.createSpan({ cls, text });
+			el.style.left = `${x}px`;
+		};
+
+		// Tier 1
+		if (this.roadmapZoom === 'month') {
+			const endY = new Date(canvasEndMs).getFullYear();
+			for (let y = new Date(canvasStartMs).getFullYear(); y <= endY; y++) {
+				place(tier1, 'friday-roadmap-tick1', dayOffset(Math.max(new Date(y, 0, 1).getTime(), canvasStartMs)), String(y));
+			}
+		} else {
+			for (let m = new Date(new Date(canvasStartMs).getFullYear(), new Date(canvasStartMs).getMonth(), 1);
+				m.getTime() <= canvasEndMs; m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+				const label = `${ROADMAP_MONTHS[m.getMonth()]} '${String(m.getFullYear()).slice(2)}`;
+				place(tier1, 'friday-roadmap-tick1', dayOffset(Math.max(m.getTime(), canvasStartMs)), label);
+			}
+		}
+
+		// Tier 2
+		const totalDays = Math.round((canvasEndMs - canvasStartMs) / DAY_MS);
+		const denseDays = this.roadmapZoom === 'day' && totalDays <= ROADMAP_MAX_DAY_TICKS;
+		if (denseDays) {
+			const walker = new Date(canvasStartMs);
+			for (let i = 0; i <= totalDays; i++, walker.setDate(walker.getDate() + 1)) {
+				const el = tier2.createSpan({ cls: 'friday-roadmap-tick2', text: String(walker.getDate()) });
+				el.style.left = `${i * (ROADMAP_PX_PER_DAY[this.roadmapZoom])}px`;
+				if (walker.getDay() === 0 || walker.getDay() === 6) el.addClass('is-weekend');
+			}
+		} else if (this.roadmapZoom === 'week' || this.roadmapZoom === 'day') {
+			for (let d = getWeekStartConfigurable(new Date(canvasStartMs), weekStartDay); d.getTime() <= canvasEndMs;) {
+				place(tier2, 'friday-roadmap-tick2', dayOffset(d.getTime()), `W${getISOWeekNumber(d)}`);
+				const next = new Date(d); next.setDate(next.getDate() + 7); d = next;
+			}
+		} else {
+			for (let m = new Date(new Date(canvasStartMs).getFullYear(), new Date(canvasStartMs).getMonth(), 1);
+				m.getTime() <= canvasEndMs; m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+				place(tier2, 'friday-roadmap-tick2', dayOffset(Math.max(m.getTime(), canvasStartMs)), ROADMAP_MONTHS[m.getMonth()]);
 			}
 		}
 	}
 
-	private buildTicks(minMs: number, maxMs: number, unit: 'week' | 'month'): { ms: number; label: string }[] {
-		const ticks: { ms: number; label: string }[] = [];
-		if (unit === 'week') {
-			let d = getWeekStartConfigurable(new Date(minMs), this.settings.weekStartDay ?? 1);
-			while (d.getTime() <= maxMs) {
-				ticks.push({ ms: d.getTime(), label: formatWeekId(getWeekId(d)) });
-				const next = new Date(d);
-				next.setDate(next.getDate() + 7);
-				d = next;
-			}
-		} else {
-			let d = new Date(new Date(minMs).getFullYear(), new Date(minMs).getMonth(), 1);
-			while (d.getTime() <= maxMs) {
-				ticks.push({ ms: d.getTime(), label: `${ROADMAP_MONTHS[d.getMonth()]} '${String(d.getFullYear()).slice(2)}` });
-				d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-			}
-		}
-		return ticks;
+	/** Human-readable span for a bar tooltip, e.g. "3 Jun 2026 → 18 Jun 2026 · due 2026-06-20". */
+	private formatSpanLabel(topic: SprintTopic, startMs: number, endMs: number): string {
+		const fmt = (ms: number): string => {
+			const d = new Date(ms);
+			return `${d.getDate()} ${ROADMAP_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+		};
+		const parts = [startMs === endMs ? fmt(startMs) : `${fmt(startMs)} → ${fmt(endMs)}`];
+		if (topic.dueDate) parts.push(`due ${topic.dueDate}`);
+		return parts.join(' · ');
+	}
+
+	/** Scroll the timeline so the focus date (roadmapCenterMs, or today on first open)
+	 *  sits in the middle of the visible track area. Re-applied on the next frame because
+	 *  clientWidth can be 0 until the element is laid out. */
+	private centerRoadmap(scroll: HTMLElement, canvasStartMs: number, pxPerDay: number, todayMs: number): void {
+		const focusMs = this.roadmapCenterMs ?? todayMs;
+		const apply = (): void => {
+			const visibleTrack = Math.max(0, scroll.clientWidth - ROADMAP_LABEL_W);
+			const offsetPx = ((focusMs - canvasStartMs) / DAY_MS) * pxPerDay;
+			const maxScroll = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+			scroll.scrollLeft = Math.max(0, Math.min(offsetPx - visibleTrack / 2, maxScroll));
+		};
+		apply();
+		window.requestAnimationFrame(apply);
+	}
+
+	/** Drag anywhere on the timeline background to pan horizontally. Drags that start on a
+	 *  bar or a frozen label are ignored so their click handlers still fire. */
+	private installRoadmapPan(scroll: HTMLElement): void {
+		let dragging = false;
+		let startX = 0;
+		let startY = 0;
+		let startLeft = 0;
+		let startTop = 0;
+		scroll.addEventListener('pointerdown', (e: PointerEvent) => {
+			if (e.button !== 0) return;
+			const target = e.target as HTMLElement;
+			if (target.closest('.friday-roadmap-bar, .friday-roadmap-row-title, .friday-roadmap-undated-chip')) return;
+			dragging = true;
+			startX = e.clientX;
+			startY = e.clientY;
+			startLeft = scroll.scrollLeft;
+			startTop = scroll.scrollTop;
+			scroll.addClass('is-grabbing');
+			try { scroll.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+		});
+		scroll.addEventListener('pointermove', (e: PointerEvent) => {
+			if (!dragging) return;
+			// Pan both axes — horizontal across the timeline, vertical through the lanes.
+			scroll.scrollLeft = startLeft - (e.clientX - startX);
+			scroll.scrollTop = startTop - (e.clientY - startY);
+		});
+		const end = (e: PointerEvent): void => {
+			if (!dragging) return;
+			dragging = false;
+			scroll.removeClass('is-grabbing');
+			try { scroll.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+		};
+		scroll.addEventListener('pointerup', end);
+		scroll.addEventListener('pointercancel', end);
 	}
 
 	private groupForRoadmap(dated: RoadmapItem[]): Map<string, RoadmapItem[]> {

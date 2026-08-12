@@ -53,7 +53,10 @@ export class TeamRollupService {
 		for (const m of activeMembers) {
 			const email = m.email;
 			const jissues = byMember.get(email) ?? [];
-			const jiraBlocked = jissues.filter(i => i.flagged).length;
+			// A JIRA flag (impediment) is independent of status, and the team JQL pulls
+			// recently-resolved issues — so only count a flag as a live blocker when the
+			// issue isn't done. A done-but-still-flagged issue counts in jiraDone only.
+			const jiraBlocked = jissues.filter(i => i.flagged && i.statusCategory !== 'done').length;
 			const jiraInProgress = jissues.filter(i => !i.flagged && i.statusCategory === 'indeterminate').length;
 			const jiraOpen = jissues.filter(i => !i.flagged && i.statusCategory !== 'indeterminate' && i.statusCategory !== 'done').length;
 			const jiraDone = jissues.filter(i => i.statusCategory === 'done').length;
@@ -69,6 +72,10 @@ export class TeamRollupService {
 				topicsBlocked, topicsInProgress, topicsOpen, topicsDone,
 			};
 
+			// Resolve the person page up front so on-leave status can force the 'out' band.
+			const page = pages.find(p => p.email && p.email.toLowerCase() === email.toLowerCase());
+			const onLeave = page?.status === 'on_leave';
+
 			// Committed = everything not-done across both sources (backlog topics excluded).
 			const committed = jiraBlocked + jiraInProgress + jiraOpen + topicsOpen + topicsInProgress;
 			const target = m.targetConcurrentItems ?? s.defaultTargetConcurrentItems ?? 5;
@@ -76,7 +83,8 @@ export class TeamRollupService {
 			const effectiveTarget = target * (avail / 100);
 			const ratio = effectiveTarget > 0 ? committed / effectiveTarget : null;
 			let band: LoadSignal['band'];
-			if (avail <= 0 || effectiveTarget <= 0) band = 'out';
+			// On leave / OOO → 'out' regardless of committed count (matches the LoadSignal doc).
+			if (onLeave || avail <= 0 || effectiveTarget <= 0) band = 'out';
 			else if (ratio === null) band = 'balanced';
 			else if (ratio <= 0.5) band = 'light';
 			else if (ratio <= 1.0) band = 'balanced';
@@ -84,7 +92,6 @@ export class TeamRollupService {
 			else band = 'overloaded';
 			const load: LoadSignal = { committed, target: effectiveTarget, ratio, band };
 
-			const page = pages.find(p => p.email && p.email.toLowerCase() === email.toLowerCase());
 			let cadenceState: string | null = null;
 			let cadenceDays: number | null = null;
 			if (page) {
@@ -96,7 +103,7 @@ export class TeamRollupService {
 			members.push({
 				email,
 				displayName: m.nickname || m.fullName || email,
-				onLeave: page?.status === 'on_leave',
+				onLeave,
 				cadenceState,
 				cadenceDays,
 				drivingJira: jissues.filter(i => i.statusCategory === 'indeterminate'),
@@ -111,7 +118,9 @@ export class TeamRollupService {
 		// ── Top blockers ──
 		const topBlockers: BlockerEntry[] = [];
 		for (const issue of issues) {
-			if (issue.flagged) {
+			// Don't report a resolved-but-still-flagged issue as a live blocker (mirrors the
+			// at-risk loop's done guard below) — it would prompt wasted follow-up on finished work.
+			if (issue.flagged && issue.statusCategory !== 'done') {
 				topBlockers.push({
 					kind: 'jira', ownerName: issue.assignee ?? null,
 					title: issue.summary || issue.key, ref: issue.key, url: issue.issueUrl,

@@ -1,10 +1,12 @@
 ---
 status: open
-jira: PB-2124
 priority: high
+jira: PB-2124
+startDate: 2026-06-10
+dueDate: 2026-07-15
 blocked: false
-sprint: sprint-1774025875336
 sortOrder: 999
+sprint: sprint-1774025875336
 ---
 # DOCSIS Technologické projekty
 

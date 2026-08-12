@@ -1,16 +1,40 @@
 import { requestUrl, RequestUrlParam } from 'obsidian';
-import { JiraIssueInfo, PluginSettings } from '../types';
+import { JiraIssueInfo, PluginSettings, Priority } from '../types';
 
 /** Matches standard JIRA issue keys: letters, optional digits, dash, number. */
 const ISSUE_KEY_REGEX = /[A-Z][A-Z0-9]+-\d+/;
 
+/** Map a JIRA priority name to the topic Priority enum. Best-effort — JIRA has 5
+ *  levels (Highest/High/Medium/Low/Lowest), topics have 3. Used when seeding a topic
+ *  from a JIRA issue. */
+export function mapJiraPriority(jiraPriority: string | null): Priority {
+	if (!jiraPriority) return Priority.None;
+	const k = jiraPriority.toLowerCase();
+	if (k.includes('highest') || k === 'high') return Priority.High;
+	if (k.includes('medium')) return Priority.Medium;
+	if (k.includes('low') || k.includes('lowest')) return Priority.Low;
+	return Priority.None;
+}
+
 type FetchState =
 	| { kind: 'fresh'; info: JiraIssueInfo }
 	| { kind: 'stale'; info: JiraIssueInfo }
-	| { kind: 'error'; message: string; fetchedAt: number }
-	| { kind: 'loading' };
+	| { kind: 'error'; message: string; fetchedAt: number; attempts: number; httpStatus?: number }
+	| { kind: 'loading'; attempts: number };
 
 type Listener = () => void;
+
+/** First retry delay after a failed fetch; doubles per consecutive failure. */
+const ERROR_RETRY_BASE_MS = 30_000;
+/** Ceiling for the exponential retry backoff. */
+const ERROR_RETRY_MAX_MS = 30 * 60_000;
+/** Retry delay for "permanent" failures (404 deleted issue, 403 no permission). */
+const PERMANENT_ERROR_TTL_MS = 60 * 60_000;
+/** Max simultaneous issue fetches in prefetchMany — a big board must not fire
+ *  hundreds of parallel requests at Atlassian (instant 429s). */
+const PREFETCH_CONCURRENCY = 5;
+/** Fallback pause when a 429 arrives without a Retry-After header. */
+const DEFAULT_RATE_LIMIT_PAUSE_MS = 60_000;
 
 /**
  * JIRA Cloud integration.
@@ -31,6 +55,10 @@ export class JiraService {
 	private listeners = new Set<Listener>();
 	/** Monotonic version — views can fold into their render fingerprint */
 	private _version = 0;
+	/** Service-wide fetch pause after a 429 (epoch ms). The tenant is throttling us,
+	 *  so no key should fetch until it passes — a per-key error would just shift the
+	 *  hammering to the next key. */
+	private pausedUntil = 0;
 
 	constructor(private getSettings: () => PluginSettings) {}
 
@@ -94,16 +122,28 @@ export class JiraService {
 
 	/**
 	 * Ensure `key` is fetched. If the cache is fresh, resolves immediately with
-	 * cached info. Otherwise triggers a fetch and resolves when it completes.
-	 * Returns null when the module is disabled or the fetch fails.
+	 * cached info. Error entries are retried only after a backoff window —
+	 * otherwise a single dead key (deleted issue, no permission) would refetch on
+	 * every render in a version-bump → re-render → prefetch loop.
+	 * Returns null when the module is disabled, paused, in backoff, or the fetch fails.
 	 */
 	async ensureFetched(key: string): Promise<JiraIssueInfo | null> {
 		if (!this.isEnabled()) return null;
+		if (Date.now() < this.pausedUntil) return this.getCached(key);
 		const existing = this.cache.get(key);
 		if (existing?.kind === 'fresh' && !this.isStale(existing.info)) {
 			return existing.info;
 		}
+		if (existing?.kind === 'error' && Date.now() - existing.fetchedAt < this.errorRetryDelay(existing)) {
+			return null;
+		}
 		return this.fetchIssue(key);
+	}
+
+	/** How long a failed key stays quiet before it may be retried. */
+	private errorRetryDelay(state: { attempts: number; httpStatus?: number }): number {
+		if (state.httpStatus === 404 || state.httpStatus === 403) return PERMANENT_ERROR_TTL_MS;
+		return Math.min(ERROR_RETRY_BASE_MS * 2 ** Math.max(0, state.attempts - 1), ERROR_RETRY_MAX_MS);
 	}
 
 	/** Force a fetch, bypassing TTL. */
@@ -114,8 +154,10 @@ export class JiraService {
 		const pending = this.inFlight.get(key);
 		if (pending) return pending;
 
-		this.cache.set(key, { kind: 'loading' });
-		const promise = this.doFetch(key);
+		const prev = this.cache.get(key);
+		const attempts = prev?.kind === 'error' ? prev.attempts : 0;
+		this.cache.set(key, { kind: 'loading', attempts });
+		const promise = this.doFetch(key, attempts);
 		this.inFlight.set(key, promise);
 		try {
 			return await promise;
@@ -124,18 +166,31 @@ export class JiraService {
 		}
 	}
 
-	/** Prefetch many keys in parallel. Resolves when all settle. Silences individual errors. */
+	/** Prefetch many keys. Runs at most PREFETCH_CONCURRENCY fetches at a time
+	 *  (cache hits cost nothing, so large boards stay cheap once warm).
+	 *  Resolves when all settle. Silences individual errors. */
 	async prefetchMany(keys: string[]): Promise<void> {
 		if (!this.isEnabled() || keys.length === 0) return;
 		const deduped = Array.from(new Set(keys.filter(Boolean)));
-		const tasks = deduped.map(k => this.ensureFetched(k).catch(() => null));
-		await Promise.all(tasks);
+		let next = 0;
+		const worker = async (): Promise<void> => {
+			while (next < deduped.length) {
+				const k = deduped[next++];
+				await this.ensureFetched(k).catch(() => null);
+			}
+		};
+		const workers = Array.from(
+			{ length: Math.min(PREFETCH_CONCURRENCY, deduped.length) },
+			() => worker(),
+		);
+		await Promise.all(workers);
 	}
 
 	/** Wipe the cache — useful when settings change (URL/token). */
 	clearCache(): void {
 		this.cache.clear();
 		this.inFlight.clear();
+		this.pausedUntil = 0;
 		this.bumpVersion();
 	}
 
@@ -186,12 +241,11 @@ export class JiraService {
 
 	// ── Internals ─────────────────────────────────────────────────
 
-	private async doFetch(key: string): Promise<JiraIssueInfo | null> {
+	private async doFetch(key: string, prevAttempts: number): Promise<JiraIssueInfo | null> {
 		const s = this.getSettings();
 		const validKey = this.extractIssueKey(key);
 		if (!validKey) {
-			this.cache.set(key, { kind: 'error', message: `Invalid issue key: ${key}`, fetchedAt: Date.now() });
-			this.bumpVersion();
+			this.setError(key, `Invalid issue key: ${key}`, prevAttempts + 1);
 			return null;
 		}
 
@@ -199,11 +253,20 @@ export class JiraService {
 			const flaggedField = (s.jiraFlaggedFieldId || 'customfield_10021').trim();
 			const resp = await requestUrl(this.buildRequest(
 				s,
-				`/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee,${flaggedField},issuelinks`,
+				`/rest/api/3/issue/${encodeURIComponent(validKey)}?fields=summary,status,assignee,priority,duedate,description,${flaggedField},issuelinks`,
 			));
+			if (resp.status === 429) {
+				// Tenant-wide throttling — pause the whole service, don't blame the key.
+				const retryAfterSec = Number(resp.headers?.['retry-after'] ?? resp.headers?.['Retry-After']);
+				const pauseMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+					? retryAfterSec * 1000
+					: DEFAULT_RATE_LIMIT_PAUSE_MS;
+				this.pausedUntil = Date.now() + pauseMs;
+				this.setError(key, 'Rate limited by JIRA', prevAttempts, 429);
+				return null;
+			}
 			if (resp.status < 200 || resp.status >= 300) {
-				this.cache.set(key, { kind: 'error', message: `HTTP ${resp.status}`, fetchedAt: Date.now() });
-				this.bumpVersion();
+				this.setError(key, `HTTP ${resp.status}`, prevAttempts + 1, resp.status);
 				return null;
 			}
 			const info = this.parseIssue(validKey, resp.json, s.jiraBaseUrl, flaggedField);
@@ -211,10 +274,14 @@ export class JiraService {
 			this.bumpVersion();
 			return info;
 		} catch (err) {
-			this.cache.set(key, { kind: 'error', message: this.formatError(err), fetchedAt: Date.now() });
-			this.bumpVersion();
+			this.setError(key, this.formatError(err), prevAttempts + 1);
 			return null;
 		}
+	}
+
+	private setError(key: string, message: string, attempts: number, httpStatus?: number): void {
+		this.cache.set(key, { kind: 'error', message, fetchedAt: Date.now(), attempts, httpStatus });
+		this.bumpVersion();
 	}
 
 	private buildRequest(s: PluginSettings, path: string): RequestUrlParam {
@@ -245,6 +312,15 @@ export class JiraService {
 
 		const assigneeObj = fields.assignee;
 		const assignee: string | null = assigneeObj?.displayName ?? null;
+		const assigneeEmail: string | null = assigneeObj?.emailAddress ?? null;
+
+		const priority: string | null = fields.priority?.name ?? null;
+		const dueDate: string | null =
+			typeof fields.duedate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fields.duedate)
+				? fields.duedate
+				: null;
+
+		const description = flattenAdf(fields.description);
 
 		// Flagged (impediment): present as a non-empty array or an object when set.
 		let flagged = false;
@@ -270,6 +346,10 @@ export class JiraService {
 			status: statusName,
 			statusCategory,
 			assignee,
+			assigneeEmail,
+			priority,
+			dueDate,
+			description,
 			flagged,
 			blockingLinks,
 			issueUrl: `${baseUrl.replace(/\/+$/, '')}/browse/${key}`,
@@ -308,4 +388,62 @@ export class JiraService {
 		const snippet = (text ?? '').trim().slice(0, 200);
 		return snippet ? `HTTP ${status} — ${snippet}` : `HTTP ${status}`;
 	}
+}
+
+/** Max characters of flattened description to carry into a topic's Notes. Long JIRA
+ *  descriptions get truncated (with a marker) so they don't bloat the note. */
+const ADF_TEXT_CAP = 2000;
+
+/** Flatten a JIRA description into lightweight Markdown. The v3 API returns descriptions as
+ *  ADF (Atlassian Document Format — a JSON node tree); older configs may return a plain string.
+ *  We walk the tree collecting text, turning block nodes into line breaks, list items into
+ *  "- " bullets, and preserving links as `[text](url)` (the most valuable thing to keep —
+ *  Confluence/Figma/etc.). Not a full converter; tables/panels degrade to plain lines. Output
+ *  is capped at ADF_TEXT_CAP. Returns null when there's no usable text. */
+export function flattenAdf(node: unknown): string | null {
+	if (node == null) return null;
+	if (typeof node === 'string') {
+		const t = node.trim();
+		return t.length > 0 ? cap(t) : null;
+	}
+
+	const BLOCK_TYPES = new Set([
+		'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList',
+		'codeBlock', 'rule', 'panel', 'mediaSingle', 'table', 'tableRow',
+	]);
+
+	const walk = (n: any): string => {
+		if (!n || typeof n !== 'object') return '';
+		if (n.type === 'text') {
+			const text = typeof n.text === 'string' ? n.text : '';
+			const link = Array.isArray(n.marks) ? n.marks.find((m: any) => m?.type === 'link') : null;
+			const href = link?.attrs?.href;
+			return href ? `[${text}](${href})` : text;
+		}
+		if (n.type === 'hardBreak') return '\n';
+		if (n.type === 'mention') return n.attrs?.text ? `${n.attrs.text} ` : '';
+		// Smart links / embeds render as the bare URL so the link survives.
+		if (n.type === 'inlineCard' || n.type === 'blockCard') return n.attrs?.url ? `${n.attrs.url} ` : '';
+		const inner = Array.isArray(n.content) ? n.content.map(walk).join('') : '';
+		if (n.type === 'listItem') return `- ${inner.trim()}\n`;
+		if (n.type === 'tableCell' || n.type === 'tableHeader') return `${inner.trim()} `;
+		if (BLOCK_TYPES.has(n.type)) return `${inner}\n`;
+		return inner;
+	};
+
+	const cleaned = walk(node)
+		.split('\n')
+		.map(line => line.replace(/[ \t]+$/, ''))
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+	return cleaned.length > 0 ? cap(cleaned) : null;
+}
+
+/** Truncate at a word/line boundary near ADF_TEXT_CAP, appending a marker when cut. */
+function cap(text: string): string {
+	if (text.length <= ADF_TEXT_CAP) return text;
+	const slice = text.slice(0, ADF_TEXT_CAP);
+	const cut = Math.max(slice.lastIndexOf('\n'), slice.lastIndexOf(' '));
+	return `${slice.slice(0, cut > ADF_TEXT_CAP * 0.6 ? cut : ADF_TEXT_CAP).trimEnd()}\n\n…(truncated — see the JIRA issue for the full description)`;
 }

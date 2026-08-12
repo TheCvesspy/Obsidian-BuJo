@@ -1,10 +1,12 @@
 ---
 status: in-progress
-jira: PB-2140
 priority: high
+jira: PB-2140
+startDate: 2026-06-16
+dueDate: 2026-07-31
 blocked: false
-sprint: sprint-1774025875336
 sortOrder: 10
+sprint: sprint-1774025875336
 ---
 # ROP - Reklamace v procesech
 

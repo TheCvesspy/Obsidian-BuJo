@@ -182,6 +182,27 @@ export function daysBetween(isoA: string, isoB: string): number | null {
 }
 
 /**
+ * Resolve the configured "hide done/closed after N days" window to a safe positive integer.
+ * Falls back to 14 for missing/NaN values and clamps to a minimum of 1 day.
+ */
+export function resolveDoneWindowDays(n: number | null | undefined): number {
+	if (typeof n !== 'number' || !isFinite(n)) return 14;
+	return Math.max(1, Math.round(n));
+}
+
+/**
+ * Whole days elapsed since an ISO date or datetime string, relative to now.
+ * Positive when the timestamp is in the past. Tolerant of both YYYY-MM-DD and full
+ * ISO datetimes (e.g. JIRA's resolutiondate). Returns null for missing/unparseable input.
+ */
+export function daysSinceIso(iso: string | null | undefined): number | null {
+	if (!iso) return null;
+	const t = new Date(iso).getTime();
+	if (isNaN(t)) return null;
+	return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
+}
+
+/**
  * Get the start of the week containing the given date, respecting configurable week start day.
  * @param date The reference date
  * @param weekStartDay 0=Sunday, 1=Monday, ... 6=Saturday

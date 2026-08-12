@@ -725,7 +725,8 @@ Topics are the strategic layer above individual tasks: each topic is a markdown 
 | `sortOrder` | number | yes | Manual Kanban column ordering (default `999` = end) |
 | `impact` | `critical \| high \| medium \| low` | no | Strategic weight. Drives Impact/Effort quadrant (High = {critical, high}) and Eisenhower importance |
 | `effort` | `xs \| s \| m \| l \| xl` | no | Size estimate. Drives Impact/Effort quadrant (Small = {xs, s}) |
-| `dueDate` | `YYYY-MM-DD` | no | Eisenhower urgency signal — urgent when within `urgencyThresholdDays` |
+| `dueDate` | `YYYY-MM-DD` | no | Deadline. Drives the table's overdue cue, the Roadmap bar's overdue outline, and the Roadmap bar's **right edge** (end) |
+| `startDate` | `YYYY-MM-DD` | no | Planned roadmap start (estimate, user-set). Drives the Roadmap bar's **left edge**. The bar runs `startDate → dueDate` |
 | `jira` | string | no | Displayed as ticket chip on the card |
 | `sprintHistory` | comma-separated IDs | no | Append-only log of every sprint this topic has been assigned to |
 
@@ -742,10 +743,10 @@ Missing optional keys parse to `null` / `[]`. The serializer **omits null-valued
   - `highImpact = impact ∈ {critical, high}`, `smallEffort = effort ∈ {xs, s}`
   - Quick Wins (high + small), Big Bets (high + med/large), Fill-ins (low + small), Time Sinks (low + med/large)
   - Topics missing either field land in an **Inbox** below the grid.
-- **Eisenhower** — 2×2 grid using `dueDate` for urgency and (`impact` ?? fallback to `priority`) for importance:
-  - urgent = due within `urgencyThresholdDays`
-  - important = `impact ∈ {critical, high}` if `impact` is set, else `priority ∈ {high, medium}`
-  - Topics without `dueDate` go to an **Unscheduled** bucket.
+- **Roadmap** — scrollable, zoomable Gantt-style timeline on a fixed pixels-per-day scale (`ROADMAP_PX_PER_DAY`: day 30 / week 13 / month 4.4). Opens centred on the current week; the focus date (`roadmapCenterMs`) is kept under the viewport centre across zoom changes and repaints. Navigation: native scrollbar, drag-to-pan (pointer drag on the timeline background; ignored when the drag starts on a bar/label so clicks still open the topic), and Shift+scroll.
+  - Each bar runs `startDate → dueDate` (`computeTopicSpan`): start prefers `startDate` then `startedAt` then `dueDate`; end prefers `dueDate` then `startDate` then `startedAt`. End day is inclusive (an N-day span is N+1 day-columns wide). Topics with none of `startDate` / `startedAt` / `dueDate` go to the **No date** tray.
+  - Bars are grouped into lanes by **Assignee** or **Status**. Colour encodes blocked / done / overdue (`dueDate ?? endDate` past today) / critical-path; a two-tier axis (months-or-years + day/week/month ruler), week/month gridlines, weekend shading (day zoom), and a today line render behind the bars. The left column (group + topic labels) and the axis corner are `position: sticky; left: 0` so they stay frozen while the timeline scrolls.
+  - Repaints (zoom / group / ⌖ Today) go through `repaintRoadmap`, which re-renders only the roadmap body — not the whole Topics view — so scroll/zoom feel smooth.
 
 ### Scope filter
 

@@ -1,7 +1,11 @@
 import { requestUrl, RequestUrlParam } from 'obsidian';
 import { JiraDashboardIssue, PluginSettings } from '../types';
+import { resolveDoneWindowDays } from '../utils/dateUtils';
 
 type Listener = () => void;
+
+/** Safety cap on token-paginated /search/jql pages (100 issues each). 10 → up to 1000 issues. */
+const TEAM_MAX_PAGES = 10;
 
 type TeamState =
 	| { kind: 'empty' }
@@ -115,12 +119,18 @@ export class JiraTeamService {
 	private buildJql(s: PluginSettings): string {
 		const emails = this.activeEmails(s);
 		// JQL accepts `assignee = "email"` on Cloud — Atlassian resolves to accountId.
-		// Quote each email; strip any rogue double-quotes defensively.
-		const userClause = `assignee in (${emails.map(e => `"${e.replace(/"/g, '')}"`).join(', ')})`;
-		const projectClause = s.jiraDashboardProjects.length > 0
-			? `AND project in (${s.jiraDashboardProjects.map(k => `"${k.replace(/"/g, '')}"`).join(', ')})`
+		// Backslash-escape backslashes and quotes so the quoting is actually sound.
+		const esc = (v: string) => v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+		const userClause = `assignee in (${emails.map(e => `"${esc(e)}"`).join(', ')})`;
+		// Only keep syntactically valid project keys (see JiraDashboardService.buildJql).
+		const validProjects = s.jiraDashboardProjects.filter(k => /^[A-Za-z][A-Za-z0-9_]+$/.test(k));
+		const projectClause = validProjects.length > 0
+			? `AND project in (${validProjects.map(k => `"${k}"`).join(', ')})`
 			: '';
-		const staleClause = 'AND (resolution = Unresolved OR resolutiondate >= -7d)';
+		// Unresolved OR resolved within the configured done-window (default 14 days). Mirrors
+		// JiraDashboardService and the client-side done-window filter in JiraDashboardView.
+		const windowDays = resolveDoneWindowDays(s.hideDoneAfterDays);
+		const staleClause = `AND (resolution = Unresolved OR resolutiondate >= -${windowDays}d)`;
 		return `${userClause} ${projectClause} ${staleClause} ORDER BY updated DESC`.replace(/\s+/g, ' ').trim();
 	}
 
@@ -128,48 +138,62 @@ export class JiraTeamService {
 		const s = this.getSettings();
 		const jql = this.buildJql(s);
 		const sprintField = (s.jiraSprintFieldId || 'customfield_10020').trim();
+		const flaggedFieldId = (s.jiraFlaggedFieldId || 'customfield_10021').trim();
 
 		const fields = [
 			'summary', 'status', 'priority', 'assignee', 'reporter',
 			'duedate', 'resolutiondate', 'updated', 'labels',
 			'parent', 'issuetype', 'timespent', 'timeestimate',
 			sprintField,
-			'customfield_10021',
+			flaggedFieldId,
 		];
-
-		// Teams can have 50+ issues across 10 people, bump maxResults vs personal (100).
-		// The endpoint caps at 100 anyway; paging is a future concern if the team is huge.
-		const params = new URLSearchParams();
-		params.set('jql', jql);
-		params.set('fields', fields.join(','));
-		params.set('maxResults', '100');
 
 		console.log('[JIRA Team] JQL:', jql);
 
 		try {
-			const req: RequestUrlParam = {
-				url: s.jiraBaseUrl.replace(/\/+$/, '') + '/rest/api/3/search/jql?' + params.toString(),
-				method: 'GET',
-				headers: {
-					'Authorization': `Basic ${btoa(`${s.jiraEmail}:${s.jiraApiToken}`)}`,
-					'Accept': 'application/json',
-					'X-Atlassian-Token': 'no-check',
-				},
-				throw: false,
-			};
-			const resp = await requestUrl(req);
-			const parsedJson = this.safeParseJson(resp.text);
+			// Token-paginated /search/jql (see JiraDashboardService.doFetch). A team of ~10
+			// easily exceeds one 100-issue page, so loop until the last page rather than
+			// silently truncating — which would drop the oldest-updated (often aging) work.
+			const raw: any[] = [];
+			let nextPageToken: string | undefined;
+			for (let page = 0; page < TEAM_MAX_PAGES; page++) {
+				const params = new URLSearchParams();
+				params.set('jql', jql);
+				params.set('fields', fields.join(','));
+				params.set('maxResults', '100');
+				if (nextPageToken) params.set('nextPageToken', nextPageToken);
 
-			if (resp.status < 200 || resp.status >= 300) {
-				const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
-				console.error('[JIRA Team] HTTP error:', resp.status, resp.text?.slice(0, 500));
-				this.state = { kind: 'error', message: msg, fetchedAt: Date.now() };
-				this.bump();
-				return null;
+				const req: RequestUrlParam = {
+					url: s.jiraBaseUrl.replace(/\/+$/, '') + '/rest/api/3/search/jql?' + params.toString(),
+					method: 'GET',
+					headers: {
+						'Authorization': `Basic ${btoa(`${s.jiraEmail}:${s.jiraApiToken}`)}`,
+						'Accept': 'application/json',
+						'X-Atlassian-Token': 'no-check',
+					},
+					throw: false,
+				};
+				const resp = await requestUrl(req);
+				const parsedJson = this.safeParseJson(resp.text);
+
+				if (resp.status < 200 || resp.status >= 300) {
+					const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
+					console.error('[JIRA Team] HTTP error:', resp.status, resp.text?.slice(0, 500));
+					this.state = { kind: 'error', message: msg, fetchedAt: Date.now() };
+					this.bump();
+					return null;
+				}
+
+				const pageIssues = Array.isArray(parsedJson?.issues) ? parsedJson.issues as any[] : [];
+				raw.push(...pageIssues);
+				nextPageToken = typeof parsedJson?.nextPageToken === 'string' ? parsedJson.nextPageToken : undefined;
+				if (parsedJson?.isLast === true || !nextPageToken || pageIssues.length === 0) break;
+				if (page === TEAM_MAX_PAGES - 1) {
+					console.warn(`[JIRA Team] Hit ${TEAM_MAX_PAGES}-page cap; results may be truncated. Narrow the projects/team.`);
+				}
 			}
 
-			const raw = (parsedJson?.issues ?? []) as any[];
-			const issues = raw.map(r => this.parseIssue(r, s.jiraBaseUrl, sprintField));
+			const issues = raw.map(r => this.parseIssue(r, s.jiraBaseUrl, sprintField, flaggedFieldId));
 			this.state = { kind: 'fresh', issues, fetchedAt: Date.now() };
 			this.bump();
 			return issues;
@@ -189,7 +213,7 @@ export class JiraTeamService {
 	/** Parse a single issue JSON. Mirrors JiraDashboardService.parseIssue, with the
 	 *  same tolerance for missing fields. Kept local rather than exported to avoid
 	 *  cross-service coupling — if the shape diverges later, each service can evolve. */
-	private parseIssue(raw: any, baseUrl: string, sprintField: string): JiraDashboardIssue {
+	private parseIssue(raw: any, baseUrl: string, sprintField: string, flaggedFieldId: string): JiraDashboardIssue {
 		const fields = raw?.fields ?? {};
 		const statusObj = fields.status ?? {};
 		const statusName: string = statusObj.name ?? 'Unknown';
@@ -233,9 +257,9 @@ export class JiraTeamService {
 		}
 
 		let flagged = false;
-		const flaggedField = fields.customfield_10021 ?? fields.flagged;
-		if (Array.isArray(flaggedField) && flaggedField.length > 0) flagged = true;
-		else if (flaggedField && typeof flaggedField === 'object') flagged = true;
+		const flaggedRaw = fields[flaggedFieldId] ?? fields.customfield_10021 ?? fields.flagged;
+		if (Array.isArray(flaggedRaw) && flaggedRaw.length > 0) flagged = true;
+		else if (flaggedRaw && typeof flaggedRaw === 'object') flagged = true;
 
 		const labels: string[] = Array.isArray(fields.labels) ? fields.labels.map(String) : [];
 

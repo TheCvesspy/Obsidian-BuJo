@@ -46,7 +46,7 @@ export function criticalPath(topics: SprintTopic[]): string[] {
 	const longestTo = (t: SprintTopic): string[] => {
 		const cached = memo.get(t.filePath);
 		if (cached) return cached;
-		if (visiting.has(t.filePath)) return [t.filePath]; // cycle guard
+		if (visiting.has(t.filePath)) return []; // cycle guard — a back-edge contributes nothing (avoids duplicate nodes in the returned path)
 		visiting.add(t.filePath);
 		let best: string[] = [];
 		for (const b of idx.blockersOf(t)) {

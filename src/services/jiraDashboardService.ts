@@ -1,7 +1,11 @@
 import { requestUrl, RequestUrlParam } from 'obsidian';
 import { JiraDashboardIssue, PluginSettings } from '../types';
+import { resolveDoneWindowDays } from '../utils/dateUtils';
 
 type Listener = () => void;
+
+/** Safety cap on token-paginated /search/jql pages (100 issues each). 10 → up to 1000 issues. */
+const DASHBOARD_MAX_PAGES = 10;
 
 type DashboardState =
 	| { kind: 'empty' }
@@ -107,56 +111,69 @@ export class JiraDashboardService {
 		const s = this.getSettings();
 		const jql = this.buildJql(s);
 		const sprintField = (s.jiraSprintFieldId || 'customfield_10020').trim();
+		const flaggedFieldId = (s.jiraFlaggedFieldId || 'customfield_10021').trim();
 
-		// Field list sent to JIRA — plus the configurable sprint custom field
-		// and the Flagged custom field (standard on Cloud). The new /search/jql
-		// endpoint doesn't accept the `*all` magic token, so we name everything.
+		// Field list sent to JIRA — plus the configurable sprint + Flagged custom fields.
+		// The new /search/jql endpoint doesn't accept the `*all` magic token, so we name
+		// everything. Flagged uses the user-configured id (falls back to the Cloud standard).
 		const fields = [
 			'summary', 'status', 'priority', 'assignee', 'reporter',
 			'duedate', 'resolutiondate', 'updated', 'labels',
 			'parent', 'issuetype', 'timespent', 'timeestimate',
 			sprintField,
-			'customfield_10021', // Flagged (Cloud standard)
+			flaggedFieldId,
 		];
-
-		// Use GET /rest/api/3/search/jql — the successor to the deprecated /search
-		// endpoint (see https://developer.atlassian.com/changelog/#CHANGE-2046).
-		// The new endpoint accepts both GET and POST; we prefer GET because some
-		// tenants enforce XSRF on POSTs even with the X-Atlassian-Token header.
-		const params = new URLSearchParams();
-		params.set('jql', jql);
-		params.set('fields', fields.join(','));
-		params.set('maxResults', '100');
 
 		console.log('[JIRA Dashboard] JQL:', jql);
 
 		try {
-			const req: RequestUrlParam = {
-				url: s.jiraBaseUrl.replace(/\/+$/, '') + '/rest/api/3/search/jql?' + params.toString(),
-				method: 'GET',
-				headers: {
-					'Authorization': `Basic ${btoa(`${s.jiraEmail}:${s.jiraApiToken}`)}`,
-					'Accept': 'application/json',
-					'X-Atlassian-Token': 'no-check',
-				},
-				throw: false,
-			};
-			const resp = await requestUrl(req);
+			// GET /rest/api/3/search/jql — successor to the deprecated /search endpoint
+			// (https://developer.atlassian.com/changelog/#CHANGE-2046). It's token-paginated
+			// (nextPageToken / isLast) and caps each page at 100, so we loop until the last
+			// page rather than silently dropping everything past the first 100 matches.
+			const raw: any[] = [];
+			let nextPageToken: string | undefined;
+			for (let page = 0; page < DASHBOARD_MAX_PAGES; page++) {
+				const params = new URLSearchParams();
+				params.set('jql', jql);
+				params.set('fields', fields.join(','));
+				params.set('maxResults', '100');
+				if (nextPageToken) params.set('nextPageToken', nextPageToken);
 
-			// `resp.json` is a getter that throws when the body isn't JSON
-			// (e.g. "XSRF check failed" plain text on 403). Parse defensively.
-			const parsedJson = this.safeParseJson(resp.text);
+				const req: RequestUrlParam = {
+					url: s.jiraBaseUrl.replace(/\/+$/, '') + '/rest/api/3/search/jql?' + params.toString(),
+					method: 'GET',
+					headers: {
+						'Authorization': `Basic ${btoa(`${s.jiraEmail}:${s.jiraApiToken}`)}`,
+						'Accept': 'application/json',
+						'X-Atlassian-Token': 'no-check',
+					},
+					throw: false,
+				};
+				const resp = await requestUrl(req);
 
-			if (resp.status < 200 || resp.status >= 300) {
-				const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
-				console.error('[JIRA Dashboard] HTTP error:', resp.status, resp.text?.slice(0, 500));
-				this.state = { kind: 'error', message: msg, fetchedAt: Date.now() };
-				this.bump();
-				return null;
+				// `resp.json` is a getter that throws when the body isn't JSON
+				// (e.g. "XSRF check failed" plain text on 403). Parse defensively.
+				const parsedJson = this.safeParseJson(resp.text);
+
+				if (resp.status < 200 || resp.status >= 300) {
+					const msg = this.formatHttpError(resp.status, resp.text, parsedJson);
+					console.error('[JIRA Dashboard] HTTP error:', resp.status, resp.text?.slice(0, 500));
+					this.state = { kind: 'error', message: msg, fetchedAt: Date.now() };
+					this.bump();
+					return null;
+				}
+
+				const pageIssues = Array.isArray(parsedJson?.issues) ? parsedJson.issues as any[] : [];
+				raw.push(...pageIssues);
+				nextPageToken = typeof parsedJson?.nextPageToken === 'string' ? parsedJson.nextPageToken : undefined;
+				if (parsedJson?.isLast === true || !nextPageToken || pageIssues.length === 0) break;
+				if (page === DASHBOARD_MAX_PAGES - 1) {
+					console.warn(`[JIRA Dashboard] Hit ${DASHBOARD_MAX_PAGES}-page cap; results may be truncated. Narrow the projects/JQL.`);
+				}
 			}
 
-			const raw = (parsedJson?.issues ?? []) as any[];
-			const issues = raw.map(r => this.parseIssue(r, s.jiraBaseUrl, sprintField));
+			const issues = raw.map(r => this.parseIssue(r, s.jiraBaseUrl, sprintField, flaggedFieldId));
 			this.state = { kind: 'fresh', issues, fetchedAt: Date.now() };
 			this.bump();
 			return issues;
@@ -181,16 +198,23 @@ export class JiraDashboardService {
 	/** Build the JQL used for the dashboard fetch. */
 	private buildJql(s: PluginSettings): string {
 		const userClause = '(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser())';
-		const projectClause = s.jiraDashboardProjects.length > 0
-			? `AND project in (${s.jiraDashboardProjects.map(k => `"${k.replace(/"/g, '')}"`).join(', ')})`
+		// Only keep syntactically valid project keys (a letter, then letters/digits/underscore).
+		// Anything else is a typo that would only yield an HTTP 400 JQL parse error; dropping it
+		// keeps the query valid. Validated keys need no escaping — they can't contain quotes/parens.
+		const validProjects = s.jiraDashboardProjects.filter(k => /^[A-Za-z][A-Za-z0-9_]+$/.test(k));
+		const projectClause = validProjects.length > 0
+			? `AND project in (${validProjects.map(k => `"${k}"`).join(', ')})`
 			: '';
-		// Unresolved OR resolved within the last 7 days
-		const staleClause = 'AND (resolution = Unresolved OR resolutiondate >= -7d)';
+		// Unresolved OR resolved within the configured done-window (default 14 days). Keeps the
+		// payload bounded server-side; the view also applies a client-side done-window filter
+		// (JiraDashboardView.applyDoneWindow) to catch Done issues that carry no resolutiondate.
+		const windowDays = resolveDoneWindowDays(s.hideDoneAfterDays);
+		const staleClause = `AND (resolution = Unresolved OR resolutiondate >= -${windowDays}d)`;
 		return `${userClause} ${projectClause} ${staleClause} ORDER BY updated DESC`.replace(/\s+/g, ' ').trim();
 	}
 
 	/** Parse a single issue JSON into the dashboard shape. Tolerant of missing fields. */
-	private parseIssue(raw: any, baseUrl: string, sprintField: string): JiraDashboardIssue {
+	private parseIssue(raw: any, baseUrl: string, sprintField: string, flaggedFieldId: string): JiraDashboardIssue {
 		const fields = raw?.fields ?? {};
 		const statusObj = fields.status ?? {};
 		const statusName: string = statusObj.name ?? 'Unknown';
@@ -242,9 +266,9 @@ export class JiraDashboardService {
 		// issue object for any field whose name/value equals "Impediment"/"Flagged".
 		let flagged = false;
 		// Common Cloud custom field for Flagged is customfield_10021 — value is an array of objects
-		const flaggedField = fields.customfield_10021 ?? fields.flagged;
-		if (Array.isArray(flaggedField) && flaggedField.length > 0) flagged = true;
-		else if (flaggedField && typeof flaggedField === 'object') flagged = true;
+		const flaggedRaw = fields[flaggedFieldId] ?? fields.customfield_10021 ?? fields.flagged;
+		if (Array.isArray(flaggedRaw) && flaggedRaw.length > 0) flagged = true;
+		else if (flaggedRaw && typeof flaggedRaw === 'object') flagged = true;
 
 		const labels: string[] = Array.isArray(fields.labels) ? fields.labels.map(String) : [];
 

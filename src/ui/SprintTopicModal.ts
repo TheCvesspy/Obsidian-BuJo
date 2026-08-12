@@ -45,6 +45,8 @@ export class SprintTopicModal extends Modal {
 	private impact: TopicImpact | null = null;
 	private effort: TopicEffort | null = null;
 	private dueDate: string = '';
+	/** Planned roadmap start (estimate). Empty string = unset. The roadmap bar runs startDate → dueDate. */
+	private startDate: string = '';
 	/** Empty string = unassigned. Otherwise a team member email. */
 	private assignee: string = '';
 	/** Empty string = not waiting. 'other:<text>' means free-text fallback; any other
@@ -58,15 +60,17 @@ export class SprintTopicModal extends Modal {
 	private refsContainer: HTMLElement | null = null;
 	private blockedBy: string[] = [];
 	private blockerChipsContainer: HTMLElement | null = null;
+	private errorEl: HTMLElement | null = null;
 
 	constructor(
 		app: App,
 		private topicService: SprintTopicService,
 		private onSave: (topic: SprintTopic) => void,
 		private editTopic?: SprintTopic,
-		/** Optional pre-fill for create mode (ignored when editing). Used by the
-		 *  JIRA Dashboard "Create topic from issue" action to seed title/jira/priority. */
-		private prefill?: { title?: string; jira?: string; priority?: Priority },
+		/** Optional pre-fill for create mode (ignored when editing). Used by the JIRA
+		 *  "Create topic from issue" flows to seed title/jira/priority, and (when fetched
+		 *  from a live issue) the due date and a resolved assignee email. */
+		private prefill?: { title?: string; jira?: string; priority?: Priority; dueDate?: string; assignee?: string },
 		/** Plugin settings — used to populate the Assignee dropdown from `teamMembers`. */
 		private settings?: PluginSettings,
 		/** All topics — used to populate the "Blocked by" dependency picker. */
@@ -88,6 +92,7 @@ export class SprintTopicModal extends Modal {
 			this.impact = this.editTopic.impact;
 			this.effort = this.editTopic.effort;
 			this.dueDate = this.editTopic.dueDate ?? '';
+			this.startDate = this.editTopic.startDate ?? '';
 			this.assignee = this.editTopic.assignee ?? '';
 			this.lastNudged = this.editTopic.lastNudged ?? '';
 			this.refs = this.editTopic.refs.map(r => ({ ...r }));
@@ -110,6 +115,8 @@ export class SprintTopicModal extends Modal {
 				if (this.prefill.title) this.title = this.prefill.title;
 				if (this.prefill.jira) this.jira = this.prefill.jira;
 				if (this.prefill.priority) this.priority = this.prefill.priority;
+				if (this.prefill.dueDate) this.dueDate = this.prefill.dueDate;
+				if (this.prefill.assignee) this.assignee = this.prefill.assignee;
 			}
 		}
 
@@ -124,7 +131,7 @@ export class SprintTopicModal extends Modal {
 					.setValue(this.title)
 					.onChange(value => { this.title = value; });
 				text.inputEl.addEventListener('keydown', (e) => {
-					if (e.key === 'Enter') this.save();
+					if (e.key === 'Enter') void this.save();
 				});
 				setTimeout(() => text.inputEl.focus(), 50);
 			});
@@ -230,9 +237,20 @@ export class SprintTopicModal extends Modal {
 				.onChange(value => { this.effort = (value || null) as TopicEffort | null; })
 			);
 
+		// Roadmap span: the bar runs Start date → Due date. Start is the planned start
+		// (estimate); Due doubles as the deadline (overdue cue) and the bar's end.
+		new Setting(contentEl)
+			.setName('Start date')
+			.setDesc('Optional planned start — the left edge of the topic’s bar on the Roadmap.')
+			.addText(text => {
+				text.inputEl.type = 'date';
+				text.setValue(this.startDate);
+				text.onChange(value => { this.startDate = value; });
+			});
+
 		new Setting(contentEl)
 			.setName('Due date')
-			.setDesc('Optional — surfaces overdue / urgent cues in the topics table.')
+			.setDesc('Optional deadline — overdue cue in the table, and the right edge of the bar on the Roadmap.')
 			.addText(text => {
 				text.inputEl.type = 'date';
 				text.setValue(this.dueDate);
@@ -267,20 +285,13 @@ export class SprintTopicModal extends Modal {
 		this.renderBlockedBySection(contentEl);
 
 		// Error display
-		const errorEl = contentEl.createDiv({ cls: 'friday-modal-error' });
+		this.errorEl = contentEl.createDiv({ cls: 'friday-modal-error' });
 
 		new Setting(contentEl)
 			.addButton(btn => btn
 				.setButtonText('Save')
 				.setCta()
-				.onClick(async () => {
-					errorEl.empty();
-					if (!this.title.trim()) {
-						errorEl.setText('Title is required.');
-						return;
-					}
-					await this.save();
-				})
+				.onClick(() => void this.save())
 			);
 	}
 
@@ -364,11 +375,30 @@ export class SprintTopicModal extends Modal {
 		renderInner();
 	}
 
+	/** Validate, run the actual save, and surface any failure (duplicate filename,
+	 *  write error) in the modal instead of letting the rejection vanish unhandled. */
 	private async save(): Promise<void> {
-		if (!this.title.trim()) return;
+		this.errorEl?.empty();
+		if (!this.title.trim()) {
+			this.errorEl?.setText('Title is required.');
+			return;
+		}
+		try {
+			await this.doSave();
+		} catch (err) {
+			this.errorEl?.setText(err instanceof Error ? err.message : String(err));
+		}
+	}
 
+	private async doSave(): Promise<void> {
 		const dueDateTrimmed = this.dueDate.trim();
 		const dueDateValue = dueDateTrimmed && /^\d{4}-\d{2}-\d{2}$/.test(dueDateTrimmed) ? dueDateTrimmed : null;
+
+		const isoOrNull = (v: string): string | null => {
+			const t = v.trim();
+			return t && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+		};
+		const startDateValue = isoOrNull(this.startDate);
 
 		// Normalize waitingOn state to the stored string
 		const waitingOnValue =
@@ -388,6 +418,7 @@ export class SprintTopicModal extends Modal {
 				impact: this.impact,
 				effort: this.effort,
 				dueDate: dueDateValue,
+				startDate: startDateValue,
 				assignee: this.assignee || null,
 				waitingOn: waitingOnValue,
 				lastNudged: lastNudgedValue,
@@ -395,6 +426,21 @@ export class SprintTopicModal extends Modal {
 			};
 			await this.topicService.updateTopicFrontmatter(this.editTopic.filePath, fmUpdates);
 			await this.applyDependencyChanges(this.editTopic.filePath, this.editTopic.blockedBy);
+
+			// Persist body-level edits the frontmatter update doesn't cover: the
+			// Linked Pages section and the title (H1 + filename). Rename runs last
+			// so every earlier write targets the existing path. May throw (e.g.
+			// duplicate filename) — surfaced by save()'s catch.
+			const newTitle = this.title.trim();
+			let filePath = this.editTopic.filePath;
+			const pagesChanged =
+				JSON.stringify(this.linkedPages) !== JSON.stringify(this.editTopic.linkedPages);
+			if (pagesChanged) {
+				await this.topicService.updateLinkedPagesSection(filePath, this.linkedPages);
+			}
+			if (newTitle !== this.editTopic.title) {
+				filePath = await this.topicService.renameTopic(filePath, newTitle);
+			}
 
 			// Parse the jira input into a deduplicated array of issue keys.
 			// The input accepts comma-separated (or whitespace-separated) keys; the regex
@@ -412,12 +458,15 @@ export class SprintTopicModal extends Modal {
 
 			const updated: SprintTopic = {
 				...this.editTopic,
+				filePath,
+				title: newTitle,
 				jira: jiraKeys,
 				priority: this.priority,
 				linkedPages: this.linkedPages,
 				impact: this.impact,
 				effort: this.effort,
 				dueDate: dueDateValue,
+				startDate: startDateValue,
 				assignee: this.assignee || null,
 				waitingOn: waitingOnValue,
 				lastNudged: lastNudgedValue,
@@ -438,6 +487,7 @@ export class SprintTopicModal extends Modal {
 				waitingOnValue,
 				lastNudgedValue,
 				this.refs,
+				startDateValue,
 			);
 			await this.applyDependencyChanges(topic.filePath, []);
 			this.onSave(topic);

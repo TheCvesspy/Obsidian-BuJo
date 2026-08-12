@@ -1,21 +1,15 @@
 import { ItemView, WorkspaceLeaf, debounce, TFile, Menu, Notice, FuzzySuggestModal, App } from 'obsidian';
 import { JiraDashboardIssue, PluginSettings, SprintTopic, Priority, TeamMember } from '../types';
 import { VIEW_TYPE_JIRA_DASHBOARD, SEARCH_DEBOUNCE_MS } from '../constants';
+import { resolveDoneWindowDays, daysSinceIso } from '../utils/dateUtils';
 import { JiraDashboardService } from '../services/jiraDashboardService';
 import { JiraTeamService } from '../services/jiraTeamService';
 import { SprintTopicService } from '../services/sprintTopicService';
+import { mapJiraPriority } from '../services/jiraService';
 import { SprintTopicModal } from './SprintTopicModal';
 
-/** Map a JIRA priority name to the topic Priority enum. Called on a best-effort
- *  basis when seeding a new topic from a JIRA issue — JIRA has 5 levels, we have 3. */
-function mapJiraPriority(jiraPriority: string | null): Priority {
-	if (!jiraPriority) return Priority.None;
-	const k = jiraPriority.toLowerCase();
-	if (k.includes('highest') || k === 'high') return Priority.High;
-	if (k.includes('medium')) return Priority.Medium;
-	if (k.includes('low') || k.includes('lowest')) return Priority.Low;
-	return Priority.None;
-}
+/** Bucket key for team issues fetched by the JQL but not matched to any configured member. */
+const UNMATCHED_MEMBER_KEY = '__unmatched__';
 
 /** Fuzzy picker over all topics — used by "Link to existing topic…". */
 class TopicSuggestModal extends FuzzySuggestModal<SprintTopic> {
@@ -111,7 +105,7 @@ export class JiraDashboardView extends ItemView {
 		{
 			id: 'recently-done',
 			label: 'Recently Done',
-			description: 'Resolved within the last 7 days.',
+			description: 'Resolved recently — within the done-window set in plugin settings.',
 			filter: (i) => i.statusCategory === 'done',
 			defaultCollapsed: true,
 		},
@@ -348,7 +342,8 @@ export class JiraDashboardView extends ItemView {
 			return;
 		}
 
-		const filtered = this.applySearch(issues, this.searchQuery);
+		const windowed = this.applyDoneWindow(issues);
+		const filtered = this.applySearch(windowed, this.searchQuery);
 		const buckets = this.buildBuckets(filtered);
 
 		for (const section of this.sections) {
@@ -433,6 +428,21 @@ export class JiraDashboardView extends ItemView {
 				...i.labels,
 			].join(' ').toLowerCase();
 			return hay.includes(q);
+		});
+	}
+
+	/** Native done-window filter: drop issues that have been resolved/closed for longer than
+	 *  the configured window (settings.hideDoneAfterDays, default 14). Complements the JQL
+	 *  window — it also catches issues marked Done (statusCategory 'done') that carry no
+	 *  resolutiondate (so JQL's `resolution = Unresolved` would otherwise keep them forever),
+	 *  falling back to the last-updated timestamp to date them. Non-done issues always pass. */
+	private applyDoneWindow(issues: JiraDashboardIssue[]): JiraDashboardIssue[] {
+		const days = resolveDoneWindowDays(this.getSettings().hideDoneAfterDays);
+		return issues.filter(i => {
+			if (i.statusCategory !== 'done') return true;
+			const age = daysSinceIso(i.resolutionDate ?? i.updatedAt);
+			if (age === null) return true; // can't date it → keep rather than hide silently
+			return age <= days;
 		});
 	}
 
@@ -644,7 +654,7 @@ export class JiraDashboardView extends ItemView {
 
 		// Due date
 		if (issue.dueDate) {
-			const overdue = this.isOverdue(issue.dueDate);
+			const overdue = issue.statusCategory !== 'done' && this.isOverdue(issue.dueDate);
 			const chip = metaEl.createSpan({ cls: 'friday-jira-dashboard-chip friday-jira-dashboard-due', text: `📅 ${issue.dueDate}` });
 			if (overdue) chip.addClass('is-overdue');
 		}
@@ -818,7 +828,7 @@ export class JiraDashboardView extends ItemView {
 			return;
 		}
 
-		const filteredTeam = this.applySearch(teamIssues, this.searchQuery);
+		const filteredTeam = this.applySearch(this.applyDoneWindow(teamIssues), this.searchQuery);
 		const byMember = this.bucketByMember(filteredTeam, members);
 
 		// Heatmap row — always visible (even when filter hides everyone) so the lead
@@ -833,6 +843,42 @@ export class JiraDashboardView extends ItemView {
 		for (const { member, issues } of ordered) {
 			this.renderMemberSection(wrap, member, issues, topicIndex);
 		}
+
+		// Surface issues the JQL returned but that matched no configured member (hidden email +
+		// a display name matching no full name/nickname), so assigned work never silently vanishes.
+		const unmatched = byMember.get(UNMATCHED_MEMBER_KEY) ?? [];
+		if (unmatched.length > 0) {
+			this.renderUnmatchedSection(wrap, unmatched, topicIndex);
+		}
+	}
+
+	/** Collapsible section for team issues not matched to any configured member. */
+	private renderUnmatchedSection(container: HTMLElement, issues: JiraDashboardIssue[], topicIndex: Map<string, SprintTopic[]>): void {
+		const settings = this.getSettings();
+		const stickyKey = 'team:__unmatched__';
+		const collapsed = settings.jiraDashboardCollapsedSections[stickyKey] ?? true;
+
+		const sectionEl = container.createDiv({ cls: 'friday-jira-dashboard-section friday-jira-dashboard-team-section' });
+		if (collapsed) sectionEl.addClass('is-collapsed');
+
+		const header = sectionEl.createDiv({ cls: 'friday-jira-dashboard-section-header' });
+		const chevron = header.createSpan({ cls: 'friday-jira-dashboard-section-chevron', text: collapsed ? '▶' : '▼' });
+		header.createSpan({ cls: 'friday-jira-dashboard-section-label', text: 'Unmatched (assignee not in team list)' });
+		header.createSpan({ cls: 'friday-jira-dashboard-section-count', text: `${issues.length}` });
+
+		header.addEventListener('click', async () => {
+			const cur = sectionEl.hasClass('is-collapsed');
+			sectionEl.toggleClass('is-collapsed', !cur);
+			chevron.setText(!cur ? '▶' : '▼');
+			const s = this.getSettings();
+			s.jiraDashboardCollapsedSections[stickyKey] = !cur;
+			await this.saveSettings();
+		});
+
+		const body = sectionEl.createDiv({ cls: 'friday-jira-dashboard-section-body' });
+		for (const issue of issues) {
+			this.renderIssueRow(body, issue, topicIndex);
+		}
 	}
 
 	/** Assign each team issue to exactly one member bucket. Matching priority:
@@ -846,11 +892,16 @@ export class JiraDashboardView extends ItemView {
 		const byName = new Map<string, TeamMember>();
 		for (const m of members) {
 			if (m.email) byEmail.set(m.email.toLowerCase(), m);
-			if (m.fullName) byName.set(m.fullName.toLowerCase().trim(), m);
+			// Index full name AND nickname, diacritics-stripped, so "Tomáš Nováček" still matches
+			// a JIRA display name of "Tomas Novacek" — common when the tenant hides email (GDPR)
+			// and we fall back to display-name matching.
+			if (m.fullName) byName.set(this.normalizeName(m.fullName), m);
+			if (m.nickname) byName.set(this.normalizeName(m.nickname), m);
 		}
 
 		const out = new Map<string, JiraDashboardIssue[]>();
 		for (const m of members) out.set(m.email, []);
+		out.set(UNMATCHED_MEMBER_KEY, []);
 
 		for (const issue of issues) {
 			let member: TeamMember | undefined;
@@ -858,14 +909,22 @@ export class JiraDashboardView extends ItemView {
 				member = byEmail.get(issue.assigneeEmail.toLowerCase());
 			}
 			if (!member && issue.assignee) {
-				member = byName.get(issue.assignee.toLowerCase().trim());
+				member = byName.get(this.normalizeName(issue.assignee));
 			}
+			// A fetched-but-unmatched issue (hidden email + a display name matching no configured
+			// name/nickname) goes to an explicit bucket rather than vanishing from the team view.
 			if (member) out.get(member.email)!.push(issue);
+			else out.get(UNMATCHED_MEMBER_KEY)!.push(issue);
 		}
 
 		// Sort each bucket with the existing cross-section comparator (flagged → priority → due → updated).
 		for (const [, bucket] of out) bucket.sort((a, b) => this.compareIssues(a, b));
 		return out;
+	}
+
+	/** Lowercase, trim, and strip combining diacritics for tolerant display-name matching. */
+	private normalizeName(s: string): string {
+		return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 	}
 
 	private renderHeatmap(container: HTMLElement, members: TeamMember[], byMember: Map<string, JiraDashboardIssue[]>): void {
