@@ -18,7 +18,7 @@
 5. [Commands & Interactions](#5-commands--interactions)
 6. [View Modes](#6-view-modes)
 7. [Friday Markdown Syntax](#7-friday-markdown-syntax)
-8. [Migration & Forwarding Flow](#8-migration--forwarding-flow)
+8. [Morning Review Flow](#8-morning-review-flow)
 9. [Analytics](#9-analytics)
 10. [Task Archiving](#10-task-archiving)
 11. [Two-Way Sync](#11-two-way-sync)
@@ -73,7 +73,7 @@
 - **Responsibilities**: Bootstraps all services, registers commands/views/events, manages lifecycle
 - **Key fields**: `data: PluginData`, `settings: PluginSettings`, 7 private service instances
 - **Lifecycle**:
-  - `onload()`: loads persisted data (deep-merges settings), instantiates all services, wires scanner→store pipeline, registers view/commands/ribbon/context menus, triggers `fullScan()` on layout ready, then checks migration & weekly review
+  - `onload()`: loads persisted data (deep-merges settings), instantiates all services, wires scanner→store pipeline, registers view/commands/ribbon/context menus, triggers `fullScan()` on layout ready, then checks the Morning Review & weekly review
   - `onunload()`: detaches views, destroys scanner
 
 #### `src/types.ts` (~210 lines) — Type Definitions & Defaults
@@ -143,24 +143,20 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
   - `findTaskLine()`: tries recorded `lineNumber` first (O(1)), falls back to `indexOf` scan
   - `resolveWikiLink()`: resolves by exact path, then basename
 
-#### `migrationService.ts` (~240 lines) — Daily Migration & Morning Review
-- **Class**: `MigrationService`
-- **Types**: `MigrationAction`, `MigrationDecision`, `MigrationResult`, `MorningReviewData`
+#### `morningReviewService.ts` (~30 lines) — Morning Review daily guard
+- **Class**: `MorningReviewService`
+- v3 retired the old daily-migration morning-shuffle: tasks now float by date and surface in the **Today** view, so there is no carry-forward, no `[>]`, no `(from [[…]])` copies. What survived is the start-of-day **nudge** surface (overdue 1:1s + stale waiting-on topics + quick capture), owned by `MorningReviewModal`. This service holds only the once-per-day guard.
 - **Key methods**:
-  - `needsMigration()`: true if `lastMigrationDate ≠ today` AND there are actionable tasks
-  - `getMorningReviewData()`: buckets all open tasks into yesterdayTasks (sourced from the **most recent prior daily note**, not literal `today − 1`), overdueTasks, todayTasks, availableTasks, availableOpenPoints. Deduplicates across daily notes. Also returns `yesterdayDate: string | null` (ISO date of the prior note, used by `MigrationModal` to label the section)
-  - `executeMigrations(decisions[])`: forward/reschedule/done/cancel
-  - `deduplicateDailyTasks()`: groups by normalized text, keeps most recent daily note copy
-  - `markMigrationDone()`: persists today's date
+  - `alreadyReviewedToday()`: true if `lastMorningReviewDate === today` (startup-prompt guard)
+  - `markReviewedToday()`: persists today's date so the startup prompt fires at most once per day
 
 #### `dailyNoteService.ts` (~135 lines) — Daily Note CRUD
 - **Class**: `DailyNoteService`
 - **Methods**:
   - `getDailyNotePath(date)`: returns `{dailyNotePath}/{YYYY-MM-DD}.md`
-  - `getMostRecentPriorDailyNotePath(today)`: scans the configured daily-notes folder for `YYYY-MM-DD.md` files, returns the path of the newest one strictly before `today`, or `null` if none exists. Resilient to weekends/vacations/skipped days. Powers the Morning Review's "yesterday's incomplete" lookup
-  - `getOrCreateDailyNote(date)`: creates folders + file with template
+  - `getMostRecentPriorDailyNotePath(today)`: scans the configured daily-notes folder for `YYYY-MM-DD.md` files, returns the path of the newest one strictly before `today`, or `null`. Resilient to weekends/vacations/skipped days. (Currently unused — kept as a utility; previously powered the migration "yesterday's incomplete" lookup.)
+  - `getOrCreateDailyNote(date)`: creates folders + file with template (`## Inbox` + `## Tasks`)
   - `addTaskToDaily()`: inserts under `## Tasks`
-  - `addMigratedTask()`: inserts under `## Migrated Tasks` (preserves multi-hop `migratedFrom`)
   - `addRawTaskLine()`: inserts raw line under `## Tasks`
 
 #### `sprintService.ts` (~114 lines) — Sprint Lifecycle Management
@@ -205,13 +201,12 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 - **Layout**: ViewSwitcher → Toolbar → Content (mode-specific) → AddTaskBar → Syntax Reference button
 - **Tab reuse**: `onClickSource` iterates all leaves to find existing tab with the target file
 
-#### `MigrationModal.ts` (~410 lines) — Morning Review Modal
-- On open: proactively calls `dailyNotes.getOrCreateDailyNote(today)` so today's daily note exists even if the user takes no action in the dialog
-- 3 sections: Incomplete from {prior date} (actionable; label built from `reviewData.yesterdayDate` via `formatDateDisplay`, falls back to "Yesterday's Incomplete" only when no prior note exists), Overdue (actionable), Due Today (preview)
-- Each actionable task: Forward / Reschedule / Done / Cancel buttons (default: Forward)
-- Task/Open Point pickers with debounced search (max 50 visible)
-- Quick-add form to create new tasks for today
-- Timer leak prevention: `pickerSearchTimers[]` cleared in `onClose()`
+#### `MorningReviewModal.ts` (~250 lines) — Morning Review Modal
+- A start-of-day **nudge** surface, not a task list. Due/overdue tasks live in the Today view; this modal never carries tasks forward.
+- **Overdue 1:1s**: team members whose 1:1 cadence has elapsed (`teamService.getOverdueOneOnOnes()`); each row's "Schedule 1:1" appends a reminder line to today's daily note
+- **Waiting on**: non-done topics with `waitingOn` set and a stale/absent nudge (older than `nudgeThresholdDays`); each row offers "Just nudged" (`markNudged`) or "Unblock" (clears `waitingOn`/`lastNudged`)
+- **Quick capture**: adds a raw task line to today's daily note (`buildTaskLine` + `dailyNotes.addRawTaskLine`)
+- Empty state when neither nudge section has content, pointing the user to the Today tab
 
 #### `WeeklyReviewModal.ts` (~115 lines) — Weekly Review Modal
 - Summary cards, work type/purpose breakdowns with progress bars
@@ -327,7 +322,7 @@ Markdown Files in Vault
 | `dailyNotePath` | `string` | `'BuJo/Daily'` | Folder for daily note files |
 | `defaultSprintLength` | `number` | `14` | Sprint duration in days |
 | `autoStartNextSprint` | `boolean` | `true` | Auto-create next sprint on completion |
-| `migrationPromptOnStartup` | `boolean` | `true` | Show migration modal on startup |
+| `morningReviewOnStartup` | `boolean` | `false` | Open the Morning Review modal once per day at startup |
 | `taskHeadings` | `string[]` | `['Tasks', 'TODO', 'Action Items']` | Headings that classify items as Tasks |
 | `openPointHeadings` | `string[]` | `['Open Points', 'Questions', 'Discussion Points']` | Headings for Open Points |
 | `workTypes` | `TagCategory[]` | 6 defaults | Work type categories |
@@ -360,7 +355,7 @@ Markdown Files in Vault
 |-------|------|---------|
 | `settings` | `PluginSettings` | All settings above |
 | `sprints` | `Sprint[]` | Sprint definitions |
-| `lastMigrationDate` | `string \| null` | ISO date of last migration run |
+| `lastMorningReviewDate` | `string \| null` | ISO date the Morning Review was last shown (once-per-day guard) |
 | `weeklyHistory` | `WeeklySnapshot[]` | Max 104 entries (2 years), FIFO pruned |
 | `lastWeeklyReviewWeek` | `string \| null` | Week ID of last weekly review |
 
@@ -374,7 +369,7 @@ Markdown Files in Vault
 |-----------|-------------|------|-------------|
 | `open-bujo` | Friday: Open | callback | Opens/reveals the Friday view |
 | `open-bujo-new-tab` | Friday: Open in New Tab | callback | Opens Friday in a new tab |
-| `run-daily-migration` | Friday: Run Daily Migration | callback | Opens Morning Review modal |
+| `open-morning-review` | Friday: Morning Review | callback | Opens the Morning Review modal (1:1 & waiting-on nudges + quick capture) |
 | `weekly-review` | Friday: Weekly Review | callback | Opens Weekly Review modal |
 | `syntax-reference` | Friday: Syntax Reference | callback | Opens syntax reference modal |
 | `archive-completed` | Friday: Archive Completed Tasks | callback | Archives all Done/Cancelled tasks to archive folder |
@@ -477,49 +472,35 @@ Work type and purpose values are resolved against configured `TagCategory[]`: ma
 
 ---
 
-## 8. Migration & Forwarding Flow
+## 8. Morning Review Flow
+
+v3 retired the old daily-migration morning-shuffle. Tasks now **float by date** — an unfinished task keeps surfacing in the **Today** view (overdue + due today, across every home) until it's done, snoozed (`@snooze`), or sent to Someday (`#someday`). There is no carry-forward, no `[>]` marker, and no `(from [[…]])` copies. What replaced it is a lightweight **Morning Review**: a start-of-day nudge surface for the things that have no other home.
 
 ### Trigger Conditions
-- **Auto on startup**: if `migrationPromptOnStartup=true` AND `lastMigrationDate ≠ today` AND there are actionable tasks
-- **Manual**: via command `Friday: Run Daily Migration`
+- **Auto on startup**: if `morningReviewOnStartup=true` AND `lastMorningReviewDate ≠ today`. Opening stamps `lastMorningReviewDate` (via `MorningReviewService.markReviewedToday()`) so a skipped review does not re-pop for the rest of the day. Default is **off**.
+- **Manual**: via command `Friday: Morning Review` (always available, ignores the daily guard).
 
-### Morning Review Data Collection (`getMorningReviewData()`)
+### What the modal shows (`MorningReviewModal`)
+1. **Overdue 1:1s** — team members whose 1:1 cadence has elapsed (`teamService.getOverdueOneOnOnes()`). Each row's **Schedule 1:1** appends a reminder line to today's daily note.
+2. **Waiting on** — non-done topics with `waitingOn` set whose last nudge is missing or older than `nudgeThresholdDays`. Each row offers **Just nudged** (`markNudged` → updates `lastNudged`) or **Unblock** (clears `waitingOn`/`lastNudged`).
+3. **Quick capture** — a raw task line written under today's daily note `## Tasks` (`buildTaskLine` + `addRawTaskLine`).
+4. **Empty state** — when neither nudge section has content, a note points the user to the Today tab.
 
-1. **Prior-day tasks (`yesterdayTasks`)**: Open tasks from the **most recent daily note dated strictly before today**, resolved via `DailyNoteService.getMostRecentPriorDailyNotePath(today)` — not literal `today − 1`. Handles weekends, vacations, and any skipped days. The resolved ISO date is also returned as `yesterdayDate` so `MigrationModal` can label the section dynamically (e.g. "Incomplete from Thu, Mar 26"). When no prior daily note exists at all, `yesterdayTasks` is empty and `yesterdayDate` is `null`.
-2. **Overdue tasks**: Open tasks with past due dates (excluding the prior-day set above)
-3. **Today's tasks**: Open tasks due today (preview only)
-4. **Available tasks**: All other open tasks (pickable for adding to today)
-5. **Available open points**: All open points (pickable)
-6. **Deduplication**: Tasks migrated across multiple daily notes → only most recent copy shown
-
-### Migration Actions
-
-| Action | Effect |
-|--------|--------|
-| **Forward** | Original marked `[>]`. Copy created in today's daily under `## Migrated Tasks` with `(from [[OriginalFile]])`. Priority/due date preserved. Multi-hop: preserves earliest `migratedFrom`. |
-| **Reschedule** | Due date updated in source file via `@due` tag replacement |
-| **Done** | Status changed to `[x]` in source file |
-| **Cancel** | Status changed to `[-]` in source file |
+Due/overdue task triage is intentionally **not** here — it lives in the Today view, where tasks can be completed, rescheduled (edit `@due`), snoozed, or dropped inline.
 
 ### Daily Note Template
 ```markdown
 # Daily Log — Mon, Mar 16, 2026
 
+## Inbox
+
 ## Tasks
-
-## Migrated Tasks
 ```
 
-- `## Tasks` — for new tasks created manually or via quick-add
-- `## Migrated Tasks` — for tasks forwarded from previous days or other pages
+- `## Inbox` — quick captures, swept into `Tasks.md`
+- `## Tasks` — tasks that genuinely live in this daily note
 
-### Migrated Task Line Format
-```markdown
-- [ ] Task text #priority/high @due 20-03-2026 (from [[2026-03-15]])
-```
-
-### Deduplication Logic
-When the same task is forwarded Day1→Day2→Day3, copies exist in multiple daily notes. `deduplicateDailyTasks()` groups by normalized text (strips `(from [[...]])`, case-insensitive) and keeps only the copy from the most recent daily note file.
+(The old `## Migrated Tasks` heading is gone — nothing wrote to it after forwarding was retired.)
 
 ---
 

@@ -8,7 +8,7 @@ import { TaskWriter } from './services/taskWriter';
 import { DailyNoteService } from './services/dailyNoteService';
 import { TasksInboxService } from './services/tasksInboxService';
 import { SprintTopicService } from './services/sprintTopicService';
-import { MigrationService } from './services/migrationService';
+import { MorningReviewService } from './services/morningReviewService';
 import { AnalyticsService, WeeklyStats } from './services/analyticsService';
 import { MonthlyNoteService } from './services/monthlyNoteService';
 import { MonthlyAnalyticsService } from './services/monthlyAnalyticsService';
@@ -24,7 +24,7 @@ import { FridayView } from './ui/FridayView';
 import { TopicsSubMode } from './ui/components/TopicsOverviewView';
 import { JiraDashboardView } from './ui/JiraDashboardView';
 import { TeamDashboardView } from './ui/TeamDashboardView';
-import { MigrationModal } from './ui/MigrationModal';
+import { MorningReviewModal } from './ui/MorningReviewModal';
 import { OneOnOneModal } from './ui/OneOnOneModal';
 import { WeeklyReviewModal } from './ui/WeeklyReviewModal';
 import { MonthlyReviewModal } from './ui/MonthlyReviewModal';
@@ -40,6 +40,7 @@ import { getWeekId, getWeekStartConfigurable, isoToPluginDate, pluginDateToIso }
 import { McpServer, generateMcpToken, noticeForError } from './mcp/server';
 import { taskTools } from './mcp/tools/tasks';
 import { topicTools } from './mcp/tools/topics';
+import { teamTools } from './mcp/tools/team';
 
 export default class FridayPlugin extends Plugin {
 	data: PluginData;
@@ -51,7 +52,7 @@ export default class FridayPlugin extends Plugin {
 	private dailyNoteService: DailyNoteService;
 	private tasksInboxService: TasksInboxService;
 	private sprintTopicService: SprintTopicService;
-	private migrationService: MigrationService;
+	private morningReviewService: MorningReviewService;
 	private analyticsService: AnalyticsService;
 	private monthlyNoteService: MonthlyNoteService;
 	private monthlyAnalyticsService: MonthlyAnalyticsService;
@@ -70,6 +71,22 @@ export default class FridayPlugin extends Plugin {
 		this.data = Object.assign({}, DEFAULT_PLUGIN_DATA, saved);
 		// Deep-merge settings so new defaults are applied to old saved data
 		this.data.settings = Object.assign({}, DEFAULT_PLUGIN_DATA.settings, saved?.settings);
+		// v3: `migrationPromptOnStartup` was renamed to `morningReviewOnStartup` when the
+		// daily-migration morning-shuffle was repurposed into the Morning Review nudge
+		// surface. Carry the old opt-in over, then drop the stale key.
+		const legacySettings = this.data.settings as unknown as Record<string, unknown>;
+		const legacyPrompt = legacySettings.migrationPromptOnStartup;
+		if (typeof legacyPrompt === 'boolean' && !this.data.settings.morningReviewOnStartup) {
+			this.data.settings.morningReviewOnStartup = legacyPrompt;
+		}
+		delete legacySettings.migrationPromptOnStartup;
+		// `lastMigrationDate` (the old once-per-day guard) became `lastMorningReviewDate`.
+		const legacyData = this.data as unknown as Record<string, unknown>;
+		this.data.lastMorningReviewDate =
+			this.data.lastMorningReviewDate ??
+			(legacyData.lastMigrationDate as string | null | undefined) ??
+			null;
+		delete legacyData.lastMigrationDate;
 		this.data.weeklyHistory = this.data.weeklyHistory ?? [];
 		this.data.lastWeeklyReviewWeek = this.data.lastWeeklyReviewWeek ?? null;
 		this.data.monthlyHistory = this.data.monthlyHistory ?? [];
@@ -106,13 +123,9 @@ export default class FridayPlugin extends Plugin {
 		this.dailyNoteService = new DailyNoteService(this.app.vault, () => this.settings);
 		this.tasksInboxService = new TasksInboxService(this.app.vault, () => this.settings);
 		this.sprintTopicService = new SprintTopicService(this.app.vault, () => this.settings, this.app);
-		this.migrationService = new MigrationService(
-			this.store,
-			this.writer,
-			this.dailyNoteService,
+		this.morningReviewService = new MorningReviewService(
 			() => this.data,
 			() => this.saveSettings(),
-			() => this.settings
 		);
 		this.analyticsService = new AnalyticsService(this.store, () => this.settings);
 		this.monthlyNoteService = new MonthlyNoteService(this.app.vault, () => this.settings);
@@ -155,6 +168,10 @@ export default class FridayPlugin extends Plugin {
 				jiraService: this.jiraService,
 				getSettings: () => this.settings,
 			}),
+			...teamTools({
+				teamMemberService: this.teamMemberService,
+				scanner: this.scanner,
+			}),
 		]);
 
 		this.scanner.onChange(() => {
@@ -171,7 +188,7 @@ export default class FridayPlugin extends Plugin {
 			new FridayView(
 				leaf, this.store, this.writer,
 				this.sprintTopicService, this.scanner,
-				this.migrationService, this.analyticsService,
+				this.analyticsService,
 				this.monthlyAnalyticsService, this.monthlyNoteService,
 				this.jiraService,
 				this.settings,
@@ -270,9 +287,9 @@ export default class FridayPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'run-daily-migration',
-			name: 'Run Daily Migration',
-			callback: () => this.showMigrationModal(),
+			id: 'open-morning-review',
+			name: 'Morning Review',
+			callback: () => this.showMorningReview(),
 		});
 
 		this.addCommand({
@@ -745,7 +762,7 @@ export default class FridayPlugin extends Plugin {
 			await this.autoGenerateTeamPagesIfNeeded();
 			await this.captureWorkloadSnapshotIfNeeded();
 			await this.runInboxCleanupIfNeeded();
-			this.checkMigration();
+			await this.checkMorningReview();
 			this.checkWeeklyReview();
 			await this.applyMcpServerState();
 		});
@@ -1001,24 +1018,18 @@ export default class FridayPlugin extends Plugin {
 		}
 	}
 
-	private checkMigration(): void {
-		if (this.settings.migrationPromptOnStartup && this.migrationService.needsMigration()) {
-			this.showMigrationModal();
-		}
+	private async checkMorningReview(): Promise<void> {
+		if (!this.settings.morningReviewOnStartup) return;
+		if (this.morningReviewService.alreadyReviewedToday()) return;
+		// Stamp before opening so a skipped review does not re-pop for the rest of the day.
+		await this.morningReviewService.markReviewedToday();
+		this.showMorningReview();
 	}
 
-	private showMigrationModal(): void {
-		const reviewData = this.migrationService.getMorningReviewData();
-
-		new MigrationModal(
+	private showMorningReview(): void {
+		new MorningReviewModal(
 			this.app,
-			this.migrationService,
 			this.dailyNoteService,
-			this.store,
-			reviewData,
-			(_result) => {
-				// Migration completed — views will auto-refresh via store events
-			},
 			this.teamMemberService,
 			this.sprintTopicService,
 			this.settings,

@@ -268,13 +268,13 @@ export class FridaySettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
-            .setName('Migration prompt on startup')
-            .setDesc('Legacy morning-review carry-forward. Off in v3 — tasks float by date instead.')
+            .setName('Morning Review on startup')
+            .setDesc('Open the Morning Review once per day at startup — overdue 1:1s, stale waiting-on topics, and a quick-capture box. Your due/overdue tasks live in the Today tab.')
             .addToggle(toggle =>
                 toggle
-                    .setValue(this.plugin.settings.migrationPromptOnStartup)
+                    .setValue(this.plugin.settings.morningReviewOnStartup)
                     .onChange(async value => {
-                        this.plugin.settings.migrationPromptOnStartup = value;
+                        this.plugin.settings.morningReviewOnStartup = value;
                         await this.plugin.saveSettings(false);
                     })
             );

@@ -57,7 +57,11 @@ export class DailyNoteService {
 
 		const displayDate = formatDateDisplay(date);
 		const year = date.getFullYear();
-		const template = `# Daily Log — ${displayDate}, ${year}\n\n## Inbox\n\n## Tasks\n\n## Migrated Tasks\n`;
+		// v3: the daily note is a journal (capture + time log). `## Inbox` holds quick
+		// captures (swept into Tasks.md), `## Tasks` holds tasks that genuinely live here.
+		// The old `## Migrated Tasks` heading is gone — nothing writes to it since the
+		// morning-shuffle was retired (tasks float by date now).
+		const template = `# Daily Log — ${displayDate}, ${year}\n\n## Inbox\n\n## Tasks\n`;
 
 		const file = await this.vault.create(path, template);
 		return file;

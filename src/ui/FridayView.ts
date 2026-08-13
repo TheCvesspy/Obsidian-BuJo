@@ -4,7 +4,6 @@ import { VIEW_TYPE_FRIDAY, REFRESH_DEBOUNCE_MS } from '../constants';
 import { TaskStore } from '../services/taskStore';
 import { TaskWriter } from '../services/taskWriter';
 import { SprintTopicService } from '../services/sprintTopicService';
-import { MigrationService } from '../services/migrationService';
 import { AnalyticsService } from '../services/analyticsService';
 import { MonthlyAnalyticsService } from '../services/monthlyAnalyticsService';
 import { MonthlyNoteService } from '../services/monthlyNoteService';
@@ -57,7 +56,6 @@ export class FridayView extends ItemView {
 		private writer: TaskWriter,
 		private sprintTopicService: SprintTopicService,
 		private scanner: VaultScanner,
-		private migrationService: MigrationService,
 		private analyticsService: AnalyticsService,
 		private monthlyAnalyticsService: MonthlyAnalyticsService,
 		private monthlyNoteService: MonthlyNoteService,

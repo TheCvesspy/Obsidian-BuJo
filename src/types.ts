@@ -240,8 +240,8 @@ export interface PluginSettings {
 	upcomingWindowDays: number;
 	/** v3: preferred date format for @due / @snooze written by the plugin. */
 	dateFormat: 'iso' | 'dmy';
-	/** Show migration prompt on startup if there are pending migrations */
-	migrationPromptOnStartup: boolean;
+	/** Show the Morning Review (1:1 & waiting-on nudges + quick capture) once per day at startup. */
+	morningReviewOnStartup: boolean;
 	/** Heading names that classify items as Tasks (case-insensitive) */
 	taskHeadings: string[];
 	/** Heading names that classify items as Open Points (case-insensitive) */
@@ -470,7 +470,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	archiveCompletedAfterDays: 7,
 	upcomingWindowDays: 14,
 	dateFormat: 'iso',
-	migrationPromptOnStartup: false,
+	morningReviewOnStartup: false,
 	taskHeadings: ['Tasks', 'TODO', 'Action Items'],
 	openPointHeadings: ['Open Points', 'Questions', 'Discussion Points'],
 	inboxHeadings: ['Inbox', 'Triage'],
@@ -636,7 +636,8 @@ export interface PluginData {
 	settings: PluginSettings;
 	/** True once the one-time sprint→Kanban migration has run. */
 	kanbanMigrationDone: boolean;
-	lastMigrationDate: string | null; // ISO date YYYY-MM-DD
+	/** ISO date (YYYY-MM-DD) the Morning Review was last shown; once-per-day startup guard. */
+	lastMorningReviewDate: string | null;
 	/** Historical weekly analytics snapshots */
 	weeklyHistory: WeeklySnapshot[];
 	/** Last week that was reviewed (WW-YYYY), prevents re-prompting */
@@ -652,7 +653,7 @@ export interface PluginData {
 export const DEFAULT_PLUGIN_DATA: PluginData = {
 	settings: DEFAULT_SETTINGS,
 	kanbanMigrationDone: false,
-	lastMigrationDate: null,
+	lastMorningReviewDate: null,
 	weeklyHistory: [],
 	lastWeeklyReviewWeek: null,
 	monthlyHistory: [],

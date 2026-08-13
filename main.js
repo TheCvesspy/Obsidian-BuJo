@@ -64,7 +64,7 @@ var DEFAULT_SETTINGS = {
   archiveCompletedAfterDays: 7,
   upcomingWindowDays: 14,
   dateFormat: "iso",
-  migrationPromptOnStartup: false,
+  morningReviewOnStartup: false,
   taskHeadings: ["Tasks", "TODO", "Action Items"],
   openPointHeadings: ["Open Points", "Questions", "Discussion Points"],
   inboxHeadings: ["Inbox", "Triage"],
@@ -107,7 +107,7 @@ var DEFAULT_SETTINGS = {
 var DEFAULT_PLUGIN_DATA = {
   settings: DEFAULT_SETTINGS,
   kanbanMigrationDone: false,
-  lastMigrationDate: null,
+  lastMorningReviewDate: null,
   weeklyHistory: [],
   lastWeeklyReviewWeek: null,
   monthlyHistory: [],
@@ -585,9 +585,9 @@ var FridaySettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.plugin.saveSettings(false);
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Migration prompt on startup").setDesc("Legacy morning-review carry-forward. Off in v3 \u2014 tasks float by date instead.").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.migrationPromptOnStartup).onChange(async (value) => {
-        this.plugin.settings.migrationPromptOnStartup = value;
+    new import_obsidian3.Setting(containerEl).setName("Morning Review on startup").setDesc("Open the Morning Review once per day at startup \u2014 overdue 1:1s, stale waiting-on topics, and a quick-capture box. Your due/overdue tasks live in the Today tab.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.morningReviewOnStartup).onChange(async (value) => {
+        this.plugin.settings.morningReviewOnStartup = value;
         await this.plugin.saveSettings(false);
       })
     );
@@ -3280,8 +3280,6 @@ var DailyNoteService = class {
 ## Inbox
 
 ## Tasks
-
-## Migrated Tasks
 `;
     const file = await this.vault.create(path, template);
     return file;
@@ -3832,192 +3830,20 @@ ${notesSection}`;
   }
 };
 
-// src/services/migrationService.ts
-var MigrationService = class {
-  constructor(store, writer, dailyNotes, getData, saveData, getSettings) {
-    this.store = store;
-    this.writer = writer;
-    this.dailyNotes = dailyNotes;
+// src/services/morningReviewService.ts
+var MorningReviewService = class {
+  constructor(getData, saveData) {
     this.getData = getData;
     this.saveData = saveData;
-    this.getSettings = getSettings;
   }
-  needsMigration() {
-    const { lastMigrationDate } = this.getData();
-    if (lastMigrationDate === null) {
-      return true;
-    }
-    if (lastMigrationDate === formatDateISO(/* @__PURE__ */ new Date())) {
-      return false;
-    }
-    const review = this.getMorningReviewData();
-    return review.yesterdayTasks.length > 0 || review.overdueTasks.length > 0 || review.todayTasks.length > 0;
+  /** True if the Morning Review was already shown today (startup prompt guard). */
+  alreadyReviewedToday() {
+    return this.getData().lastMorningReviewDate === formatDateISO(/* @__PURE__ */ new Date());
   }
-  /** Gather all data for the morning review modal.
-   *  Only root tasks (parentId === null) are actionable. Children travel with their parent. */
-  getMorningReviewData() {
-    var _a, _b, _c;
-    const today = todayStart();
-    const now = /* @__PURE__ */ new Date();
-    const yesterdayNotePath = this.dailyNotes.getMostRecentPriorDailyNotePath(today);
-    const yesterdayDate = yesterdayNotePath ? (_b = (_a = yesterdayNotePath.match(/(\d{4}-\d{2}-\d{2})\.md$/)) == null ? void 0 : _a[1]) != null ? _b : null : null;
-    const allTasks = this.store.getTasks();
-    let yesterdayTasks = [];
-    let overdueTasks = [];
-    let todayTasks = [];
-    const availableTasks = [];
-    const yesterdayIds = /* @__PURE__ */ new Set();
-    for (const t of allTasks) {
-      if (t.parentId !== null)
-        continue;
-      if (yesterdayNotePath && t.sourcePath === yesterdayNotePath && t.status === " " /* Open */) {
-        yesterdayTasks.push(t);
-        yesterdayIds.add(t.id);
-      }
-    }
-    for (const t of allTasks) {
-      if (t.parentId !== null)
-        continue;
-      if (yesterdayIds.has(t.id))
-        continue;
-      if (t.status !== " " /* Open */)
-        continue;
-      if (t.category === "task" /* Task */ && t.dueDate && isOverdue(t.dueDate, today)) {
-        overdueTasks.push(t);
-      } else if (t.category === "task" /* Task */ && t.dueDate && isToday(t.dueDate, now)) {
-        todayTasks.push(t);
-      } else {
-        availableTasks.push(t);
-      }
-    }
-    const dailyNotePath = (_c = this.getSettings) == null ? void 0 : _c.call(this).dailyNotePath;
-    if (dailyNotePath) {
-      yesterdayTasks = this.deduplicateDailyTasks(yesterdayTasks, dailyNotePath);
-      overdueTasks = this.deduplicateDailyTasks(overdueTasks, dailyNotePath);
-      todayTasks = this.deduplicateDailyTasks(todayTasks, dailyNotePath);
-    }
-    overdueTasks.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
-    const availableOpenPoints = this.store.getOpenPoints().filter((t) => t.status === " " /* Open */);
-    return { yesterdayTasks, yesterdayDate, overdueTasks, todayTasks, availableTasks, availableOpenPoints };
-  }
-  /** Get overdue tasks only (for backward compat / needsMigration) */
-  getPendingMigrations() {
-    return this.store.getTasks().filter(
-      (t) => t.category === "task" /* Task */ && t.status === " " /* Open */ && t.dueDate !== null && isOverdue(t.dueDate)
-    ).sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
-  }
-  /** Stamp `@due today` on a set of source tasks. Shared between the
-   *  morning-review "Forward" action and the picker's "Add Selected to Today"
-   *  button — both paths now schedule rather than physically copy.
-   *  Does NOT mark the morning migration done (so picking from the picker
-   *  doesn't suppress the rest of the review). Returns the number actually
-   *  updated. */
-  async scheduleForToday(tasks) {
-    const todayRaw = formatDateDMY(/* @__PURE__ */ new Date());
-    let count = 0;
-    for (const task of tasks) {
-      if (await this.writer.updateDueDate(task, todayRaw))
-        count++;
-    }
-    return count;
-  }
-  async executeMigrations(decisions) {
-    const result = { forwarded: 0, rescheduled: 0, cancelled: 0, completed: 0 };
-    for (const decision of decisions) {
-      const { task } = decision;
-      const openChildren = task.childrenIds.map((id) => this.store.getTaskById(id)).filter((c) => c !== void 0 && c.status === " " /* Open */);
-      switch (decision.action) {
-        case "forward": {
-          await this.scheduleForToday([task]);
-          result.forwarded++;
-          break;
-        }
-        case "reschedule":
-          if (decision.newDate) {
-            await this.writer.updateDueDate(task, decision.newDate);
-          }
-          result.rescheduled++;
-          break;
-        case "done": {
-          const toComplete = openChildren.length > 0 ? [task, ...openChildren] : [task];
-          await this.writer.setStatusBatch(toComplete, "x" /* Done */);
-          result.completed++;
-          break;
-        }
-        case "cancel": {
-          const toCancel = openChildren.length > 0 ? [task, ...openChildren] : [task];
-          await this.writer.setStatusBatch(toCancel, "-" /* Cancelled */);
-          result.cancelled++;
-          break;
-        }
-      }
-    }
-    await this.markMigrationDone();
-    return result;
-  }
-  async markMigrationDone() {
-    this.getData().lastMigrationDate = formatDateISO(/* @__PURE__ */ new Date());
+  /** Stamp today's date so the startup prompt does not re-open for the rest of the day. */
+  async markReviewedToday() {
+    this.getData().lastMorningReviewDate = formatDateISO(/* @__PURE__ */ new Date());
     await this.saveData();
-  }
-  /**
-   * Deduplicate tasks that were migrated between daily notes.
-   * When the same task exists in multiple daily notes (forwarded Day1→Day2→Day3),
-   * keep only the copy from the most recent daily note.
-   * Non-daily tasks are always kept.
-   */
-  deduplicateDailyTasks(tasks, dailyNotePath) {
-    const dailyPrefix = dailyNotePath.endsWith("/") ? dailyNotePath : dailyNotePath + "/";
-    const groups = /* @__PURE__ */ new Map();
-    for (const t of tasks) {
-      const key = this.normalizeTaskText(t);
-      const group = groups.get(key);
-      if (group) {
-        group.push(t);
-      } else {
-        groups.set(key, [t]);
-      }
-    }
-    const result = [];
-    for (const group of groups.values()) {
-      if (group.length === 1) {
-        result.push(group[0]);
-        continue;
-      }
-      let best = group[0];
-      let bestDate = this.extractDailyDate(best.sourcePath, dailyPrefix);
-      for (let i = 1; i < group.length; i++) {
-        const t = group[i];
-        const tDate = this.extractDailyDate(t.sourcePath, dailyPrefix);
-        if (!bestDate && tDate) {
-          best = t;
-          bestDate = tDate;
-        } else if (bestDate && tDate && tDate > bestDate) {
-          best = t;
-          bestDate = tDate;
-        } else if (!bestDate && !tDate) {
-        }
-      }
-      result.push(best);
-    }
-    return result;
-  }
-  /** Build the dedup identity for a task.
-   *  Two copies collapse only if their text (minus the `(from [[…]])` annotation),
-   *  priority, and due date all match — the three signals that together
-   *  distinguish a forwarded duplicate from a genuinely distinct task that
-   *  happens to share wording. Narrower than the old text-only key; prefers
-   *  keeping two tasks over silently dropping one. */
-  normalizeTaskText(task) {
-    const text = task.text.replace(MIGRATED_FROM_REGEX, "").trim().toLowerCase();
-    const due = task.dueDate ? formatDateISO(task.dueDate) : "";
-    return `${text}|${task.priority}|${due}`;
-  }
-  /** Extract YYYY-MM-DD date string from a daily note path, or null if not a daily note */
-  extractDailyDate(sourcePath, dailyPrefix) {
-    if (!sourcePath.startsWith(dailyPrefix))
-      return null;
-    const match = sourcePath.match(/(\d{4}-\d{2}-\d{2})\.md$/);
-    return match ? match[1] : null;
   }
 };
 
@@ -5798,14 +5624,78 @@ var TeamMemberService = class {
     if (this.vault.getAbstractFileByPath(pagePath) instanceof import_obsidian14.TFile)
       return false;
     await ensureFolderExists(this.vault, `${folderPath}/1on1`);
-    const status = member.active ? "active" : "departed";
-    const content = buildPersonPageTemplate(
-      member.fullName,
-      status,
-      member.email || null
-    );
+    const content = buildPersonPageTemplate({
+      name: member.fullName,
+      status: member.active ? "active" : "departed",
+      email: member.email || null,
+      jiraIdentity: member.email || null
+    });
     await this.vault.create(pagePath, content);
     return true;
+  }
+  /** Resolve a member by display name (folder basename), email, or JIRA identity —
+   *  case-insensitive, with a name substring match as a last resort. Null if none match. */
+  findMember(query) {
+    var _a, _b, _c, _d;
+    const q = query.trim().toLowerCase();
+    if (!q)
+      return null;
+    const members = this.getAllMembers();
+    return (_d = (_c = (_b = (_a = members.find((m) => m.name.toLowerCase() === q)) != null ? _a : members.find((m) => {
+      var _a2;
+      return ((_a2 = m.email) != null ? _a2 : "").toLowerCase() === q;
+    })) != null ? _b : members.find((m) => {
+      var _a2;
+      return ((_a2 = m.jiraIdentity) != null ? _a2 : "").toLowerCase() === q;
+    })) != null ? _c : members.find((m) => m.name.toLowerCase().includes(q))) != null ? _d : null;
+  }
+  /** Create a new person page at `{teamFolderPath}/{Name}/{Name}.md`.
+   *  Throws if the name is unusable or a page already exists there.
+   *  Returns the parsed page (before the scanner has re-indexed it). */
+  async createMemberPage(opts) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const settings = this.getSettings();
+    const segment = sanitizePathSegment(opts.name);
+    if (!segment)
+      throw new Error(`Invalid member name: "${opts.name}"`);
+    const folderPath = `${settings.teamFolderPath}/${segment}`;
+    const pagePath = `${folderPath}/${segment}.md`;
+    if (this.vault.getAbstractFileByPath(pagePath) instanceof import_obsidian14.TFile) {
+      throw new Error(`A team member page already exists at ${pagePath}`);
+    }
+    await ensureFolderExists(this.vault, `${folderPath}/1on1`);
+    const content = buildPersonPageTemplate({
+      name: opts.name,
+      status: (_a = opts.status) != null ? _a : "active",
+      cadence: (_b = opts.cadence) != null ? _b : "weekly",
+      role: (_c = opts.role) != null ? _c : null,
+      email: (_d = opts.email) != null ? _d : null,
+      jiraIdentity: (_f = (_e = opts.jiraIdentity) != null ? _e : opts.email) != null ? _f : null,
+      startDate: (_g = opts.startDate) != null ? _g : null
+    });
+    await this.vault.create(pagePath, content);
+    return parseTeamMemberPage(content, pagePath);
+  }
+  /** Update managed frontmatter keys on a person page. Unmanaged frontmatter
+   *  (tags, aliases, user keys) is preserved verbatim. Does not rename the page. */
+  async updateMemberFrontmatter(filePath, updates) {
+    const file = this.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian14.TFile))
+      throw new Error(`No file at ${filePath}`);
+    const fm = {};
+    if ("role" in updates)
+      fm["role"] = normalizeOrNull(updates.role);
+    if ("email" in updates)
+      fm["email"] = normalizeOrNull(updates.email);
+    if ("jiraIdentity" in updates)
+      fm["jira_identity"] = normalizeOrNull(updates.jiraIdentity);
+    if ("startDate" in updates)
+      fm["start_date"] = normalizeOrNull(updates.startDate);
+    if (updates.cadence)
+      fm["cadence"] = updates.cadence;
+    if (updates.status)
+      fm["status"] = updates.status;
+    await this.vault.process(file, (content) => applyPersonFrontmatter(content, fm));
   }
 };
 function daysBetween2(from, to) {
@@ -5845,16 +5735,21 @@ ${prep}
 - 
 `;
 }
-function buildPersonPageTemplate(fullName, status, email) {
-  const fmLines = ["---", `status: ${status}`, "cadence: weekly"];
-  if (email) {
-    fmLines.push(`email: ${email}`);
-    fmLines.push(`jira_identity: ${email}`);
-  }
+function buildPersonPageTemplate(opts) {
+  var _a;
+  const fmLines = ["---", `status: ${opts.status}`, `cadence: ${(_a = opts.cadence) != null ? _a : "weekly"}`];
+  if (opts.role)
+    fmLines.push(`role: ${opts.role}`);
+  if (opts.email)
+    fmLines.push(`email: ${opts.email}`);
+  if (opts.jiraIdentity)
+    fmLines.push(`jira_identity: ${opts.jiraIdentity}`);
+  if (opts.startDate)
+    fmLines.push(`start_date: ${opts.startDate}`);
   fmLines.push("---");
   const body = [
     "",
-    `# ${fullName}`,
+    `# ${opts.name}`,
     "",
     "## Context",
     "",
@@ -5868,6 +5763,48 @@ function buildPersonPageTemplate(fullName, status, email) {
     ""
   ].join("\n");
   return fmLines.join("\n") + body;
+}
+function normalizeOrNull(value) {
+  if (value === void 0 || value === null)
+    return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+var PERSON_FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
+function applyPersonFrontmatter(content, updates) {
+  const managed = new Set(Object.keys(updates));
+  const match = content.match(PERSON_FRONTMATTER_REGEX);
+  if (!match) {
+    const fresh = Object.entries(updates).filter(([, v]) => v !== null).map(([k, v]) => `${k}: ${v}`);
+    if (fresh.length === 0)
+      return content;
+    return `---
+${fresh.join("\n")}
+---
+
+` + content.trimStart();
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const line of match[1].split(/\r?\n/)) {
+    const kv = line.match(/^([A-Za-z0-9_]+):\s?(.*)$/);
+    if (kv && managed.has(kv[1])) {
+      seen.add(kv[1]);
+      const val = updates[kv[1]];
+      if (val !== null)
+        out.push(`${kv[1]}: ${val}`);
+    } else {
+      out.push(line);
+    }
+  }
+  for (const [key, val] of Object.entries(updates)) {
+    if (!seen.has(key) && val !== null)
+      out.push(`${key}: ${val}`);
+  }
+  const body = content.slice(match[0].length);
+  return `---
+${out.join("\n")}
+---` + body;
 }
 
 // src/utils/teamBucket.ts
@@ -10232,13 +10169,12 @@ var SubtaskConfirmModal = class extends import_obsidian23.Modal {
 
 // src/ui/FridayView.ts
 var FridayView = class extends import_obsidian24.ItemView {
-  constructor(leaf, store, writer, sprintTopicService, scanner, migrationService, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
+  constructor(leaf, store, writer, sprintTopicService, scanner, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
     super(leaf);
     this.store = store;
     this.writer = writer;
     this.sprintTopicService = sprintTopicService;
     this.scanner = scanner;
-    this.migrationService = migrationService;
     this.analyticsService = analyticsService;
     this.monthlyAnalyticsService = monthlyAnalyticsService;
     this.monthlyNoteService = monthlyNoteService;
@@ -12101,35 +12037,21 @@ var TeamDashboardView = class extends import_obsidian29.ItemView {
   }
 };
 
-// src/ui/MigrationModal.ts
+// src/ui/MorningReviewModal.ts
 var import_obsidian30 = require("obsidian");
-var MigrationModal = class extends import_obsidian30.Modal {
-  constructor(app, migrationService, dailyNotes, store, reviewData, onComplete, teamService, topicService, settings) {
+var MorningReviewModal = class extends import_obsidian30.Modal {
+  constructor(app, dailyNotes, teamService, topicService, settings) {
     super(app);
-    this.migrationService = migrationService;
     this.dailyNotes = dailyNotes;
-    this.store = store;
-    this.reviewData = reviewData;
-    this.onComplete = onComplete;
     this.teamService = teamService;
     this.topicService = topicService;
     this.settings = settings;
-    this.decisions = /* @__PURE__ */ new Map();
-    this.summaryEl = null;
-    this.selectedTasks = /* @__PURE__ */ new Set();
-    this.selectedOpenPoints = /* @__PURE__ */ new Set();
-    this.pickerSearchTimers = [];
   }
   async onOpen() {
     var _a, _b;
     this.modalEl.addClass("friday-migration-modal");
     const { contentEl } = this;
     contentEl.empty();
-    try {
-      await this.dailyNotes.getOrCreateDailyNote(/* @__PURE__ */ new Date());
-    } catch (e) {
-      new import_obsidian30.Notice(`Could not create today's daily note: ${e instanceof Error ? e.message : "unknown error"}`);
-    }
     contentEl.createEl("h2", { text: "Morning Review" });
     const overdueOneOnOnes = (_b = (_a = this.teamService) == null ? void 0 : _a.getOverdueOneOnOnes()) != null ? _b : [];
     if (overdueOneOnOnes.length > 0) {
@@ -12139,197 +12061,23 @@ var MigrationModal = class extends import_obsidian30.Modal {
     if (staleWaitingTopics.length > 0) {
       this.renderStaleWaitingTopics(contentEl, staleWaitingTopics);
     }
-    const { yesterdayTasks, overdueTasks, todayTasks } = this.reviewData;
-    const hasActionable = yesterdayTasks.length > 0 || overdueTasks.length > 0;
-    if (!hasActionable && todayTasks.length === 0 && overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0) {
+    if (overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0) {
       contentEl.createEl("p", {
-        text: "No tasks to review. Your slate is clean!",
+        text: "Nothing needs a nudge. Your due & overdue work lives in the Today tab.",
         cls: "friday-empty"
-      });
-      this.renderQuickAdd(contentEl);
-      this.renderCloseButton(contentEl);
-      return;
-    }
-    if (yesterdayTasks.length > 0) {
-      const label = this.reviewData.yesterdayDate ? `Incomplete from ${formatDateDisplay(/* @__PURE__ */ new Date(this.reviewData.yesterdayDate + "T00:00:00"))}` : "Yesterday's Incomplete";
-      this.renderSection(contentEl, label, yesterdayTasks, true);
-    }
-    if (overdueTasks.length > 0) {
-      this.renderSection(contentEl, "Overdue", overdueTasks, true);
-    }
-    if (todayTasks.length > 0) {
-      this.renderSection(contentEl, "Due Today", todayTasks, false);
-    }
-    if (hasActionable) {
-      this.summaryEl = contentEl.createDiv({ cls: "friday-migration-summary" });
-      this.updateSummary();
-    }
-    if (this.reviewData.availableTasks.length > 0) {
-      this.renderPicker(contentEl, "Pick from Open Tasks", this.reviewData.availableTasks, this.selectedTasks);
-    }
-    if (this.reviewData.availableOpenPoints.length > 0) {
-      this.renderPicker(contentEl, "Pick from Open Points", this.reviewData.availableOpenPoints, this.selectedOpenPoints);
-    }
-    if (this.reviewData.availableTasks.length > 0 || this.reviewData.availableOpenPoints.length > 0) {
-      const addSelectedContainer = contentEl.createDiv({ cls: "friday-picker-actions" });
-      const addSelectedBtn = addSelectedContainer.createEl("button", { text: "Add Selected to Today", cls: "mod-cta" });
-      const addedFeedback = addSelectedContainer.createDiv({ cls: "friday-picker-feedback" });
-      addSelectedBtn.addEventListener("click", async () => {
-        const allItems = [...this.reviewData.availableTasks, ...this.reviewData.availableOpenPoints];
-        const itemMap = new Map(allItems.map((t) => [t.id, t]));
-        const picked = [];
-        for (const id of this.selectedTasks) {
-          const task = itemMap.get(id);
-          if (task)
-            picked.push(task);
-        }
-        for (const id of this.selectedOpenPoints) {
-          const op = itemMap.get(id);
-          if (op)
-            picked.push(op);
-        }
-        if (picked.length === 0)
-          return;
-        const added = await this.migrationService.scheduleForToday(picked);
-        if (added > 0) {
-          addedFeedback.textContent = `Scheduled ${added} item(s) for today`;
-          addSelectedBtn.disabled = true;
-          this.selectedTasks.clear();
-          this.selectedOpenPoints.clear();
-        }
       });
     }
     this.renderQuickAdd(contentEl);
     const buttonContainer = contentEl.createDiv({ cls: "friday-migration-actions" });
-    if (hasActionable) {
-      const applyBtn = buttonContainer.createEl("button", { text: "Apply", cls: "mod-cta" });
-      applyBtn.addEventListener("click", async () => {
-        const decisions = Array.from(this.decisions.values());
-        const result = await this.migrationService.executeMigrations(decisions);
-        this.onComplete(result);
-        this.close();
-      });
-    }
-    const skipBtn = buttonContainer.createEl("button", { text: hasActionable ? "Skip for Now" : "Close" });
-    skipBtn.addEventListener("click", () => {
-      this.onComplete(null);
-      this.close();
-    });
+    const closeBtn = buttonContainer.createEl("button", { text: "Close" });
+    closeBtn.addEventListener("click", () => this.close());
   }
   onClose() {
-    for (const timer of this.pickerSearchTimers)
-      clearTimeout(timer);
-    this.pickerSearchTimers = [];
-    this.decisions.clear();
-    this.selectedTasks.clear();
-    this.selectedOpenPoints.clear();
-    this.summaryEl = null;
     this.contentEl.empty();
-  }
-  renderSection(container, title, tasks, actionable) {
-    const section = container.createDiv({ cls: "friday-review-section" });
-    const header = section.createDiv({ cls: "friday-review-section-header" });
-    header.createSpan({ text: title, cls: "friday-review-section-title" });
-    header.createSpan({ text: ` (${tasks.length})`, cls: "friday-review-section-count" });
-    for (const task of tasks) {
-      if (actionable) {
-        this.renderActionableTask(section, task);
-      } else {
-        this.renderPreviewTask(section, task);
-      }
-    }
-  }
-  renderActionableTask(container, task) {
-    const itemEl = container.createDiv({ cls: "friday-migration-item" });
-    const infoEl = itemEl.createDiv({ cls: "friday-migration-item-info" });
-    const textEl = infoEl.createDiv({ cls: "friday-migration-item-text" });
-    if (task.priority && task.priority !== "none" /* None */) {
-      textEl.createSpan({ cls: `friday-priority-dot friday-priority-${task.priority}` });
-    }
-    textEl.createSpan({ text: task.text });
-    const metaEl = infoEl.createDiv({ cls: "friday-migration-item-meta" });
-    metaEl.createSpan({ cls: "friday-migration-item-source", text: this.getFileName(task.sourcePath) });
-    if (task.dueDate) {
-      metaEl.createSpan({ text: " \xB7 " });
-      metaEl.createSpan({ cls: "friday-migration-item-date", text: formatDateDisplay(task.dueDate) });
-    }
-    if (task.childrenIds.length > 0) {
-      for (const childId of task.childrenIds) {
-        const child = this.store.getTaskById(childId);
-        if (child) {
-          const childEl = itemEl.createDiv({ cls: "friday-migration-subtask" });
-          const statusIcon = child.status === "x" /* Done */ ? "[x]" : child.status === "-" /* Cancelled */ ? "[-]" : "[ ]";
-          childEl.textContent = `${statusIcon} ${child.text}`;
-        }
-      }
-    }
-    const actionsEl = itemEl.createDiv({ cls: "friday-migration-item-actions" });
-    const actions = [
-      { action: "forward", label: "Forward", cls: "friday-btn-forward" },
-      { action: "reschedule", label: "Reschedule", cls: "friday-btn-reschedule" },
-      { action: "done", label: "Done", cls: "friday-btn-done" },
-      { action: "cancel", label: "Cancel", cls: "friday-btn-cancel" }
-    ];
-    const buttons = [];
-    const dateInputContainer = itemEl.createDiv({ cls: "friday-migration-date-input" });
-    dateInputContainer.style.display = "none";
-    const dateInput = dateInputContainer.createEl("input", { type: "date" });
-    for (const { action, label, cls } of actions) {
-      const btn = actionsEl.createEl("button", { text: label, cls });
-      buttons.push(btn);
-      btn.addEventListener("click", () => {
-        const decision = { task, action };
-        if (action === "reschedule") {
-          dateInputContainer.style.display = "";
-          decision.newDate = dateInput.value ? isoToPluginDate(dateInput.value) : void 0;
-        } else {
-          dateInputContainer.style.display = "none";
-        }
-        this.decisions.set(task.id, decision);
-        for (const b of buttons) {
-          b.removeClass("is-active");
-          b.addClass("is-dimmed");
-        }
-        btn.addClass("is-active");
-        btn.removeClass("is-dimmed");
-        this.updateSummary();
-      });
-    }
-    dateInput.addEventListener("input", () => {
-      const current = this.decisions.get(task.id);
-      if (current && current.action === "reschedule") {
-        current.newDate = dateInput.value ? isoToPluginDate(dateInput.value) : void 0;
-      }
-    });
-    this.decisions.set(task.id, { task, action: "forward" });
-    buttons[0].addClass("is-active");
-    for (let i = 1; i < buttons.length; i++)
-      buttons[i].addClass("is-dimmed");
-  }
-  renderPreviewTask(container, task) {
-    const itemEl = container.createDiv({ cls: "friday-migration-item friday-preview-item" });
-    const infoEl = itemEl.createDiv({ cls: "friday-migration-item-info" });
-    const textEl = infoEl.createDiv({ cls: "friday-migration-item-text" });
-    if (task.priority && task.priority !== "none" /* None */) {
-      textEl.createSpan({ cls: `friday-priority-dot friday-priority-${task.priority}` });
-    }
-    textEl.createSpan({ text: task.text });
-    const metaEl = infoEl.createDiv({ cls: "friday-migration-item-meta" });
-    metaEl.createSpan({ cls: "friday-migration-item-source", text: this.getFileName(task.sourcePath) });
-    if (task.childrenIds.length > 0) {
-      for (const childId of task.childrenIds) {
-        const child = this.store.getTaskById(childId);
-        if (child) {
-          const childEl = itemEl.createDiv({ cls: "friday-migration-subtask" });
-          const statusIcon = child.status === "x" /* Done */ ? "[x]" : child.status === "-" /* Cancelled */ ? "[-]" : "[ ]";
-          childEl.textContent = `${statusIcon} ${child.text}`;
-        }
-      }
-    }
   }
   renderQuickAdd(container) {
     const section = container.createDiv({ cls: "friday-review-quickadd" });
-    section.createEl("h3", { text: "Add Task for Today" });
+    section.createEl("h3", { text: "Quick capture" });
     const form = section.createDiv({ cls: "friday-add-form" });
     const textInput = form.createEl("input", {
       type: "text",
@@ -12365,70 +12113,6 @@ var MigrationModal = class extends import_obsidian30.Modal {
     textInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter")
         doAdd();
-    });
-  }
-  renderPicker(container, title, items, selectedSet) {
-    const section = container.createDiv({ cls: "friday-picker-section" });
-    const header = section.createDiv({ cls: "friday-picker-header" });
-    header.createSpan({ text: title, cls: "friday-review-section-title" });
-    header.createSpan({ text: ` (${items.length})`, cls: "friday-review-section-count" });
-    const searchInput = section.createEl("input", {
-      type: "text",
-      placeholder: "Search...",
-      cls: "friday-picker-search"
-    });
-    const listEl = section.createDiv({ cls: "friday-picker-list" });
-    const MAX_VISIBLE = 50;
-    const renderList = (query) => {
-      listEl.empty();
-      const q = query.toLowerCase();
-      const filtered = q ? items.filter((t) => t.text.toLowerCase().includes(q) || t.sourcePath.toLowerCase().includes(q)) : items;
-      const visible = filtered.slice(0, MAX_VISIBLE);
-      if (visible.length === 0) {
-        listEl.createDiv({ cls: "friday-muted", text: "No items match" });
-        return;
-      }
-      for (const item of visible) {
-        const row = listEl.createDiv({ cls: "friday-picker-item" });
-        const checkbox = row.createEl("input", { type: "checkbox" });
-        checkbox.checked = selectedSet.has(item.id);
-        checkbox.addEventListener("change", () => {
-          if (checkbox.checked) {
-            selectedSet.add(item.id);
-          } else {
-            selectedSet.delete(item.id);
-          }
-        });
-        const textEl = row.createDiv({ cls: "friday-picker-item-text" });
-        if (item.priority && item.priority !== "none" /* None */) {
-          textEl.createSpan({ cls: `friday-priority-dot friday-priority-${item.priority}` });
-        }
-        textEl.createSpan({ text: item.text });
-        const sourceEl = row.createDiv({ cls: "friday-picker-item-source" });
-        sourceEl.textContent = this.getFileName(item.sourcePath);
-        if (item.dueDate) {
-          sourceEl.textContent += ` \xB7 ${formatDateDisplay(item.dueDate)}`;
-        }
-      }
-      if (filtered.length > MAX_VISIBLE) {
-        listEl.createDiv({ cls: "friday-muted", text: `+ ${filtered.length - MAX_VISIBLE} more (use search to narrow)` });
-      }
-    };
-    renderList("");
-    let searchTimer = null;
-    searchInput.addEventListener("input", () => {
-      if (searchTimer)
-        clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => renderList(searchInput.value.trim()), 200);
-      this.pickerSearchTimers.push(searchTimer);
-    });
-  }
-  renderCloseButton(container) {
-    const buttonContainer = container.createDiv({ cls: "friday-migration-actions" });
-    const closeBtn = buttonContainer.createEl("button", { text: "Close" });
-    closeBtn.addEventListener("click", () => {
-      this.onComplete(null);
-      this.close();
     });
   }
   /** Top-of-modal nudge: team members whose 1:1 cadence has elapsed.
@@ -12548,42 +12232,6 @@ var MigrationModal = class extends import_obsidian30.Modal {
         }
       });
     }
-  }
-  updateSummary() {
-    if (!this.summaryEl)
-      return;
-    let forwarded = 0, rescheduled = 0, cancelled = 0, completed = 0;
-    for (const d of this.decisions.values()) {
-      switch (d.action) {
-        case "forward":
-          forwarded++;
-          break;
-        case "reschedule":
-          rescheduled++;
-          break;
-        case "done":
-          completed++;
-          break;
-        case "cancel":
-          cancelled++;
-          break;
-      }
-    }
-    const parts = [];
-    if (forwarded)
-      parts.push(`${forwarded} forward`);
-    if (rescheduled)
-      parts.push(`${rescheduled} reschedule`);
-    if (completed)
-      parts.push(`${completed} done`);
-    if (cancelled)
-      parts.push(`${cancelled} cancel`);
-    this.summaryEl.textContent = parts.join(" \xB7 ") || "Select actions for tasks";
-  }
-  getFileName(path) {
-    const segments = path.replace(/\\/g, "/").split("/");
-    const filename = segments[segments.length - 1] || "";
-    return filename.replace(/\.md$/, "");
   }
 };
 
@@ -13926,19 +13574,277 @@ function optionalIsoDate(args, key) {
   return v;
 }
 
+// src/mcp/tools/team.ts
+var MEMBER_STATUS = ["active", "on_leave", "departed"];
+var CADENCE = ["weekly", "biweekly", "monthly", "skip"];
+var ISO_DATE_REGEX2 = /^\d{4}-\d{2}-\d{2}$/;
+function teamTools(deps) {
+  return [
+    teamMembersListTool(deps),
+    teamMemberGetTool(deps),
+    oneOnOnesDueTool(deps),
+    oneOnOneLogTool(deps),
+    teamMemberCreateTool(deps),
+    teamMemberUpdateTool(deps)
+  ];
+}
+function serializeMember(svc, m) {
+  const signal = svc.computeCadenceSignal(m);
+  return {
+    name: m.name,
+    status: m.status,
+    role: m.role,
+    email: m.email,
+    jiraIdentity: m.jiraIdentity,
+    cadence: m.cadence,
+    startDate: m.startDate ? formatDateISO(m.startDate) : null,
+    lastOneOnOne: m.lastOneOnOne ? formatDateISO(m.lastOneOnOne) : null,
+    cadenceState: signal.state,
+    daysSinceLast: signal.daysSince,
+    currentFocus: m.currentFocus,
+    sessionCount: m.sessionPaths.length,
+    filePath: m.filePath,
+    folderPath: m.folderPath
+  };
+}
+function resolveMember(deps, query) {
+  const member = deps.teamMemberService.findMember(query);
+  if (!member) {
+    throw new ToolError(`No team member matches "${query}" (try their name, email, or JIRA identity).`);
+  }
+  return member;
+}
+function teamMembersListTool(deps) {
+  return {
+    name: "team_members_list",
+    description: "List team members with their 1:1 cadence status. By default excludes departed members. Optional `status` filters to exactly one of active / on_leave / departed. Set `includeDeparted` to include departed members in the default (unfiltered) view. Each entry includes `cadenceState` (on-track / due-soon / overdue / never / suspended) and `daysSinceLast`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: [...MEMBER_STATUS] },
+        includeDeparted: { type: "boolean" }
+      },
+      additionalProperties: false
+    },
+    handler: async (args) => {
+      var _a;
+      const status = optionalEnum(args, "status", MEMBER_STATUS);
+      const includeDeparted = (_a = optionalBoolean(args, "includeDeparted")) != null ? _a : false;
+      let members = deps.teamMemberService.getAllMembers();
+      if (status) {
+        members = members.filter((m) => m.status === status);
+      } else if (!includeDeparted) {
+        members = members.filter((m) => m.status !== "departed");
+      }
+      const out = members.map((m) => serializeMember(deps.teamMemberService, m)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      return jsonResult({ count: out.length, members: out });
+    }
+  };
+}
+function teamMemberGetTool(deps) {
+  return {
+    name: "team_member_get",
+    description: "Get one team member by name, email, or JIRA identity, including cadence status and 1:1 session paths.",
+    inputSchema: {
+      type: "object",
+      properties: { member: { type: "string", description: "Name, email, or JIRA identity." } },
+      required: ["member"],
+      additionalProperties: false
+    },
+    handler: async (args) => {
+      const query = requireString(args, "member");
+      const member = resolveMember(deps, query);
+      return jsonResult({
+        ...serializeMember(deps.teamMemberService, member),
+        sessionPaths: member.sessionPaths
+      });
+    }
+  };
+}
+function oneOnOnesDueTool(deps) {
+  return {
+    name: "oneonones_due",
+    description: "List active team members whose 1:1 is overdue (cadence window elapsed). Set `includeDueSoon` to also include members approaching their cadence boundary. Sorted most-overdue first.",
+    inputSchema: {
+      type: "object",
+      properties: { includeDueSoon: { type: "boolean" } },
+      additionalProperties: false
+    },
+    handler: async (args) => {
+      var _a;
+      const includeDueSoon = (_a = optionalBoolean(args, "includeDueSoon")) != null ? _a : false;
+      const wanted = includeDueSoon ? /* @__PURE__ */ new Set(["overdue", "due-soon"]) : /* @__PURE__ */ new Set(["overdue"]);
+      const rows = deps.teamMemberService.getActiveMembers().map((m) => ({ m, signal: deps.teamMemberService.computeCadenceSignal(m) })).filter(({ signal }) => wanted.has(signal.state)).sort((a, b) => {
+        var _a2, _b;
+        return ((_a2 = b.signal.daysSince) != null ? _a2 : 0) - ((_b = a.signal.daysSince) != null ? _b : 0);
+      }).map(({ m, signal }) => ({
+        name: m.name,
+        cadence: m.cadence,
+        cadenceState: signal.state,
+        daysSinceLast: signal.daysSince,
+        lastOneOnOne: m.lastOneOnOne ? formatDateISO(m.lastOneOnOne) : null,
+        filePath: m.filePath
+      }));
+      return jsonResult({ count: rows.length, due: rows });
+    }
+  };
+}
+function oneOnOneLogTool(deps) {
+  return {
+    name: "oneonone_log",
+    description: "Record a held 1:1 for a member by creating a session page at {member}/1on1/YYYY-MM-DD.md. This advances the member's cadence clock (lastOneOnOne is derived from session dates). `date` defaults to today; optional `agenda` seeds a Prep section. Idempotent \u2014 re-logging the same date returns the existing session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        member: { type: "string", description: "Name, email, or JIRA identity." },
+        date: { type: "string", description: "Session date, ISO YYYY-MM-DD. Defaults to today." },
+        agenda: { type: "string", description: "Optional prep text seeded into the session page." }
+      },
+      required: ["member"],
+      additionalProperties: false
+    },
+    handler: async (args) => {
+      const query = requireString(args, "member");
+      const member = resolveMember(deps, query);
+      const dateStr = optionalString(args, "date");
+      let date = /* @__PURE__ */ new Date();
+      if (dateStr) {
+        if (!ISO_DATE_REGEX2.test(dateStr)) {
+          throw new ToolError(`Invalid "date" \u2014 expected ISO YYYY-MM-DD, got "${dateStr}".`);
+        }
+        const [y, mo, d] = dateStr.split("-").map(Number);
+        date = new Date(y, mo - 1, d);
+        if (Number.isNaN(date.getTime()))
+          throw new ToolError(`Invalid calendar date: "${dateStr}".`);
+      }
+      const agenda = optionalString(args, "agenda");
+      const existingPaths = new Set(member.sessionPaths);
+      const file = await deps.teamMemberService.startOneOnOne(member, date, agenda);
+      await deps.scanner.fullScan();
+      return jsonResult({
+        logged: true,
+        alreadyExisted: existingPaths.has(file.path),
+        sessionPath: file.path,
+        sessionDate: formatDateISO(date),
+        member: member.name
+      });
+    }
+  };
+}
+function teamMemberCreateTool(deps) {
+  return {
+    name: "team_member_create",
+    description: "Create a new team member person page at {teamFolderPath}/{Name}/{Name}.md. Fails if a page with that name already exists. `cadence` defaults to weekly, `status` to active.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Full display name (also the folder/file name)." },
+        role: { type: "string" },
+        email: { type: "string" },
+        jiraIdentity: { type: "string", description: "Defaults to email when omitted." },
+        cadence: { type: "string", enum: [...CADENCE] },
+        status: { type: "string", enum: [...MEMBER_STATUS] },
+        startDate: { type: "string", description: "ISO YYYY-MM-DD." }
+      },
+      required: ["name"],
+      additionalProperties: false
+    },
+    handler: async (args) => {
+      var _a, _b, _c;
+      const name = requireString(args, "name");
+      const startDate = optionalString(args, "startDate");
+      if (startDate && !ISO_DATE_REGEX2.test(startDate)) {
+        throw new ToolError(`Invalid "startDate" \u2014 expected ISO YYYY-MM-DD, got "${startDate}".`);
+      }
+      const created = await deps.teamMemberService.createMemberPage({
+        name,
+        role: (_a = optionalString(args, "role")) != null ? _a : null,
+        email: (_b = optionalString(args, "email")) != null ? _b : null,
+        jiraIdentity: (_c = optionalString(args, "jiraIdentity")) != null ? _c : null,
+        cadence: optionalEnum(args, "cadence", CADENCE),
+        status: optionalEnum(args, "status", MEMBER_STATUS),
+        startDate: startDate != null ? startDate : null
+      });
+      await deps.scanner.fullScan();
+      return jsonResult({ created: true, member: serializeMember(deps.teamMemberService, created) });
+    }
+  };
+}
+function teamMemberUpdateTool(deps) {
+  return {
+    name: "team_member_update",
+    description: "Update a team member (located by name/email/JIRA identity). Sets role, email, jiraIdentity, startDate, cadence, or status. For role/email/jiraIdentity/startDate, pass an empty string to clear the field. Does not rename the page. Common uses: change cadence, mark on_leave / departed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        member: { type: "string", description: "Name, email, or JIRA identity of the member to update." },
+        role: { type: "string" },
+        email: { type: "string" },
+        jiraIdentity: { type: "string" },
+        startDate: { type: "string", description: "ISO YYYY-MM-DD, or empty string to clear." },
+        cadence: { type: "string", enum: [...CADENCE] },
+        status: { type: "string", enum: [...MEMBER_STATUS] }
+      },
+      required: ["member"],
+      additionalProperties: false
+    },
+    handler: async (args) => {
+      var _a, _b, _c, _d;
+      const query = requireString(args, "member");
+      const member = resolveMember(deps, query);
+      const updates = {};
+      if ("role" in args)
+        updates.role = (_a = optionalString(args, "role")) != null ? _a : null;
+      if ("email" in args)
+        updates.email = (_b = optionalString(args, "email")) != null ? _b : null;
+      if ("jiraIdentity" in args)
+        updates.jiraIdentity = (_c = optionalString(args, "jiraIdentity")) != null ? _c : null;
+      if ("startDate" in args) {
+        const sd = optionalString(args, "startDate");
+        if (sd && !ISO_DATE_REGEX2.test(sd)) {
+          throw new ToolError(`Invalid "startDate" \u2014 expected ISO YYYY-MM-DD, got "${sd}".`);
+        }
+        updates.startDate = sd != null ? sd : null;
+      }
+      const cadence = optionalEnum(args, "cadence", CADENCE);
+      if (cadence)
+        updates.cadence = cadence;
+      const status = optionalEnum(args, "status", MEMBER_STATUS);
+      if (status)
+        updates.status = status;
+      if (Object.keys(updates).length === 0) {
+        throw new ToolError("Nothing to update \u2014 pass at least one of: role, email, jiraIdentity, startDate, cadence, status.");
+      }
+      await deps.teamMemberService.updateMemberFrontmatter(member.filePath, updates);
+      await deps.scanner.fullScan();
+      const refreshed = (_d = deps.teamMemberService.getMember(member.folderPath)) != null ? _d : member;
+      return jsonResult({ updated: true, member: serializeMember(deps.teamMemberService, refreshed) });
+    }
+  };
+}
+
 // src/main.ts
 var FridayPlugin = class extends import_obsidian37.Plugin {
   async onload() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const saved = await this.loadData();
     this.data = Object.assign({}, DEFAULT_PLUGIN_DATA, saved);
     this.data.settings = Object.assign({}, DEFAULT_PLUGIN_DATA.settings, saved == null ? void 0 : saved.settings);
-    this.data.weeklyHistory = (_a = this.data.weeklyHistory) != null ? _a : [];
-    this.data.lastWeeklyReviewWeek = (_b = this.data.lastWeeklyReviewWeek) != null ? _b : null;
-    this.data.monthlyHistory = (_c = this.data.monthlyHistory) != null ? _c : [];
-    this.data.kanbanMigrationDone = (_d = this.data.kanbanMigrationDone) != null ? _d : false;
-    this.data.workloadHistory = (_e = this.data.workloadHistory) != null ? _e : [];
-    this.data.lastWorkloadSnapshotWeek = (_f = this.data.lastWorkloadSnapshotWeek) != null ? _f : null;
+    const legacySettings = this.data.settings;
+    const legacyPrompt = legacySettings.migrationPromptOnStartup;
+    if (typeof legacyPrompt === "boolean" && !this.data.settings.morningReviewOnStartup) {
+      this.data.settings.morningReviewOnStartup = legacyPrompt;
+    }
+    delete legacySettings.migrationPromptOnStartup;
+    const legacyData = this.data;
+    this.data.lastMorningReviewDate = (_b = (_a = this.data.lastMorningReviewDate) != null ? _a : legacyData.lastMigrationDate) != null ? _b : null;
+    delete legacyData.lastMigrationDate;
+    this.data.weeklyHistory = (_c = this.data.weeklyHistory) != null ? _c : [];
+    this.data.lastWeeklyReviewWeek = (_d = this.data.lastWeeklyReviewWeek) != null ? _d : null;
+    this.data.monthlyHistory = (_e = this.data.monthlyHistory) != null ? _e : [];
+    this.data.kanbanMigrationDone = (_f = this.data.kanbanMigrationDone) != null ? _f : false;
+    this.data.workloadHistory = (_g = this.data.workloadHistory) != null ? _g : [];
+    this.data.lastWorkloadSnapshotWeek = (_h = this.data.lastWorkloadSnapshotWeek) != null ? _h : null;
     const staleModes = [
       "eisenhower",
       "impactEffort",
@@ -13966,13 +13872,9 @@ var FridayPlugin = class extends import_obsidian37.Plugin {
     this.dailyNoteService = new DailyNoteService(this.app.vault, () => this.settings);
     this.tasksInboxService = new TasksInboxService(this.app.vault, () => this.settings);
     this.sprintTopicService = new SprintTopicService(this.app.vault, () => this.settings, this.app);
-    this.migrationService = new MigrationService(
-      this.store,
-      this.writer,
-      this.dailyNoteService,
+    this.morningReviewService = new MorningReviewService(
       () => this.data,
-      () => this.saveSettings(),
-      () => this.settings
+      () => this.saveSettings()
     );
     this.analyticsService = new AnalyticsService(this.store, () => this.settings);
     this.monthlyNoteService = new MonthlyNoteService(this.app.vault, () => this.settings);
@@ -14010,6 +13912,10 @@ var FridayPlugin = class extends import_obsidian37.Plugin {
         sprintTopicService: this.sprintTopicService,
         jiraService: this.jiraService,
         getSettings: () => this.settings
+      }),
+      ...teamTools({
+        teamMemberService: this.teamMemberService,
+        scanner: this.scanner
       })
     ]);
     this.scanner.onChange(() => {
@@ -14027,7 +13933,6 @@ var FridayPlugin = class extends import_obsidian37.Plugin {
         this.writer,
         this.sprintTopicService,
         this.scanner,
-        this.migrationService,
         this.analyticsService,
         this.monthlyAnalyticsService,
         this.monthlyNoteService,
@@ -14116,9 +14021,9 @@ var FridayPlugin = class extends import_obsidian37.Plugin {
       }
     });
     this.addCommand({
-      id: "run-daily-migration",
-      name: "Run Daily Migration",
-      callback: () => this.showMigrationModal()
+      id: "open-morning-review",
+      name: "Morning Review",
+      callback: () => this.showMorningReview()
     });
     this.addCommand({
       id: "weekly-review",
@@ -14565,7 +14470,7 @@ ${rest}` : `- [ ] ${first}`;
       await this.autoGenerateTeamPagesIfNeeded();
       await this.captureWorkloadSnapshotIfNeeded();
       await this.runInboxCleanupIfNeeded();
-      this.checkMigration();
+      await this.checkMorningReview();
       this.checkWeeklyReview();
       await this.applyMcpServerState();
     });
@@ -14830,21 +14735,18 @@ ${rest}` : `- [ ] ${first}`;
       console.error("[Friday] Inbox cleanup failed:", e);
     }
   }
-  checkMigration() {
-    if (this.settings.migrationPromptOnStartup && this.migrationService.needsMigration()) {
-      this.showMigrationModal();
-    }
+  async checkMorningReview() {
+    if (!this.settings.morningReviewOnStartup)
+      return;
+    if (this.morningReviewService.alreadyReviewedToday())
+      return;
+    await this.morningReviewService.markReviewedToday();
+    this.showMorningReview();
   }
-  showMigrationModal() {
-    const reviewData = this.migrationService.getMorningReviewData();
-    new MigrationModal(
+  showMorningReview() {
+    new MorningReviewModal(
       this.app,
-      this.migrationService,
       this.dailyNoteService,
-      this.store,
-      reviewData,
-      (_result) => {
-      },
       this.teamMemberService,
       this.sprintTopicService,
       this.settings
