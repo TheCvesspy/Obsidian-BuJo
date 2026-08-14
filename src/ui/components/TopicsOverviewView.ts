@@ -1,16 +1,19 @@
-import { Notice } from 'obsidian';
+import { App, Menu, Notice } from 'obsidian';
 import { PluginSettings, SprintTopic, TopicStatus, Priority, TopicImpact, TopicEffort } from '../../types';
 import { SprintTopicService } from '../../services/sprintTopicService';
 import { JiraService } from '../../services/jiraService';
-import { deriveTopicBlock, toJiraSignal } from '../../services/topicStatus';
+import { deriveTopicBlock, toJiraSignal, isTopicSnoozed } from '../../services/topicStatus';
 import { buildTopicIndex, TopicIndex, criticalPath } from '../../services/topicGraph';
-import { getWeekStartConfigurable, getISOWeekNumber, resolveDoneWindowDays, daysSinceIso } from '../../utils/dateUtils';
+import { getWeekStartConfigurable, getISOWeekNumber, resolveDoneWindowDays, daysSinceIso, isoToPluginDate, pluginDateToIso } from '../../utils/dateUtils';
 import { renderTopicCard } from './TopicCard';
+import { DueDateModal } from '../DueDateModal';
 
 /**
  * Topics view sub-modes:
  *   list         — flat table (Topic / JIRA / Assignee / Due). Best for quick scan.
- *   board        — Kanban columns (Backlog / To Do / In Progress / Done) with drag-drop.
+ *   board        — Kanban columns (Backlog / To Do / In Progress / Done) with drag-drop,
+ *                  split into My topics (incl. an Unassigned strip) vs Team topics, with a
+ *                  Blocked strip per group and a collapsed Snoozed shelf at the bottom.
  *   impactEffort — 2×2 strategy matrix.
  *
  * Eisenhower (urgent/important matrix) was removed in favor of these three —
@@ -18,6 +21,25 @@ import { renderTopicCard } from './TopicCard';
  */
 export type TopicsSubMode = 'list' | 'board' | 'impactEffort' | 'roadmap';
 type ScopeFilter = 'all' | 'backlog' | 'archived';
+
+/** Filter / zoom state lives at module level so it survives the full view re-instantiation
+ *  every data refresh triggers (the view object is rebuilt on each render, so instance
+ *  fields would silently reset the user's filters after any topic write). */
+let snoozedShelfExpanded = false;
+let persistedScope: ScopeFilter = 'all';
+let persistedAssigneeFilter = 'all';
+let persistedRoadmapZoom: RoadmapZoom = 'week';
+let persistedRoadmapGroupBy: 'assignee' | 'status' = 'assignee';
+let persistedRoadmapCenterMs: number | null = null;
+
+/** Local ISO date for today + n days. Snooze wake dates are absolute local dates —
+ *  a relative "in a week" that kept sliding would never fire. */
+function isoDaysFromNow(n: number): string {
+	const d = new Date();
+	d.setHours(0, 0, 0, 0);
+	d.setDate(d.getDate() + n);
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 const PRIORITY_ORDER: Record<string, number> = {
 	[Priority.High]: 0,
@@ -70,17 +92,25 @@ const ROADMAP_MAX_DAY_TICKS = 540;
 export class TopicsOverviewView {
 	private el: HTMLElement;
 	private subMode: TopicsSubMode = 'board';
-	private roadmapZoom: RoadmapZoom = 'week';
-	private roadmapGroupBy: 'assignee' | 'status' = 'assignee';
-	/** Timeline date (ms) kept at the viewport centre across zoom + repaint. null = centre on today. */
-	private roadmapCenterMs: number | null = null;
 	/** The element the roadmap paints into — lets zoom/group/today repaint without a full view re-render. */
 	private roadmapBody: HTMLElement | null = null;
-	private scope: ScopeFilter = 'all';
-	/** 'all' | 'unassigned' | team member email. Persists across re-renders of this view instance. */
-	private assigneeFilter: string = 'all';
 	/** Dependency index over all topics, rebuilt at the start of each render. */
 	private depIndex: TopicIndex | null = null;
+
+	// Filter / zoom state is backed by module-level variables (see top of file) so the
+	// user's choices survive the view re-instantiation every data refresh triggers.
+	private get scope(): ScopeFilter { return persistedScope; }
+	private set scope(v: ScopeFilter) { persistedScope = v; }
+	/** 'all' | 'unassigned' | 'mine' | 'assigned-out' | team member email. */
+	private get assigneeFilter(): string { return persistedAssigneeFilter; }
+	private set assigneeFilter(v: string) { persistedAssigneeFilter = v; }
+	private get roadmapZoom(): RoadmapZoom { return persistedRoadmapZoom; }
+	private set roadmapZoom(v: RoadmapZoom) { persistedRoadmapZoom = v; }
+	private get roadmapGroupBy(): 'assignee' | 'status' { return persistedRoadmapGroupBy; }
+	private set roadmapGroupBy(v: 'assignee' | 'status') { persistedRoadmapGroupBy = v; }
+	/** Timeline date (ms) kept at the viewport centre across zoom + repaint. null = centre on today. */
+	private get roadmapCenterMs(): number | null { return persistedRoadmapCenterMs; }
+	private set roadmapCenterMs(v: number | null) { persistedRoadmapCenterMs = v; }
 
 	constructor(
 		private container: HTMLElement,
@@ -95,6 +125,9 @@ export class TopicsOverviewView {
 		private jiraService: JiraService | null = null,
 		initialSubMode: TopicsSubMode = 'board',
 		private onSubModeChange?: (mode: TopicsSubMode) => void,
+		/** Needed for the snooze "Until a date…" picker (DueDateModal). Optional so
+		 *  headless/test callers can construct the view without an App. */
+		private app?: App,
 	) {
 		this.el = container.createDiv({ cls: 'friday-topics-overview' });
 		this.subMode = initialSubMode;
@@ -345,6 +378,11 @@ export class TopicsOverviewView {
 				titleCell.createSpan({ cls: 'friday-topics-table-blocked', text: '\u{1F6D1}' })
 					.setAttribute('title', 'Blocked');
 			}
+			if (isTopicSnoozed(topic)) {
+				row.addClass('is-snoozed');
+				titleCell.createSpan({ cls: 'friday-topics-table-snoozed', text: '\u{1F4A4}' })
+					.setAttribute('title', `Snoozed until ${topic.snoozedUntil}`);
+			}
 			const titleLink = titleCell.createEl('a', {
 				cls: 'friday-topics-table-titlelink',
 				text: topic.title,
@@ -453,8 +491,87 @@ export class TopicsOverviewView {
 	// ── Board sub-mode (kanban) ───────────────────────────────────
 
 	private renderBoard(parent: HTMLElement, topics: SprintTopic[]): void {
-		// Pure status-driven Kanban: each column is a TopicStatus. Every topic appears in
-		// exactly one column, and every column is a drop target that sets that status.
+		const deriveBlock = this.makeDeriveBlock();
+
+		// Two extractions before the columns fill:
+		//  - Snoozed (deliberately deferred) topics park on a collapsed shelf at the bottom.
+		//  - Blocked topics move to a per-group Blocked strip — they need attention, but they
+		//    were crowding In Progress without being workable.
+		const snoozed = topics.filter(t => isTopicSnoozed(t));
+		const active = topics.filter(t => !isTopicSnoozed(t));
+		const isBlockedOut = (t: SprintTopic): boolean =>
+			t.status !== 'done' && deriveBlock(t).state === 'blocked';
+
+		// WIP limits are a board-wide policy: totals count column cards across every group.
+		const totals: Record<TopicStatus, number> = { 'backlog': 0, 'open': 0, 'in-progress': 0, 'done': 0 };
+		for (const t of active) {
+			if (!isBlockedOut(t)) totals[t.status]++;
+		}
+
+		// Mine-vs-team split needs to know who "me" is (settings.jiraEmail) AND assignment to
+		// actually be in use — otherwise a solo/unassigned vault would land everything in the
+		// Unassigned strip with empty columns. Unassigned rides with "my topics": unowned work
+		// is the lead's to hand out.
+		const me = this.settings.jiraEmail?.trim() || null;
+		const usesAssignment = active.some(t => !!t.assignee);
+
+		if (me && usesAssignment) {
+			const mine = active.filter(t => !t.assignee || t.assignee === me);
+			const team = active.filter(t => !!t.assignee && t.assignee !== me);
+			// Skip an entirely empty group (e.g. the assignee filter is set to one member) —
+			// four empty columns under a group header is noise, not information.
+			if (mine.length > 0) {
+				this.renderBoardGroup(parent, {
+					label: '\u{1F464} My topics',
+					columns: mine.filter(t => t.assignee === me && !isBlockedOut(t)),
+					unassigned: mine.filter(t => !t.assignee && !isBlockedOut(t)),
+					blocked: mine.filter(isBlockedOut),
+					totals,
+				});
+			}
+			if (team.length > 0) {
+				this.renderBoardGroup(parent, {
+					label: '\u{1F465} Team topics',
+					columns: team.filter(t => !isBlockedOut(t)),
+					blocked: team.filter(isBlockedOut),
+					totals,
+				});
+			}
+		} else {
+			this.renderBoardGroup(parent, {
+				label: null,
+				columns: active.filter(t => !isBlockedOut(t)),
+				blocked: active.filter(isBlockedOut),
+				totals,
+			});
+		}
+
+		this.renderSnoozedShelf(parent, snoozed);
+	}
+
+	/** One ownership group of the board: a header (when labelled), the four status columns,
+	 *  and the group's special strips — Unassigned (my group only) and Blocked. */
+	private renderBoardGroup(parent: HTMLElement, opts: {
+		label: string | null;
+		/** Topics for the status columns (already stripped of blocked/snoozed). */
+		columns: SprintTopic[];
+		/** Blocked topics of this group — rendered in the Blocked strip, not the columns. */
+		blocked: SprintTopic[];
+		/** Unassigned topics (my group only) — rendered in the Unassigned strip. */
+		unassigned?: SprintTopic[];
+		/** Board-wide per-status column counts, for WIP-limit checks across groups. */
+		totals: Record<TopicStatus, number>;
+	}): void {
+		const groupEl = opts.label ? parent.createDiv({ cls: 'friday-topics-group' }) : parent;
+		if (opts.label) {
+			const total = opts.columns.length + opts.blocked.length + (opts.unassigned?.length ?? 0);
+			const header = groupEl.createDiv({ cls: 'friday-topics-group-header' });
+			header.createSpan({ text: opts.label });
+			header.createSpan({ cls: 'friday-topics-list-count', text: String(total) });
+		}
+
+		// Pure status-driven Kanban: each column is a TopicStatus, and every column is a
+		// drop target that sets that status (dropping a blocked card also unblocks it).
 		const sections: { label: string; cls: string; status: TopicStatus }[] = [
 			{ label: 'Backlog', cls: 'friday-topics-list-backlog', status: 'backlog' },
 			{ label: 'To Do', cls: '', status: 'open' },
@@ -462,12 +579,12 @@ export class TopicsOverviewView {
 			{ label: 'Done', cls: '', status: 'done' },
 		];
 
-		const board = parent.createDiv({ cls: 'friday-topics-list-board' });
+		const board = groupEl.createDiv({ cls: 'friday-topics-list-board' });
 
 		for (const { label, cls, status } of sections) {
-			const group = topics.filter(t => t.status === status);
+			const group = opts.columns.filter(t => t.status === status);
 			const limit = this.settings.wipLimits?.[status] ?? null;
-			const overWip = limit !== null && group.length > limit;
+			const overWip = limit !== null && opts.totals[status] > limit;
 
 			let sectionCls = cls
 				? `friday-topics-list-section ${cls}`
@@ -477,10 +594,15 @@ export class TopicsOverviewView {
 
 			const headerEl = section.createDiv({ cls: 'friday-topics-list-header' });
 			headerEl.createSpan({ text: label });
+			// With a limit the pill shows the board-wide count (the limit is a WIP policy,
+			// not a per-group one); without a limit it shows this group's column count.
 			const countEl = headerEl.createSpan({
 				cls: 'friday-topics-list-count',
-				text: limit !== null ? `${group.length} / ${limit}` : `${group.length}`,
+				text: limit !== null ? `${opts.totals[status]} / ${limit}` : `${group.length}`,
 			});
+			if (limit !== null && opts.label) {
+				countEl.setAttribute('title', 'Counts cards in this column across all groups');
+			}
 			if (overWip) {
 				countEl.addClass('is-over-wip');
 				countEl.setAttribute('title', `Over WIP limit (${limit})`);
@@ -501,6 +623,127 @@ export class TopicsOverviewView {
 				this.renderOverviewCard(cardGrid, topic, { draggable: true });
 			}
 		}
+
+		if (opts.unassigned && opts.unassigned.length > 0) {
+			this.renderBoardStrip(groupEl, {
+				label: '\u{1F4E5} Unassigned',
+				cls: 'friday-topics-strip-unassigned',
+				topics: opts.unassigned,
+				hint: 'No owner yet — set one via the Owner dropdown, or drop a card here to unassign it',
+				onDrop: async (t) => {
+					if (t.assignee) await this.topicService.updateTopicFrontmatter(t.filePath, { assignee: null });
+				},
+			});
+		}
+		if (opts.blocked.length > 0) {
+			this.renderBoardStrip(groupEl, {
+				label: '\u{1F6D1} Blocked',
+				cls: 'friday-topics-strip-blocked',
+				topics: opts.blocked,
+				hint: 'Work should continue but can’t. Drop a card here to flag it blocked; drag it to a column when it resumes',
+				onDrop: async (t) => {
+					if (!t.blocked) await this.topicService.setTopicBlocked(t.filePath, true);
+				},
+			});
+		}
+	}
+
+	/** A horizontal card strip below a group's columns (Unassigned / Blocked). Hidden when
+	 *  empty; optionally a drop target for its own verb (unassign / flag blocked). */
+	private renderBoardStrip(parent: HTMLElement, opts: {
+		label: string;
+		cls: string;
+		topics: SprintTopic[];
+		hint?: string;
+		onDrop?: (topic: SprintTopic) => Promise<void>;
+	}): void {
+		const strip = parent.createDiv({ cls: `friday-topics-strip ${opts.cls}` });
+		const header = strip.createDiv({ cls: 'friday-topics-list-header' });
+		const labelSpan = header.createSpan({ text: opts.label });
+		if (opts.hint) labelSpan.setAttribute('title', opts.hint);
+		header.createSpan({ cls: 'friday-topics-list-count', text: String(opts.topics.length) });
+
+		const grid = strip.createDiv({ cls: 'friday-topics-strip-grid' });
+		if (opts.onDrop) this.wireStripDrop(grid, opts.onDrop);
+		for (const topic of [...opts.topics].sort((a, b) => this.sortByOrder(a, b))) {
+			this.renderOverviewCard(grid, topic, { draggable: true });
+		}
+	}
+
+	/** The collapsed Snoozed shelf at the bottom of the board. Snoozed ≠ blocked: blocked work
+	 *  should continue but can't; snoozed work is deliberately deferred and wakes on its date. */
+	private renderSnoozedShelf(parent: HTMLElement, snoozed: SprintTopic[]): void {
+		if (snoozed.length === 0) return;
+		const shelf = parent.createDiv({ cls: 'friday-topics-strip friday-topics-snoozed' });
+		const header = shelf.createDiv({ cls: 'friday-topics-list-header friday-topics-snoozed-header' });
+		header.createSpan({ text: `${snoozedShelfExpanded ? '▾' : '▸'} \u{1F4A4} Snoozed` });
+		header.createSpan({ cls: 'friday-topics-list-count', text: String(snoozed.length) });
+		header.setAttribute('title', 'Deliberately deferred topics — each wakes automatically on its snooze date');
+		header.addEventListener('click', () => {
+			snoozedShelfExpanded = !snoozedShelfExpanded;
+			this.render();
+		});
+		if (!snoozedShelfExpanded) return;
+
+		const grid = shelf.createDiv({ cls: 'friday-topics-strip-grid' });
+		const sorted = [...snoozed].sort((a, b) =>
+			(a.snoozedUntil ?? '').localeCompare(b.snoozedUntil ?? ''));
+		for (const topic of sorted) {
+			this.renderOverviewCard(grid, topic);
+		}
+	}
+
+	/** Snooze presets + a custom date picker, shown at the cursor. Mirrors the task snooze menu. */
+	private showTopicSnoozeMenu(topic: SprintTopic, evt: MouseEvent): void {
+		const menu = new Menu();
+		const presets: [string, number][] = [
+			['1 week', 7],
+			['2 weeks', 14],
+			['1 month', 30],
+			['3 months', 90],
+		];
+		for (const [label, days] of presets) {
+			menu.addItem(item => item.setTitle(label).setIcon('moon').onClick(async () => {
+				const until = isoDaysFromNow(days);
+				await this.topicService.setTopicSnooze(topic.filePath, until);
+				new Notice(`Snoozed until ${until}: ${topic.title}`);
+			}));
+		}
+		const app = this.app;
+		if (app) {
+			menu.addSeparator();
+			menu.addItem(item => item.setTitle('Until a date…').setIcon('calendar').onClick(() => {
+				new DueDateModal(app, topic.snoozedUntil ? isoToPluginDate(topic.snoozedUntil) : '', async (pluginDate) => {
+					const iso = pluginDate ? pluginDateToIso(pluginDate) : null;
+					await this.topicService.setTopicSnooze(topic.filePath, iso);
+					new Notice(iso ? `Snoozed until ${iso}: ${topic.title}` : `Snooze cleared: ${topic.title}`);
+				}).open();
+			}));
+		}
+		menu.showAtMouseEvent(evt);
+	}
+
+	/** Wire a strip's grid as a drop target for a custom verb (unassign / flag blocked). */
+	private wireStripDrop(zone: HTMLElement, onDrop: (topic: SprintTopic) => Promise<void>): void {
+		zone.addEventListener('dragover', (e) => {
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+			zone.addClass('friday-topics-list-dropzone-active');
+		});
+		zone.addEventListener('dragleave', () => {
+			zone.removeClass('friday-topics-list-dropzone-active');
+		});
+		zone.addEventListener('drop', async (e) => {
+			e.preventDefault();
+			zone.removeClass('friday-topics-list-dropzone-active');
+			const filePath = e.dataTransfer?.getData('text/plain');
+			const topic = filePath ? this.topics.find(t => t.filePath === filePath) : undefined;
+			try {
+				if (topic) await onDrop(topic);
+			} finally {
+				this.isDragging.value = false;
+			}
+		});
 	}
 
 	/** Wire dragover/drop handlers on a column. Dropping sets the topic's status. */
@@ -544,9 +787,16 @@ export class TopicsOverviewView {
 						}
 					}
 				}
-				// Moving a blocked topic to Done auto-clears the blocked flag.
-				if (topic.blocked && targetStatus === 'done') {
+				// Blocked cards live in the Blocked strip, so a drop into any status column is
+				// an explicit "work resumes here" — clear the manual blocked flag. Dependency /
+				// JIRA blocks can't be cleared by dragging; such a card stays in the strip.
+				if (topic.blocked) {
 					await this.topicService.setTopicBlocked(filePath, false);
+					const derived = this.makeDeriveBlock()(topic);
+					const external = derived.reasons.filter(r => r !== 'Manually blocked');
+					if (external.length > 0) {
+						new Notice(`"${topic.title}" is still blocked (${external.join(' · ')}) — it stays in the Blocked section.`);
+					}
 				}
 				// Persist the intra-column position so hand-ordering survives the next refresh.
 				await this.persistColumnOrder(targetStatus, topic, dropIndex);
@@ -669,6 +919,12 @@ export class TopicsOverviewView {
 			onBlockedToggle: async (t) => {
 				await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
 			},
+			onSnooze: (t, evt) => this.showTopicSnoozeMenu(t, evt),
+			onWake: async (t) => {
+				await this.topicService.setTopicSnooze(t.filePath, null);
+				new Notice(`Woke: ${t.title}`);
+			},
+			snoozedActive: isTopicSnoozed(topic),
 			jiraLookup,
 			assigneeLookup,
 			deriveBlock: this.makeDeriveBlock(),
@@ -678,6 +934,7 @@ export class TopicsOverviewView {
 			}),
 			onDependencyClick: (t) => this.onTopicClick(t),
 			nudgeThresholdDays: this.settings.nudgeThresholdDays,
+			agingThresholdDays: this.settings.agingWipThresholdDays ?? 7,
 		});
 
 		// Add an "Edit" affordance — clicking the card title opens the file; a small edit

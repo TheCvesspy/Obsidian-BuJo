@@ -33,7 +33,7 @@ export class InsertTaskModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		this.modalEl.addClass('friday-insert-modal');
-		contentEl.createEl('h2', { text: 'Quick Create Task' });
+		this.setTitle('Quick create task');
 
 		new Setting(contentEl)
 			.setName('Task text')

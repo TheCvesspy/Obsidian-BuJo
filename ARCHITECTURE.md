@@ -25,7 +25,7 @@
 12. [Performance Optimizations](#12-performance-optimizations)
 13. [Constants Reference](#13-constants-reference)
 14. [Build & Release](#14-build--release)
-15. [Topics & Sprint Prioritization](#15-topics--sprint-prioritization)
+15. [Topics (Kanban Board & Prioritization)](#15-topics-kanban-board--prioritization)
 16. [JIRA Integration (Optional Module)](#16-jira-integration-optional-module)
 17. [JIRA Dashboard (read-only personal dashboard)](#17-jira-dashboard-read-only-personal-dashboard)
 
@@ -166,20 +166,19 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 - CRUD for sprints, auto-creates next if `autoStartNextSprint` is enabled
 - Sprint IDs: `sprint-{Date.now()}`
 
-#### `sprintTopicService.ts` (~230 lines) — Topic CRUD & Frontmatter
+#### `sprintTopicService.ts` (~530 lines) — Topic CRUD & Frontmatter
 - **Class**: `SprintTopicService`
 - CRUD for topic files in `{sprintTopicsPath}/` + frontmatter field setters
-- Key methods: `createTopic(title, jira, priority, linkedPages, sprintId, impact?, effort?, dueDate?)`, `setTopicStatus`, `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `updateSortOrder`, `appendTasksToTopic(filePath, lines)` (prepends task lines to the topic's `## Tasks` section — backs the `tasks_create` MCP tool's topic routing)
-- **Central sprint-change helper**: `assignTopicToSprint(filePath, sprintId)` — reads current `sprint` + `sprintHistory`, merges old+new into history, writes atomically. Every sprint-change path routes through this (including `moveTopicToBacklog`, `carryForwardTopic`, `archiveTopic`, `cancelTopic`) so history is never lost
-- `updateTopicFrontmatter(filePath, updates)` — generic updater; `null` deletes the key, everything else stringifies
-- See §15 for full schema and prioritization semantics
+- Key methods: `createTopic(title, jira, priority, linkedPages, impact?, effort?, dueDate?, assignee?, waitingOn?, lastNudged?, refs?, startDate?, notesBody?)`, `setTopicStatus` (stamps flow timestamps), `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `setTopicStartDate`, `setTopicSnooze`, `updateSortOrder`, `markNudged`, `appendTopicNote` (dated `## Notes` log entry), `appendTasksToTopic(filePath, lines)` (prepends task lines to the topic's `## Tasks` section — backs "Send to topic" and the `tasks_create` MCP tool's topic routing), `renameTopic` + `handleTopicRename` (link-safe rename incl. `blockedBy` edge fix-up), `addDependency`/`removeDependency` (cycle-checked `blockedBy` edges), `archiveDoneTopics` (moves old done topics to `Archive/`), `migrateToKanban` (one-time v3 sprint-key strip)
+- `updateTopicFrontmatter(filePath, updates)` — generic updater; `null` deletes the key, everything else stringifies; unmanaged frontmatter passes through verbatim
+- See §15 for full schema and board semantics
 
 #### `src/parser/topicParser.ts` (~150 lines) — Topic Frontmatter Parser
-- **Exports**: `parseTopicFile(content, filePath) → SprintTopic`, `parseFrontmatter(content)`, `serializeFrontmatter(fields)`
-- Tolerates missing optional keys (`impact`, `effort`, `dueDate`, `sprintHistory`) → `null` / `[]`
+- **Exports**: `parseTopicFile(content, filePath) → SprintTopic`, `parseFrontmatter(content)`, `parseFrontmatterForRewrite(content)` (managed fields + verbatim passthrough), `serializeFrontmatter(fields)`, `TOPIC_FRONTMATTER_ORDER` (canonical key order), refs helpers
+- Tolerates missing optional keys (`impact`, `effort`, `dueDate`, `startDate`, `snoozedUntil`, flow timestamps, `assignee`, `waitingOn`, `refs`, `blockedBy`) → `null` / `[]`
 - Validates enum-like keys against allowed values; unknown strings parse to `null`
-- `serializeFrontmatter` **omits** keys whose value is `null`/`undefined` (keeps YAML tidy)
-- `sprintHistory` stored as comma-separated IDs; when empty but `sprint` is set, parser returns `[sprintId]` as an in-memory backfill for legacy topics
+- `serializeFrontmatter` **omits** keys whose value is `null`/`undefined` (keeps YAML tidy); multi-line values emit as folded scalars (`key: |`)
+- Unmanaged frontmatter (tags, aliases, YAML blocks, user keys) survives plugin rewrites verbatim via the passthrough mechanism
 
 #### `archiveService.ts` (~170 lines) — Task Archiving
 - **Class**: `ArchiveService`
@@ -377,6 +376,8 @@ Markdown Files in Vault
 | `archive-completed` | Friday: Archive Completed Tasks | callback | Archives all Done/Cancelled tasks to archive folder |
 | `insert-task-with-details` | Friday: Quick Create Task | editorCallback | Opens InsertTaskModal (with effort, description fields), inserts at cursor. Default hotkey: `Ctrl+Shift+T` |
 
+**Topic commands** (see §15): `create-topic`, `go-to-topic` (fuzzy switcher), `move-topic-to-column`, `toggle-topic-blocked`, `set-topic-due-date`, `snooze-topic` (presets / date / wake), `add-topic-note` (dated `## Notes` log entry), `archive-done-topics`, `open-board`, `open-roadmap`, `create-topic-from-jira`, `sync-topic-dependencies-from-jira`.
+
 ### Ribbon & Context Menu
 
 - **Ribbon icon**: `check-square` → opens Friday view
@@ -393,8 +394,7 @@ Markdown Files in Vault
 | **Weekly** | `FridayViewMode.Weekly` | 7-day calendar (Mon–Sun) with per-day task lists and progress bars (done/total %). |
 | **Monthly** | `FridayViewMode.Monthly` | Goals progress, stats cards, month navigation, trends table, save snapshot. |
 | **Calendar** | `FridayViewMode.Calendar` | Month grid with priority-colored task dots per day. Click a day to expand task detail below. Today highlighting. Month navigation + "Today" button. Respects `weekStartDay` setting. |
-| **Sprint** | `FridayViewMode.Sprint` | Active sprint header (name, dates, days remaining), Kanban board (Open/In Progress/Done), drag-and-drop. Cards rendered via shared `TopicCard`. |
-| **Topics** | `FridayViewMode.Topics` | Top-level Topic browser across **all** sprints and backlog. Scope chips: All / Active sprint / Backlog / Archived. Three sub-modes: **List** (4-column kanban — Backlog \| Open \| In Progress \| Done — with drag-and-drop between columns), **Impact/Effort** (Quick Wins / Big Bets / Fill-ins / Time Sinks + Inbox), **Eisenhower** (Do Now / Plan Deep Work / Coordinate / Batch Later + Unscheduled). See §15. |
+| **Topics** | `FridayViewMode.Topics` | Topic browser. Scope chips: All / Backlog / Done, plus an assignee filter. Four sub-modes: **Board** (Kanban — Backlog \| To Do \| In Progress \| Done — split into My/Team ownership groups with Unassigned + Blocked strips and a Snoozed shelf), **List** (flat table), **Roadmap** (Gantt-style timeline), **Impact/Effort** (Quick Wins / Big Bets / Fill-ins / Time Sinks + Inbox). See §15. |
 | **Overdue** | `FridayViewMode.Overdue` | Open tasks with past due dates. Supports all group modes. |
 | **Overview** | `FridayViewMode.Overview` | All Tasks + Open Points sub-tabs, grouped by mode. |
 | **Analytics** | `FridayViewMode.Analytics` | Summary cards, work type/purpose bar charts, 8-week trend table + chart. |
@@ -485,8 +485,9 @@ v3 retired the old daily-migration morning-shuffle. Tasks now **float by date** 
 ### What the modal shows (`MorningReviewModal`)
 1. **Overdue 1:1s** — team members whose 1:1 cadence has elapsed (`teamService.getOverdueOneOnOnes()`). Each row's **Schedule 1:1** appends a reminder line to today's daily note.
 2. **Waiting on** — non-done topics with `waitingOn` set whose last nudge is missing or older than `nudgeThresholdDays`. Each row offers **Just nudged** (`markNudged` → updates `lastNudged`) or **Unblock** (clears `waitingOn`/`lastNudged`).
-3. **Quick capture** — a raw task line written under today's daily note `## Tasks` (`buildTaskLine` + `addRawTaskLine`).
-4. **Empty state** — when neither nudge section has content, a note points the user to the Today tab.
+3. **Woke from snooze** — non-done topics whose `snoozedUntil` has passed but wasn't cleared (they're already back in their board column). Each row offers **Back on board** (clears the stale snooze) or **+1 week** (renews it from today) — the wake becomes a decision, not an accident.
+4. **Quick capture** — a raw task line written under today's daily note `## Tasks` (`buildTaskLine` + `addRawTaskLine`).
+5. **Empty state** — when no nudge section has content, a note points the user to the Today tab.
 
 Due/overdue task triage is intentionally **not** here — it lives in the Today view, where tasks can be completed, rescheduled (edit `@due`), snoozed, or dropped inline.
 
@@ -693,82 +694,90 @@ node release.mjs [major|minor|patch]
 
 ---
 
-## 15. Topics & Sprint Prioritization
+## 15. Topics (Kanban Board & Prioritization)
 
-Topics are the strategic layer above individual tasks: each topic is a markdown file in `{sprintTopicsPath}/` (default `BuJo/Sprints/Topics/`) with YAML frontmatter and sections for linked pages, tasks, and notes. A topic can be assigned to a sprint or left in the **Backlog**; it can also carry Impact/Effort/Due-Date metadata used by the two prioritization matrices.
+Topics are the strategic layer above individual tasks: each topic is a markdown file in `{sprintTopicsPath}/` (default `BuJo/Sprints/Topics/`) with YAML frontmatter and sections for linked pages, tasks, and notes. **Sprints are gone** (v3): topics live on a pure status-driven Kanban — `backlog → open ("To Do") → in-progress → done` — with ownership, scheduling, deferral, and prioritization metadata on top. A one-time startup migration (`migrateToKanban`) strips the legacy `sprint`/`sprintHistory` keys and lands un-sprinted topics in the Backlog column.
 
 ### Frontmatter schema
 
-| Key | Type | Required | Notes |
-|-----|------|----------|-------|
-| `status` | `open \| in-progress \| done` | yes | Column in the Sprint Kanban and the Topics List sub-mode |
-| `priority` | `none \| low \| medium \| high` | yes | Priority dot; used as Eisenhower fallback when `impact` is unset |
-| `blocked` | `true \| false` | yes | Renders a BLOCKED badge on the card; auto-cleared when moved to Done |
-| `sprint` | sprint ID or empty | yes | Empty = Backlog. Every `sprint-close`, `carryForward`, `archive`, `cancel`, and drag-drop routes through `SprintTopicService.assignTopicToSprint` |
-| `sortOrder` | number | yes | Manual Kanban column ordering (default `999` = end) |
-| `impact` | `critical \| high \| medium \| low` | no | Strategic weight. Drives Impact/Effort quadrant (High = {critical, high}) and Eisenhower importance |
-| `effort` | `xs \| s \| m \| l \| xl` | no | Size estimate. Drives Impact/Effort quadrant (Small = {xs, s}) |
-| `dueDate` | `YYYY-MM-DD` | no | Deadline. Drives the table's overdue cue, the Roadmap bar's overdue outline, and the Roadmap bar's **right edge** (end) |
-| `startDate` | `YYYY-MM-DD` | no | Planned roadmap start (estimate, user-set). Drives the Roadmap bar's **left edge**. The bar runs `startDate → dueDate` |
-| `jira` | string | no | Displayed as ticket chip on the card |
-| `sprintHistory` | comma-separated IDs | no | Append-only log of every sprint this topic has been assigned to |
+Keys are written in the canonical grouped order `TOPIC_FRONTMATTER_ORDER` (`topicParser.ts`); every in-place edit re-sorts to it. Unknown/user keys (tags, aliases, YAML blocks) pass through verbatim and sink to the end. Missing optional keys parse to `null` / `[]`; the serializer **omits null-valued keys**.
 
-Missing optional keys parse to `null` / `[]`. The serializer **omits null-valued keys** so topics with no matrix metadata keep a clean YAML header.
+| Key | Type | Notes |
+|-----|------|-------|
+| `status` | `backlog \| open \| in-progress \| done` | Kanban column. `open` renders as "To Do" |
+| `priority` | `none \| low \| medium \| high` | Priority dot; sort tiebreak after impact |
+| `jira` | key or comma-separated keys | Linked JIRA issue(s); parsed to `string[]` (see §16) |
+| `assignee` | team member email | Ownership. Drives the board's My/Team split and the assignee filter. `settings.jiraEmail` = "me" |
+| `waitingOn` | email or free text | Who we're waiting on; pairs with `lastNudged` + `nudgeThresholdDays` for staleness |
+| `lastNudged` | `YYYY-MM-DD` | Last follow-up stamp (`markNudged`) |
+| `startDate` | `YYYY-MM-DD` | Planned roadmap start (estimate). Roadmap bar's **left edge** |
+| `dueDate` | `YYYY-MM-DD` | Deadline: overdue cues + Roadmap bar's **right edge** |
+| `snoozedUntil` | `YYYY-MM-DD` | **Deliberate deferral.** While in the future, the topic parks on the Board's Snoozed shelf; it wakes ON this date. Distinct from `blocked` (work should continue but can't). Status is never touched by snoozing |
+| `impact` | `critical \| high \| medium \| low` | Impact/Effort quadrant (High = {critical, high}) |
+| `effort` | `xs \| s \| m \| l \| xl` | Impact/Effort quadrant (Small = {xs, s}) |
+| `blocked` | `true \| false` | Manual blocked flag — one of three block signals (see below) |
+| `sortOrder` | number | Manual intra-column ordering (default `999` = end) |
+| `statusSince` | `YYYY-MM-DD` | Auto-stamped on every status move — aging-WIP clock |
+| `startedAt` | `YYYY-MM-DD` | Auto-stamped on first entry to in-progress; never overwritten (cycle-time start) |
+| `doneAt` | `YYYY-MM-DD` | Auto-stamped on done; cleared on reopen (cycle-time end / archive age) |
+| `blockedBy` | folded scalar of file paths | Topic dependencies (this topic is blocked-by them). Cycle-checked on add; rewritten on renames |
+| `refs` | folded scalar of `label \| url` lines | External references (Confluence, Figma, …) |
+
+### Blocked (derived) vs snoozed
+
+A topic renders as **blocked** when any of three signals fires (`deriveTopicBlock`, `topicStatus.ts`): the manual `blocked` flag, a linked JIRA issue that is flagged or has an open "is blocked by" link, or a `blockedBy` dependency topic that isn't done. **Snoozed** (`isTopicSnoozed`) is orthogonal: `snoozedUntil` set, still in the future, and the topic isn't done. Blocked work needs attention (it should be moving); snoozed work is deliberately parked and wakes automatically.
 
 ### Topics tab sub-modes
 
-- **List** — 4-column kanban: Backlog (no sprint) \| Open \| In Progress \| Done. Columns render side-by-side via `.friday-topics-list-board` (flex row, `overflow-x: auto` at narrow widths); cards stack vertically inside each column's `.friday-topics-list-grid` drop zone. Empty Backlog column is hidden when the scope filter is "Active sprint". The empty-state placeholder lives inside the drop zone, so empty columns still accept drops. Drag-and-drop:
-  - Drop onto a status column → `setTopicStatus`. If dragged from Backlog, also `assignTopicToSprint(active)` first.
-  - Drop onto Backlog → `moveTopicToBacklog` (clears `sprint`, preserves status).
-  - Blocked → Done auto-clears the blocked flag.
-  - If no active sprint exists when moving out of Backlog, a Notice explains and nothing is written.
-- **Impact / Effort** — 2×2 grid. Quadrant assignment:
-  - `highImpact = impact ∈ {critical, high}`, `smallEffort = effort ∈ {xs, s}`
-  - Quick Wins (high + small), Big Bets (high + med/large), Fill-ins (low + small), Time Sinks (low + med/large)
-  - Topics missing either field land in an **Inbox** below the grid.
+- **Board** — status-driven Kanban with drag-and-drop, structured in layers:
+  - **Ownership groups.** When `settings.jiraEmail` is set *and* at least one topic has an assignee, the board splits into **👤 My topics** (assignee = me) and **👥 Team topics** (assignee = someone else), each with its own four columns. Unassigned topics ride with My topics as a **📥 Unassigned strip** (drop a card there to clear its owner). Without an identity or without any assignees, a single classic board renders — solo vaults don't degrade.
+  - **Blocked strips.** Blocked topics leave the status columns entirely and gather in a **🛑 Blocked strip** per group. Drop a card on the strip to set the manual flag; drag a blocked card into any status column and the manual flag clears ("work resumes here") — a Notice explains when a dependency/JIRA signal keeps it in the strip anyway.
+  - **Snoozed shelf.** Snoozed topics park on a collapsed **💤 Snoozed shelf** at the bottom (module-level expand state), sorted by wake date.
+  - **WIP limits** (`settings.wipLimits`) are board-wide policy: the column pill shows the cross-group total (`total / limit`) and the breach highlights in every group. Drops that breach warn but never block (Kanban convention).
+  - Drops set status via `setTopicStatus` (stamps flow timestamps) and persist intra-column position by renumbering `sortOrder` (`persistColumnOrder` — only cards whose order actually changed are written).
+- **List** — flat table (Topic / JIRA / Assignee / Due) sorted by impact→priority. Status dot + 🛑/💤 markers before the title; snoozed rows dimmed; overdue dues red; inline ✎ edit affordance.
+- **Impact / Effort** — 2×2 grid: Quick Wins / Big Bets / Fill-ins / Time Sinks (`highImpact = impact ∈ {critical, high}`, `smallEffort = effort ∈ {xs, s}`); topics missing either field land in an **Inbox** below the grid, whose quick-edit selects exist to size them.
 - **Roadmap** — scrollable, zoomable Gantt-style timeline on a fixed pixels-per-day scale (`ROADMAP_PX_PER_DAY`: day 30 / week 13 / month 4.4). Opens centred on the current week; the focus date (`roadmapCenterMs`) is kept under the viewport centre across zoom changes and repaints. Navigation: native scrollbar, drag-to-pan (pointer drag on the timeline background; ignored when the drag starts on a bar/label so clicks still open the topic), and Shift+scroll.
   - Each bar runs `startDate → dueDate` (`computeTopicSpan`): start prefers `startDate` then `startedAt` then `dueDate`; end prefers `dueDate` then `startDate` then `startedAt`. End day is inclusive (an N-day span is N+1 day-columns wide). Topics with none of `startDate` / `startedAt` / `dueDate` go to the **No date** tray.
-  - Bars are grouped into lanes by **Assignee** or **Status**. Colour encodes blocked / done / overdue (`dueDate ?? endDate` past today) / critical-path; a two-tier axis (months-or-years + day/week/month ruler), week/month gridlines, weekend shading (day zoom), and a today line render behind the bars. The left column (group + topic labels) and the axis corner are `position: sticky; left: 0` so they stay frozen while the timeline scrolls.
+  - Bars are grouped into lanes by **Assignee** or **Status**. Colour encodes blocked / done / overdue / critical-path; a two-tier axis (months-or-years + day/week/month ruler), week/month gridlines, weekend shading (day zoom), and a today line render behind the bars. The left column (group + topic labels) and the axis corner are `position: sticky; left: 0` so they stay frozen while the timeline scrolls. Done topics are hidden unless the "Done" scope is active.
   - Repaints (zoom / group / ⌖ Today) go through `repaintRoadmap`, which re-renders only the roadmap body — not the whole Topics view — so scroll/zoom feel smooth.
 
-### Scope filter
+### Card signals (`TopicCard.ts`)
 
-Chip row in the Topics header scopes every sub-mode:
+Beyond title/priority/JIRA rows, a card can carry: **BLOCKED badge** (derived; reasons in tooltip), **⏱ aging badge** (in-progress longer than `agingWipThresholdDays`, orange, days-in-column count), **⚠ JIRA drift chip** (Kanban state contradicts linked issues: topic done while an issue is open, or all issues resolved while the topic isn't done — computed from cached issue data only, so it never fires on partial loads), **💤 snooze chip** ("until \<date\>" while asleep; orange "woke \<date\>" when expired-but-uncleared), assignee / waiting-on (with nudge staleness) chips, dependency chips, external ref chips, linked pages, and a task progress bar. The action row offers status arrows, ⚠ blocked toggle, and 💤 snooze (preset menu: 1w / 2w / 1m / 3m / pick a date) or 💤 Wake.
 
-| Chip | Predicate |
-|------|-----------|
-| All | (everything) |
-| Active sprint | `sprintId === activeSprint.id` |
-| Backlog | `!sprintId` |
-| Archived | `status === 'done' && !sprintId` |
+### Filters & persistence
 
-### Sprint history
+Header chips scope every sub-mode: **All** (live + recently-done — topics done longer than `hideDoneAfterDays` are hidden), **Backlog** (`status === 'backlog'`), **Done** (`status === 'done'`, the escape hatch that shows everything completed). An **assignee dropdown** (shown when team members exist) adds 👤 Mine / 📨 Assigned out / ∅ Unassigned / per-member lenses. Scope, assignee filter, roadmap zoom/grouping/centre, and the Snoozed shelf's expand state are backed by **module-level variables** — the view object is rebuilt on every data refresh, so instance fields would silently reset the user's choices after any topic write.
 
-`sprintHistory` is a cumulative list of every sprint a topic has been assigned to, in insertion order. All write paths that change the `sprint` frontmatter field go through **one helper** (`SprintTopicService.assignTopicToSprint`) that:
+### Lifecycle features
 
-1. Reads the current `sprint` and `sprintHistory` from frontmatter.
-2. Merges both the departing sprint (from step 1) and the new `sprintId` into history, de-duplicating.
-3. Writes `sprint` + `sprintHistory` atomically via `updateTopicFrontmatter`.
-
-This means moving a topic Backlog → Sprint A → Backlog → Sprint B produces `sprintHistory: A,B` — nothing is lost on backlog passes. `archiveTopic` and `cancelTopic` go through the same helper before setting `status: done`, so sprint membership is preserved on archival.
-
-**Legacy topics** (frontmatter has `sprint: X` but no `sprintHistory`): the parser synthesizes `[X]` in memory so the current sprint still shows in the modal's history panel. Persisted history remains empty until the next reassignment, at which point the departing sprint is captured automatically. Historical sprints before tracking began are not reconstructed — this is expected.
+- **Snooze / wake** — card menu, edit-modal date field, `snooze-topic` command, `topic_update` MCP (`snoozedUntil`). The **Morning Review** gets a "Woke from snooze" section: topics whose snooze expired but wasn't cleared, with *Back on board* (clear) / *+1 week* (renew) actions.
+- **Dated status notes** — `appendTopicNote` appends `- **YYYY-MM-DD** — <note>` to the END of `## Notes` (created if missing; newest last — a per-initiative decision log). Exposed as the `add-topic-note` command (topic picker → `TextPromptModal`) and the `topic_add_note` MCP tool.
+- **Archiving** — `archiveDoneTopics(olderThanDays)` moves topics done for more than N days (age = `doneAt` ?? `statusSince`; undateable ones only when N = 0) into `{topicsFolder}/Archive/` via `fileManager.renameFile` (wiki-links survive; the rename hook rewrites `blockedBy` edges). The scanner's `isTopicFile` **excludes `Archive/`**, so archived topics vanish from every view and stop being parsed. Command: `archive-done-topics` (hide-window / 30d / 90d / all). Restore = move the file back out.
 
 ### Service API surface (`SprintTopicService`)
 
 | Method | What it writes |
 |--------|----------------|
-| `createTopic(…, sprintId, impact, effort, dueDate)` | Creates file with full frontmatter; `sprintHistory` seeded to `sprintId` when non-empty |
-| `setTopicStatus`, `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `updateSortOrder` | Single-field setters — pass `null` to clear optional fields |
-| `assignTopicToSprint(filePath, sprintId)` | **Canonical sprint-change entrypoint.** Handles history merge. `''` moves to Backlog |
-| `moveTopicToBacklog(filePath)` | Thin wrapper over `assignTopicToSprint(filePath, '')` |
-| `carryForwardTopic(filePath, newSprintId)` | Sprint-close flow — delegates to `assignTopicToSprint` |
-| `archiveTopic`, `cancelTopic` | `assignTopicToSprint('')` then `setTopicStatus('done')` — history preserved |
-| `updateTopicFrontmatter(filePath, updates)` | Generic updater. `null`/`undefined` values **delete** the key; everything else stringifies |
+| `createTopic(title, jira, priority, linkedPages, impact?, effort?, dueDate?, assignee?, waitingOn?, lastNudged?, refs?, startDate?, notesBody?)` | Creates the file (status `backlog`, `statusSince` stamped) with template sections |
+| `setTopicStatus(filePath, status)` | Status + flow timestamps atomically: `statusSince` always, `startedAt` on first in-progress, `doneAt` on done (cleared on reopen) |
+| `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `setTopicStartDate`, `setTopicSnooze`, `updateSortOrder` | Single-field setters — `null` clears optional fields |
+| `markNudged(filePath)` | `lastNudged = today` |
+| `appendTopicNote(filePath, text)` | Dated log entry at the end of `## Notes` |
+| `appendTasksToTopic(filePath, lines)` | Prepends task lines to `## Tasks` (backs "Send to topic" + `tasks_create` MCP routing) |
+| `renameTopic(filePath, newTitle)` | H1 rewrite + link-safe file rename; `handleTopicRename` fixes `blockedBy` edges vault-wide |
+| `addDependency` / `removeDependency` | `blockedBy` edges; add rejects self-links, unknown blockers, and cycles (DFS) |
+| `archiveDoneTopics(olderThanDays)` | Moves old done topics to `Archive/`; returns `{archived, skipped}` |
+| `updateLinkedPagesSection(filePath, pages)` | Rewrites the `## Linked Pages` bullets, preserving user notes |
+| `updateTopicFrontmatter(filePath, updates)` | Generic updater. `null`/`undefined` **delete** the key; everything else stringifies. Unmanaged frontmatter passes through verbatim |
+| `migrateToKanban()` | One-time v3 migration: strips `sprint`/`sprintHistory`, lands un-sprinted topics in Backlog |
 
-### Settings migration
+### Commands & MCP tools
 
-`main.ts` rewrites any persisted `defaultViewMode` of `'eisenhower'` or `'impactEffort'` (the pre-refactor task-level modes) to `FridayViewMode.Topics` on load, so users who had those pinned land on the replacement view instead of hitting a missing switch case.
+Palette commands: `create-topic`, `go-to-topic`, `move-topic-to-column`, `toggle-topic-blocked`, `set-topic-due-date`, `snooze-topic`, `add-topic-note`, `archive-done-topics`, `open-board`, `open-roadmap`, `create-topic-from-jira`, `sync-topic-dependencies-from-jira`.
+
+MCP tools (`src/mcp/tools/topics.ts`): `topics_list`, `topic_get`, `topic_create`, `topic_create_from_jira`, `topic_sync_dependencies`, `topic_update` (incl. `snoozedUntil`), `topic_link` (dependencies), `topic_add_note`.
 
 ---
 

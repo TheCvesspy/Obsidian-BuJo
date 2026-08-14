@@ -1,4 +1,4 @@
-import { App, Modal, Notice } from 'obsidian';
+import { App, Modal, Notice, setIcon } from 'obsidian';
 import { TaskItem, Priority, SprintTopic } from '../types';
 import { DueDateModal } from './DueDateModal';
 import { TopicPickerModal } from './TopicPickerModal';
@@ -203,21 +203,23 @@ export class TriageProcessModal extends Modal {
 			card.createDiv({ cls: 'friday-triage-proc-desc', text: t.description });
 		}
 
-		// Primary decision grid
+		// Primary decision grid — Lucide icons (theme-colorable) rather than emoji.
 		const actions = contentEl.createDiv({ cls: 'friday-triage-proc-actions' });
-		const action = (emoji: string, label: string, key: string, fn: () => void) => {
+		const action = (icon: string, label: string, key: string, fn: () => void, danger = false) => {
 			const btn = actions.createEl('button', { cls: 'friday-triage-proc-action' });
-			btn.createSpan({ cls: 'friday-triage-proc-action-emoji', text: emoji });
+			if (danger) btn.addClass('friday-triage-proc-action-danger');
+			const iconEl = btn.createSpan({ cls: 'friday-triage-proc-action-icon' });
+			setIcon(iconEl, icon);
 			btn.createSpan({ text: label });
 			btn.createEl('kbd', { text: key });
 			btn.addEventListener('click', (e) => { (e.currentTarget as HTMLElement).blur(); fn(); });
 		};
-		action('📅', 'Due date…', 'd', () => this.doDue());
-		action('⏰', 'Snooze', 's', () => this.toggleSnooze());
-		action('📌', 'To topic…', 't', () => void this.doTopic());
-		action('💤', 'Someday', 'm', () => this.doSomeday());
-		action('✅', 'Done', 'c', () => this.doComplete());
-		action('✖', 'Drop', 'x', () => this.doDrop());
+		action('calendar', 'Due date…', 'd', () => this.doDue());
+		action('alarm-clock', 'Snooze', 's', () => this.toggleSnooze());
+		action('pin', 'To topic…', 't', () => void this.doTopic());
+		action('moon', 'Someday', 'm', () => this.doSomeday());
+		action('check', 'Done', 'c', () => this.doComplete());
+		action('x', 'Drop', 'x', () => this.doDrop(), true);
 
 		// Snooze preset strip (toggled by ⏰ / s)
 		if (this.snoozeOpen) {

@@ -77,7 +77,15 @@ export class TaskEditModal extends Modal {
 		const { contentEl } = this;
 		this.modalEl.addClass('friday-insert-modal');
 		this.modalEl.addClass('friday-edit-modal');
-		contentEl.createEl('h2', { text: 'Edit Task' });
+		this.setTitle('Edit task');
+
+		// Ctrl/Cmd+Enter saves from anywhere in the form — plain Enter is reserved
+		// for newlines inside the description textarea.
+		this.scope.register(['Mod'], 'Enter', (evt) => {
+			evt.preventDefault();
+			this.submit();
+			return false;
+		});
 
 		new Setting(contentEl)
 			.setName('Task text')
@@ -157,7 +165,7 @@ export class TaskEditModal extends Modal {
 
 		const descSetting = new Setting(contentEl)
 			.setName('Description')
-			.setDesc('Indented lines below the task. Subtasks are not affected.');
+			.setDesc('Indented lines below the task. Subtasks are not affected. Ctrl/Cmd+Enter saves.');
 		const descArea = descSetting.controlEl.createEl('textarea', {
 			cls: 'friday-insert-description',
 			attr: { rows: '3', placeholder: 'Additional context, notes, links...' },

@@ -47,6 +47,8 @@ export class SprintTopicModal extends Modal {
 	private dueDate: string = '';
 	/** Planned roadmap start (estimate). Empty string = unset. The roadmap bar runs startDate → dueDate. */
 	private startDate: string = '';
+	/** Snoozed-until date (deliberate deferral). Empty string = not snoozed. */
+	private snoozedUntil: string = '';
 	/** Empty string = unassigned. Otherwise a team member email. */
 	private assignee: string = '';
 	/** Empty string = not waiting. 'other:<text>' means free-text fallback; any other
@@ -93,6 +95,7 @@ export class SprintTopicModal extends Modal {
 			this.effort = this.editTopic.effort;
 			this.dueDate = this.editTopic.dueDate ?? '';
 			this.startDate = this.editTopic.startDate ?? '';
+			this.snoozedUntil = this.editTopic.snoozedUntil ?? '';
 			this.assignee = this.editTopic.assignee ?? '';
 			this.lastNudged = this.editTopic.lastNudged ?? '';
 			this.refs = this.editTopic.refs.map(r => ({ ...r }));
@@ -257,6 +260,15 @@ export class SprintTopicModal extends Modal {
 				text.onChange(value => { this.dueDate = value; });
 			});
 
+		new Setting(contentEl)
+			.setName('Snoozed until')
+			.setDesc('Defer the topic — it parks on the Board’s Snoozed shelf and wakes on this date. Not the same as blocked (work that should continue but can’t).')
+			.addText(text => {
+				text.inputEl.type = 'date';
+				text.setValue(this.snoozedUntil);
+				text.onChange(value => { this.snoozedUntil = value; });
+			});
+
 		this.renderWaitingOnSetting(contentEl, activeMembers, teamMembers);
 
 		// Linked Pages with autocomplete
@@ -399,6 +411,7 @@ export class SprintTopicModal extends Modal {
 			return t && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
 		};
 		const startDateValue = isoOrNull(this.startDate);
+		const snoozedUntilValue = isoOrNull(this.snoozedUntil);
 
 		// Normalize waitingOn state to the stored string
 		const waitingOnValue =
@@ -419,6 +432,7 @@ export class SprintTopicModal extends Modal {
 				effort: this.effort,
 				dueDate: dueDateValue,
 				startDate: startDateValue,
+				snoozedUntil: snoozedUntilValue,
 				assignee: this.assignee || null,
 				waitingOn: waitingOnValue,
 				lastNudged: lastNudgedValue,
@@ -467,6 +481,7 @@ export class SprintTopicModal extends Modal {
 				effort: this.effort,
 				dueDate: dueDateValue,
 				startDate: startDateValue,
+				snoozedUntil: snoozedUntilValue,
 				assignee: this.assignee || null,
 				waitingOn: waitingOnValue,
 				lastNudged: lastNudgedValue,
@@ -489,6 +504,12 @@ export class SprintTopicModal extends Modal {
 				this.refs,
 				startDateValue,
 			);
+			// Snooze-at-create is rare enough that createTopic's signature stays lean —
+			// apply it as a follow-up frontmatter write when the field was filled.
+			if (snoozedUntilValue) {
+				await this.topicService.updateTopicFrontmatter(topic.filePath, { snoozedUntil: snoozedUntilValue });
+				topic.snoozedUntil = snoozedUntilValue;
+			}
 			await this.applyDependencyChanges(topic.filePath, []);
 			this.onSave(topic);
 		}

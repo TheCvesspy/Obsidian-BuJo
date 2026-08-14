@@ -31,6 +31,7 @@ import { MonthlyReviewModal } from './ui/MonthlyReviewModal';
 import { InsertTaskModal, buildTaskLine, buildTaskBlock } from './ui/InsertTaskModal';
 import { QuickCaptureModal } from './ui/QuickCaptureModal';
 import { DueDateModal } from './ui/DueDateModal';
+import { TextPromptModal } from './ui/TextPromptModal';
 import { SyntaxReferenceModal } from './ui/components/SyntaxReference';
 import { SprintTopicModal } from './ui/SprintTopicModal';
 import { JiraKeyPromptModal } from './ui/JiraKeyPromptModal';
@@ -470,6 +471,90 @@ export default class FridayPlugin extends Plugin {
 					await this.sprintTopicService.setTopicDueDate(topic.filePath, iso);
 					new Notice(iso ? `Due ${iso}: ${topic.title}` : `Due date cleared: ${topic.title}`);
 				}).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'snooze-topic',
+			name: 'Snooze topic',
+			callback: async () => {
+				const topics = this.scanner.getAllTopics();
+				if (topics.length === 0) { new Notice('No topics found.'); return; }
+				const topic = await pickFromList(this.app, topics.map(t => ({
+					text: t.title, value: t, hint: t.snoozedUntil ? `snoozed until ${t.snoozedUntil}` : '',
+				})), { placeholder: 'Snooze topic…' });
+				if (!topic) return;
+				const choice = await pickFromList<number>(this.app, [
+					{ text: '1 week', value: 7 },
+					{ text: '2 weeks', value: 14 },
+					{ text: '1 month', value: 30 },
+					{ text: '3 months', value: 90 },
+					{ text: 'Until a date…', value: -1 },
+					...(topic.snoozedUntil ? [{ text: 'Wake now (clear snooze)', value: 0 }] : []),
+				], { placeholder: `Snooze "${topic.title}" for…` });
+				if (choice === null) return;
+				if (choice === 0) {
+					await this.sprintTopicService.setTopicSnooze(topic.filePath, null);
+					new Notice(`Woke: ${topic.title}`);
+					return;
+				}
+				if (choice === -1) {
+					const current = topic.snoozedUntil ? isoToPluginDate(topic.snoozedUntil) : '';
+					new DueDateModal(this.app, current, async (pluginDate) => {
+						const iso = pluginDate ? pluginDateToIso(pluginDate) : null;
+						await this.sprintTopicService.setTopicSnooze(topic.filePath, iso);
+						new Notice(iso ? `Snoozed until ${iso}: ${topic.title}` : `Snooze cleared: ${topic.title}`);
+					}).open();
+					return;
+				}
+				const d = new Date();
+				d.setHours(0, 0, 0, 0);
+				d.setDate(d.getDate() + choice);
+				const until = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+				await this.sprintTopicService.setTopicSnooze(topic.filePath, until);
+				new Notice(`Snoozed until ${until}: ${topic.title}`);
+			},
+		});
+
+		this.addCommand({
+			id: 'add-topic-note',
+			name: 'Add note to topic',
+			callback: async () => {
+				const topics = this.scanner.getAllTopics();
+				if (topics.length === 0) { new Notice('No topics found.'); return; }
+				const topic = await pickFromList(this.app, topics.map(t => ({
+					text: t.title, value: t, hint: this.topicColumnLabel(t.status),
+				})), { placeholder: 'Add note to…' });
+				if (!topic) return;
+				new TextPromptModal(
+					this.app,
+					`Add note — ${topic.title}`,
+					'What happened / what was decided…',
+					async (text) => {
+						const ok = await this.sprintTopicService.appendTopicNote(topic.filePath, text);
+						new Notice(ok ? `Note added to "${topic.title}".` : 'Could not add the note.');
+					},
+				).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'archive-done-topics',
+			name: 'Archive done topics',
+			callback: async () => {
+				const hideDays = this.settings.hideDoneAfterDays ?? 14;
+				const choice = await pickFromList<number>(this.app, [
+					{ text: `Done longer than ${hideDays} days (already hidden from the board)`, value: hideDays },
+					{ text: 'Done longer than 30 days', value: 30 },
+					{ text: 'Done longer than 90 days', value: 90 },
+					{ text: 'All done topics', value: 0 },
+				], { placeholder: 'Archive which done topics?' });
+				if (choice === null) return;
+				const res = await this.sprintTopicService.archiveDoneTopics(choice);
+				const skippedTail = res.skipped > 0 ? ` (${res.skipped} skipped)` : '';
+				new Notice(res.archived > 0
+					? `Archived ${res.archived} topic(s) → ${this.sprintTopicService.getArchiveFolderPath()}/${skippedTail}`
+					: `Nothing to archive${skippedTail}.`);
 			},
 		});
 

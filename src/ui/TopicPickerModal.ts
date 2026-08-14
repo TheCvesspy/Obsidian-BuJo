@@ -1,4 +1,4 @@
-import { App, FuzzySuggestModal, FuzzyMatch } from 'obsidian';
+import { App, FuzzySuggestModal, FuzzyMatch, renderResults } from 'obsidian';
 import { SprintTopic } from '../types';
 
 /** Kanban-flow order: the topics you're most likely triaging into come first. */
@@ -8,6 +8,7 @@ const STATUS_GLYPH: Record<string, string> = { 'in-progress': '🔵', open: '⚪
 /**
  * Fuzzy topic picker (v3 triage). Search by title; suggestions are ordered by
  * Kanban status (in-progress → open → backlog → done) so live work surfaces first.
+ * Matched characters are highlighted via the core renderResults helper.
  */
 export class TopicPickerModal extends FuzzySuggestModal<SprintTopic> {
 	constructor(
@@ -17,6 +18,11 @@ export class TopicPickerModal extends FuzzySuggestModal<SprintTopic> {
 	) {
 		super(app);
 		this.setPlaceholder('Send task to topic…');
+		this.setInstructions([
+			{ command: '↑↓', purpose: 'to navigate' },
+			{ command: '↵', purpose: 'to choose' },
+			{ command: 'esc', purpose: 'to dismiss' },
+		]);
 	}
 
 	getItems(): SprintTopic[] {
@@ -33,7 +39,8 @@ export class TopicPickerModal extends FuzzySuggestModal<SprintTopic> {
 	renderSuggestion(match: FuzzyMatch<SprintTopic>, el: HTMLElement): void {
 		const topic = match.item;
 		el.createSpan({ text: `${STATUS_GLYPH[topic.status] ?? '⚪'} ` });
-		el.createSpan({ text: topic.title });
+		// Title in its own span so match offsets (computed against getItemText) line up.
+		renderResults(el.createSpan(), topic.title, match.match);
 	}
 
 	onChooseItem(topic: SprintTopic): void {

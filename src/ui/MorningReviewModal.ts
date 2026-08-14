@@ -47,7 +47,12 @@ export class MorningReviewModal extends Modal {
             this.renderStaleWaitingTopics(contentEl, staleWaitingTopics);
         }
 
-        if (overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0) {
+        const wokenTopics = await this.getWokenTopics();
+        if (wokenTopics.length > 0) {
+            this.renderWokenTopics(contentEl, wokenTopics);
+        }
+
+        if (overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0 && wokenTopics.length === 0) {
             contentEl.createEl('p', {
                 text: 'Nothing needs a nudge. Your due & overdue work lives in the Today tab.',
                 cls: 'friday-empty',
@@ -178,6 +183,80 @@ export class MorningReviewModal extends Modal {
                 const daysSince = Math.floor((todayMs - then) / (24 * 60 * 60 * 1000));
                 return daysSince > threshold;
             });
+    }
+
+    /** Topics whose snooze has expired but wasn't cleared: `snoozedUntil` is set, the date
+     *  is today or earlier, and the topic isn't done. They're already back in their board
+     *  column — this surfaces the return so the wake is a decision, not an accident. The
+     *  row disappears once the snooze is cleared or renewed. */
+    private async getWokenTopics(): Promise<SprintTopic[]> {
+        if (!this.topicService) return [];
+        const now = new Date();
+        const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const all = await this.topicService.getAllTopics();
+        return all
+            .filter(t => t.status !== 'done' && !!t.snoozedUntil && t.snoozedUntil <= todayIso)
+            .sort((a, b) => (a.snoozedUntil ?? '').localeCompare(b.snoozedUntil ?? ''));
+    }
+
+    /** Section: topics that woke from snooze. Each row offers "Back on board" (clears the
+     *  stale snoozedUntil) or "+1 week" (renews the snooze from today). */
+    private renderWokenTopics(container: HTMLElement, topics: SprintTopic[]): void {
+        const section = container.createDiv({ cls: 'friday-review-section friday-review-woken' });
+        const header = section.createDiv({ cls: 'friday-review-section-header' });
+        header.createSpan({ text: 'Woke from snooze', cls: 'friday-review-section-title' });
+        header.createSpan({ text: ` (${topics.length})`, cls: 'friday-review-section-count' });
+
+        for (const topic of topics) {
+            const row = section.createDiv({ cls: 'friday-migration-item friday-woken-row' });
+
+            const infoEl = row.createDiv({ cls: 'friday-migration-item-info' });
+            const textEl = infoEl.createDiv({ cls: 'friday-migration-item-text' });
+            textEl.createSpan({ text: topic.title, cls: 'friday-waiting-topic' });
+
+            const metaEl = infoEl.createDiv({ cls: 'friday-migration-item-meta' });
+            metaEl.createSpan({
+                cls: 'friday-waiting-meta',
+                text: `Snoozed until ${topic.snoozedUntil} — awake again`,
+            });
+
+            const actionsEl = row.createDiv({ cls: 'friday-migration-item-actions' });
+
+            const wakeBtn = actionsEl.createEl('button', {
+                text: 'Back on board',
+                cls: 'friday-btn-forward',
+            });
+            const renewBtn = actionsEl.createEl('button', {
+                text: '+1 week',
+                cls: 'friday-btn',
+            });
+            const settle = (btn: HTMLButtonElement, label: string): void => {
+                btn.setText(label);
+                btn.addClass('is-active');
+                wakeBtn.disabled = true;
+                renewBtn.disabled = true;
+            };
+            wakeBtn.addEventListener('click', async () => {
+                try {
+                    await this.topicService!.setTopicSnooze(topic.filePath, null);
+                    settle(wakeBtn, 'Awake ✓');
+                } catch (e) {
+                    new Notice(`Could not clear snooze: ${e instanceof Error ? e.message : 'unknown error'}`);
+                }
+            });
+            renewBtn.addEventListener('click', async () => {
+                try {
+                    const d = new Date();
+                    d.setHours(0, 0, 0, 0);
+                    d.setDate(d.getDate() + 7);
+                    const until = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    await this.topicService!.setTopicSnooze(topic.filePath, until);
+                    settle(renewBtn, `Until ${until} ✓`);
+                } catch (e) {
+                    new Notice(`Could not renew snooze: ${e instanceof Error ? e.message : 'unknown error'}`);
+                }
+            });
+        }
     }
 
     /** Section: topics waiting on someone with no recent nudge. Each row lets the user

@@ -42,6 +42,7 @@ export function topicTools(deps: TopicsDeps): McpTool[] {
 		topicSyncDependenciesTool(deps),
 		topicUpdateTool(deps),
 		topicLinkTool(deps),
+		topicAddNoteTool(deps),
 	];
 }
 
@@ -284,8 +285,10 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 		description:
 			'Update one or more frontmatter fields on a topic in place. Only the fields you pass ' +
 			'are touched; omitting a field leaves it unchanged. Pass `null` for impact / effort / ' +
-			'dueDate / startDate / assignee / waitingOn to clear them. Status / blocked / priority require a value. ' +
-			'Setting status stamps the Kanban flow timestamps automatically.',
+			'dueDate / startDate / snoozedUntil / assignee / waitingOn to clear them. Status / blocked / priority require a value. ' +
+			'Setting status stamps the Kanban flow timestamps automatically. snoozedUntil defers the ' +
+			'topic (parks it on the board\'s Snoozed shelf) until that date — distinct from blocked, ' +
+			'which means work should continue but can\'t.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -304,6 +307,9 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 				},
 				startDate: {
 					anyOf: [{ type: 'string', description: 'Planned roadmap start, ISO YYYY-MM-DD' }, { type: 'null' }],
+				},
+				snoozedUntil: {
+					anyOf: [{ type: 'string', description: 'Defer (snooze) the topic until this ISO YYYY-MM-DD date' }, { type: 'null' }],
 				},
 				assignee: { anyOf: [{ type: 'string' }, { type: 'null' }] },
 				waitingOn: { anyOf: [{ type: 'string' }, { type: 'null' }] },
@@ -395,6 +401,19 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 						}
 					}
 				}
+				if ('snoozedUntil' in args) {
+					const raw = args.snoozedUntil;
+					if (raw === null) {
+						await deps.sprintTopicService.setTopicSnooze(path, null);
+						changes.push('snoozedUntil=null');
+					} else {
+						const v = optionalIsoDate(args, 'snoozedUntil');
+						if (v) {
+							await deps.sprintTopicService.setTopicSnooze(path, v);
+							changes.push(`snoozedUntil=${v}`);
+						}
+					}
+				}
 				if ('assignee' in args) {
 					const raw = args.assignee;
 					if (raw === null) {
@@ -423,7 +442,7 @@ function topicUpdateTool(deps: TopicsDeps): McpTool {
 				}
 
 				if (changes.length === 0) {
-					return errorResult('No update fields provided. Pass one or more of: status, blocked, priority, impact, effort, dueDate, startDate, assignee, waitingOn.');
+					return errorResult('No update fields provided. Pass one or more of: status, blocked, priority, impact, effort, dueDate, startDate, snoozedUntil, assignee, waitingOn.');
 				}
 
 				const after = await deps.sprintTopicService.getAllTopics();
@@ -482,6 +501,40 @@ function topicLinkTool(deps: TopicsDeps): McpTool {
 	};
 }
 
+// ─── topic_add_note ──────────────────────────────────────────────────────────
+
+function topicAddNoteTool(deps: TopicsDeps): McpTool {
+	return {
+		name: 'topic_add_note',
+		description:
+			'Append a dated log entry ("- **YYYY-MM-DD** — <note>") to the END of a topic\'s ' +
+			'## Notes section — a lightweight decision / status log per initiative. The section ' +
+			'is created if missing. Use for meeting outcomes, decisions, and status updates.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				path: { type: 'string', description: 'Topic file path.' },
+				note: { type: 'string', description: 'One-line note text (the date prefix is added automatically).' },
+			},
+			required: ['path', 'note'],
+			additionalProperties: false,
+		},
+		handler: async (args): Promise<McpToolResult> => {
+			try {
+				const path = requireString(args, 'path');
+				const note = requireString(args, 'note');
+				const ok = await deps.sprintTopicService.appendTopicNote(path, note);
+				if (!ok) return errorResult(`Topic not found at "${path}" (or the note was empty).`);
+				return jsonResult({ ok: true, path });
+			} catch (err) {
+				if (err instanceof ToolError) return errorResult(err.message);
+				if (err instanceof Error) return errorResult(err.message);
+				throw err;
+			}
+		},
+	};
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 function toTopicDto(t: SprintTopic): Record<string, unknown> {
@@ -496,6 +549,7 @@ function toTopicDto(t: SprintTopic): Record<string, unknown> {
 		effort: t.effort,
 		dueDate: t.dueDate,
 		startDate: t.startDate,
+		snoozedUntil: t.snoozedUntil,
 		jira: t.jira,
 		linkedPages: t.linkedPages,
 		taskTotal: t.taskTotal,

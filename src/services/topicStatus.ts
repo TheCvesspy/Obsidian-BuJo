@@ -68,6 +68,16 @@ export function deriveTopicBlock(input: DeriveInput): DerivedBlock {
 	return { state, reasons, sources };
 }
 
+/** True while a topic's snooze is active: `snoozedUntil` is set and still in the future.
+ *  The topic wakes ON the stored date (mirrors task `@snooze` semantics). Done topics are
+ *  never considered snoozed — a leftover snooze on finished work is meaningless. */
+export function isTopicSnoozed(topic: SprintTopic): boolean {
+	if (!topic.snoozedUntil || topic.status === 'done') return false;
+	const now = new Date();
+	const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+	return topic.snoozedUntil > todayIso;
+}
+
 /** Adapt a cached JiraIssueInfo-shaped object into the signal the derivation consumes.
  *  Returns null when the issue isn't cached yet (transient — contributes nothing). */
 export function toJiraSignal(

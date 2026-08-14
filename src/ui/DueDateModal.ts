@@ -18,7 +18,7 @@ export class DueDateModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		this.modalEl.addClass('friday-due-modal');
-		contentEl.createEl('h3', { text: 'Set Due Date' });
+		this.setTitle('Set due date');
 
 		new Setting(contentEl)
 			.setName('Due date')

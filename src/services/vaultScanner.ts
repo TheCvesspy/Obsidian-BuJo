@@ -38,10 +38,12 @@ export class VaultScanner {
         this.cachedClassifier = null;
     }
 
-    /** Check if a file path is inside the sprint topics folder */
+    /** Check if a file path is inside the sprint topics folder. The Archive/ subfolder is
+     *  excluded — archived topics are invisible to the plugin until moved back out. */
     private isTopicFile(path: string): boolean {
         const topicsPath = this.getSettings().sprintTopicsPath;
-        return topicsPath.length > 0 && path.startsWith(topicsPath + '/');
+        if (topicsPath.length === 0 || !path.startsWith(topicsPath + '/')) return false;
+        return !path.startsWith(topicsPath + '/Archive/');
     }
 
     /** Check if a file is a person page: {teamFolderPath}/{Name}/{Name}.md.

@@ -1,3 +1,4 @@
+import { setIcon, setTooltip } from 'obsidian';
 import { TaskItem, TaskStatus, Priority } from '../../types';
 import { isOverdue } from '../../utils/dateUtils';
 import { formatDateDisplay } from '../../utils/dateUtils';
@@ -94,11 +95,11 @@ export class TaskItemRow {
 			textSpan.addClass('friday-task-migrated');
 		}
 
-		// Description toggle indicator
+		// Description toggle indicator — a real button so keyboard users can expand it
 		if (task.description) {
-			const descToggle = this.el.createSpan({ cls: 'friday-desc-toggle' });
-			descToggle.textContent = '…';
-			descToggle.setAttribute('title', 'Show/hide description');
+			const descToggle = this.el.createEl('button', { cls: 'friday-desc-toggle', text: '…' });
+			setTooltip(descToggle, 'Show/hide description');
+			descToggle.setAttribute('aria-label', 'Show/hide description');
 		}
 
 		// Progress badge for collapsed parents
@@ -125,47 +126,41 @@ export class TaskItemRow {
 			}
 		}
 
-		// Row actions (v3): snooze / someday / wake. Only rendered when the host view wires
-		// the callbacks (Today/Upcoming/Triage/Someday do; legacy views don't).
+		// Row actions (v3): real <button>s (keyboard-focusable) with Lucide icons and
+		// native tooltips. Only rendered when the host view wires the callbacks
+		// (Today/Upcoming/Triage/Someday do; legacy views don't).
+		const actionButton = (icon: string, tooltip: string, onClick: (e: MouseEvent) => void) => {
+			const btn = this.el.createEl('button', { cls: 'friday-row-action' });
+			setIcon(btn, icon);
+			setTooltip(btn, tooltip);
+			btn.setAttribute('aria-label', tooltip);
+			btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(e as MouseEvent); });
+		};
 		if (task.status === TaskStatus.Open) {
 			const isDeferred = task.someday || task.snoozeDate != null;
 			if (callbacks.onSetDue && !isDeferred) {
-				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '📅' });
-				btn.setAttribute('title', 'Set due date…');
-				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSetDue!(task); });
+				actionButton('calendar', 'Set due date…', () => callbacks.onSetDue!(task));
 			}
 			if (callbacks.onSnooze && !isDeferred) {
-				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '⏰' });
-				btn.setAttribute('title', 'Snooze…');
-				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSnooze!(task, e as MouseEvent); });
+				actionButton('alarm-clock', 'Snooze…', (e) => callbacks.onSnooze!(task, e));
 			}
 			if (callbacks.onSendToTopic && !isDeferred) {
-				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '📌' });
-				btn.setAttribute('title', 'Send to topic…');
-				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSendToTopic!(task); });
+				actionButton('pin', 'Send to topic…', () => callbacks.onSendToTopic!(task));
 			}
 			if (callbacks.onSomeday && !isDeferred) {
-				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '💤' });
-				btn.setAttribute('title', 'Send to Someday');
-				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSomeday!(task); });
+				actionButton('moon', 'Send to Someday', () => callbacks.onSomeday!(task));
 			}
 			if (callbacks.onDrop && !isDeferred) {
-				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '✖' });
-				btn.setAttribute('title', 'Drop — mark cancelled');
-				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onDrop!(task); });
+				actionButton('x', 'Drop — mark cancelled', () => callbacks.onDrop!(task));
 			}
 			if (callbacks.onWake && task.someday) {
-				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '↩︎' });
-				btn.setAttribute('title', 'Wake — remove from Someday');
-				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onWake!(task); });
+				actionButton('undo-2', 'Wake — remove from Someday', () => callbacks.onWake!(task));
 			}
 		}
 
 		// Edit dialog (v3): full field management, available on every row regardless of status.
 		if (callbacks.onEdit) {
-			const btn = this.el.createSpan({ cls: 'friday-row-action', text: '✏️' });
-			btn.setAttribute('title', 'Edit task…');
-			btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onEdit!(task); });
+			actionButton('pencil', 'Edit task…', () => callbacks.onEdit!(task));
 		}
 
 		// Source file link

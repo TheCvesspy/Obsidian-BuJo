@@ -428,6 +428,7 @@ export class FridayView extends ItemView {
 					this.jiraService,
 					this.topicsSubMode,
 					(m) => { this.topicsSubMode = m; },
+					this.app,
 				);
 				view.render();
 				break;

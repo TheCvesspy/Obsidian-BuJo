@@ -1,6 +1,7 @@
 import { App, Vault, TFile, TFolder } from 'obsidian';
 import { SprintTopic, TopicStatus, Priority, PluginSettings, TopicImpact, TopicEffort } from '../types';
 import { parseTopicFile, parseFrontmatterForRewrite, serializeFrontmatter, serializeRefs, foldedScalar, orderTopicFrontmatterEntries } from '../parser/topicParser';
+import { daysSinceIso } from '../utils/dateUtils';
 
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
 
@@ -379,6 +380,80 @@ export class SprintTopicService {
 	/** Set the planned roadmap start date on a topic (null clears the field) */
 	async setTopicStartDate(filePath: string, startDate: string | null): Promise<void> {
 		await this.updateTopicFrontmatter(filePath, { startDate });
+	}
+
+	/** Append a dated log entry to a topic's `## Notes` section — a lightweight decision /
+	 *  status log per initiative (1:1 and steering-meeting material). The entry lands at the
+	 *  END of the section (chronological, newest last); the section is created at end-of-file
+	 *  when missing. Returns false when the note is empty or the topic file can't be found. */
+	async appendTopicNote(filePath: string, note: string): Promise<boolean> {
+		const text = note.trim();
+		if (!text) return false;
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return false;
+
+		const today = new Date().toISOString().slice(0, 10);
+		const entry = `- **${today}** — ${text}`;
+		await this.vault.process(file, content => {
+			const lines = content.split('\n');
+			const start = lines.findIndex(l => /^##\s+Notes\s*$/i.test(l));
+			if (start === -1) {
+				return content.trimEnd() + '\n\n## Notes\n' + entry + '\n';
+			}
+			let end = start + 1;
+			while (end < lines.length && !/^##\s+/.test(lines[end])) end++;
+			// Insert after the section's last non-blank line so trailing blanks stay trailing.
+			let insertAt = end;
+			while (insertAt > start + 1 && lines[insertAt - 1].trim() === '') insertAt--;
+			lines.splice(insertAt, 0, entry);
+			return lines.join('\n');
+		});
+		return true;
+	}
+
+	/** Subfolder (inside the topics folder) that holds archived topics. The scanner
+	 *  excludes it, so archived topics disappear from every view but stay in the vault. */
+	static readonly ARCHIVE_SUBFOLDER = 'Archive';
+
+	getArchiveFolderPath(): string {
+		return `${this.getTopicsFolderPath()}/${SprintTopicService.ARCHIVE_SUBFOLDER}`;
+	}
+
+	/** Move topics that have been Done for MORE than `olderThanDays` days into the Archive
+	 *  subfolder. Uses fileManager.renameFile when available so wiki-links stay intact.
+	 *  Age comes from doneAt (falling back to statusSince); undateable done topics are only
+	 *  swept when `olderThanDays` is 0 ("all done topics"). Name clashes and unreadable
+	 *  files are skipped, never overwritten. Restore = move the file back out of Archive/. */
+	async archiveDoneTopics(olderThanDays: number): Promise<{ archived: number; skipped: number }> {
+		const topics = await this.getAllTopics();
+		const archivePath = this.getArchiveFolderPath();
+		let archived = 0;
+		let skipped = 0;
+		for (const t of topics) {
+			if (t.status !== 'done') continue;
+			const age = daysSinceIso(t.doneAt ?? t.statusSince);
+			const oldEnough = age === null ? olderThanDays === 0 : age > olderThanDays;
+			if (!oldEnough) continue;
+			const file = this.vault.getAbstractFileByPath(t.filePath);
+			if (!(file instanceof TFile)) { skipped++; continue; }
+			await this.ensureFolderExists(archivePath);
+			const target = `${archivePath}/${file.name}`;
+			if (this.vault.getAbstractFileByPath(target)) { skipped++; continue; }
+			if (this.app) {
+				await this.app.fileManager.renameFile(file, target);
+			} else {
+				await this.vault.rename(file, target);
+			}
+			archived++;
+		}
+		return { archived, skipped };
+	}
+
+	/** Snooze (defer) a topic until an ISO date, or wake it (null clears the field).
+	 *  Snoozing does not touch the status — the topic keeps its column and returns to it
+	 *  when the snooze expires or is cleared. */
+	async setTopicSnooze(filePath: string, snoozedUntil: string | null): Promise<void> {
+		await this.updateTopicFrontmatter(filePath, { snoozedUntil });
 	}
 
 	/** Update the sort order of a topic within its column */

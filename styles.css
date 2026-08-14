@@ -1684,6 +1684,12 @@
     border-color: var(--color-red, #e03e3e) !important;
 }
 
+/* "💤 Wake" button on a snoozed topic card — present but calm. */
+.friday-kanban-snoozed-active {
+    background: var(--background-modifier-hover) !important;
+    color: var(--text-muted) !important;
+}
+
 /* ─── Sprint Close Modal ─── */
 
 .friday-sprint-close-modal .modal-content {
@@ -2879,6 +2885,120 @@
 .friday-topics-list-dropzone-active {
     border-color: var(--interactive-accent);
     background-color: var(--background-modifier-hover);
+}
+
+/* ─── Board ownership groups (My topics / Team topics) ────── */
+
+.friday-topics-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.friday-topics-group + .friday-topics-group {
+    margin-top: 14px;
+}
+
+.friday-topics-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-normal);
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Board strips: Unassigned / Blocked / Snoozed shelf ──── */
+
+.friday-topics-strip {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* Horizontal card grid inside a strip. Doubles as a drop zone (unassign / flag blocked),
+   reusing the column drop-zone highlight class. */
+.friday-topics-strip-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px;
+    border: 2px dashed transparent;
+    border-radius: 6px;
+    padding: 2px;
+    transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.friday-topics-strip-unassigned {
+    border-left: 3px solid var(--color-blue, #4a90d9);
+}
+
+.friday-topics-strip-blocked {
+    border-left: 3px solid var(--color-red, #e5534b);
+}
+.friday-topics-strip-blocked > .friday-topics-list-header {
+    color: var(--color-red, #e5534b);
+}
+
+/* Snoozed shelf: muted and collapsible — deferred work should recede, not shout. */
+.friday-topics-snoozed {
+    border-left: 3px solid var(--text-faint);
+}
+.friday-topics-snoozed-header {
+    cursor: pointer;
+    user-select: none;
+}
+.friday-topics-snoozed .friday-kanban-card {
+    opacity: 0.75;
+}
+
+/* Aging badge: in-progress card sitting in its column past the aging-WIP threshold. */
+.friday-kanban-card-aging {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--color-orange, #e68a00);
+    background: var(--background-modifier-hover);
+    border-radius: 8px;
+    padding: 1px 6px;
+    white-space: nowrap;
+}
+
+/* JIRA drift chip: the topic's Kanban state contradicts its linked issues. */
+.friday-kanban-card-drift {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-orange, #e68a00);
+    cursor: help;
+}
+
+/* Snooze chip on topic cards: "💤 until <date>" while asleep, highlighted "woke" when
+   the date passed but the field wasn't cleared yet. */
+.friday-kanban-card-snoozed {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.friday-kanban-card-snoozed-woke {
+    color: var(--color-orange, #e68a00);
+    font-weight: 600;
+}
+
+/* Generic one-line text prompt (Add note to topic). */
+.friday-text-prompt-input {
+    width: 100%;
+    min-width: 320px;
+}
+
+/* List view: snoozed rows recede like done ones; 💤 marker sits before the title. */
+.friday-topics-table-row.is-snoozed {
+    opacity: 0.55;
+}
+.friday-topics-table-snoozed {
+    font-size: 12px;
+    margin-right: 4px;
 }
 
 /* ─── Topic Matrix (Impact/Effort + Eisenhower) ───────────── */
@@ -4173,8 +4293,21 @@ a.friday-topics-table-jirakey:hover {
 .friday-triage-proc-action:hover {
     background: var(--background-modifier-hover);
 }
-.friday-triage-proc-action-emoji {
-    font-size: 14px;
+.friday-triage-proc-action-icon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-muted);
+}
+.friday-triage-proc-action-icon svg {
+    width: 15px;
+    height: 15px;
+}
+.friday-triage-proc-action-danger,
+.friday-triage-proc-action-danger .friday-triage-proc-action-icon {
+    color: var(--text-error);
+}
+.friday-triage-proc-action-danger:hover {
+    background: rgba(var(--color-red-rgb), 0.1);
 }
 .friday-triage-proc-action kbd,
 .friday-triage-proc-preset kbd {
@@ -4251,4 +4384,42 @@ a.friday-topics-table-jirakey:hover {
     margin: 8px 0 18px;
     font-size: 13px;
     color: var(--text-muted);
+}
+
+/* ─── Row actions as real buttons (keyboard-accessible) ─── */
+
+/* Strip Obsidian's default button chrome — these are inline icon actions. */
+button.friday-row-action,
+button.friday-desc-toggle {
+    background: none;
+    border: none;
+    box-shadow: none;
+    height: auto;
+    padding: 0 4px;
+    display: inline-flex;
+    align-items: center;
+    font-family: inherit;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+button.friday-row-action:hover,
+button.friday-desc-toggle:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+.friday-row-action svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Keyboard navigation: reveal + ring on focus, reveal whole cluster while
+   focus is anywhere inside the row (mirrors the hover reveal). */
+button.friday-row-action:focus-visible,
+button.friday-desc-toggle:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
+}
+.friday-task-row:focus-within .friday-row-action {
+    opacity: 1;
 }

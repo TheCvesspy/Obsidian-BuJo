@@ -1,3 +1,4 @@
+import { setTooltip } from 'obsidian';
 import { PluginSettings } from '../../types';
 import { TaskStore } from '../../services/taskStore';
 import { TaskItemRowCallbacks } from './TaskItemRow';
@@ -37,7 +38,7 @@ export class TriageView {
 		header.createSpan({ cls: 'friday-pending-count', text: ` (${items.length} to sort)` });
 		if (items.length > 0 && this.onProcess) {
 			const btn = header.createEl('button', { cls: 'friday-triage-process-btn', text: '⚡ Process' });
-			btn.setAttribute('title', 'Triage one item at a time (keyboard-driven)');
+			setTooltip(btn, 'Triage one item at a time (keyboard-driven)');
 			btn.addEventListener('click', () => this.onProcess!());
 		}
 

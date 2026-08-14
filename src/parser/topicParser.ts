@@ -198,6 +198,10 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 	// above: startDate is an estimate; startedAt/doneAt are actuals. The bar's end is dueDate.
 	const startDate = parseIsoDate(fm['startDate']);
 
+	// Snooze (deliberate deferral). Kept even when the date has passed — the "woke" signal
+	// on the card comes from a stale value; clearing it is an explicit user action.
+	const snoozedUntil = parseIsoDate(fm['snoozedUntil']);
+
 	const assigneeRaw = fm['assignee']?.trim();
 	const assignee = assigneeRaw ? assigneeRaw : null;
 
@@ -247,6 +251,7 @@ export function parseTopicFile(content: string, filePath: string): SprintTopic {
 		effort,
 		dueDate,
 		startDate,
+		snoozedUntil,
 		statusSince,
 		startedAt,
 		doneAt,
@@ -299,7 +304,7 @@ export function foldedScalar(text: string): FoldedScalar {
 export const TOPIC_FRONTMATTER_ORDER: readonly string[] = [
 	'status', 'priority', 'jira',          // triage: what column / how urgent / which ticket
 	'assignee', 'waitingOn', 'lastNudged', // ownership and follow-up
-	'startDate', 'dueDate',                // schedule (drives the Roadmap)
+	'startDate', 'dueDate', 'snoozedUntil', // schedule (Roadmap span) + deliberate deferral
 	'impact', 'effort',                    // strategy (Impact/Effort matrix)
 	'blocked', 'sortOrder',                // board mechanics
 	'statusSince', 'startedAt', 'doneAt',  // auto-stamped flow timestamps

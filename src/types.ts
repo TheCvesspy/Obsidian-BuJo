@@ -186,6 +186,11 @@ export interface SprintTopic {
 	 *  Distinct from `startedAt` (the actual in-progress timestamp): this is an estimate
 	 *  the user sets to schedule the topic. The bar's right edge is `dueDate`. Null when not set. */
 	startDate: string | null;
+	/** Snoozed (deferred) until this ISO YYYY-MM-DD date. While the date is in the future the
+	 *  topic is parked on the Board's Snoozed shelf instead of its status column. Distinct from
+	 *  `blocked`: blocked work should continue but can't; snoozed work is deliberately not being
+	 *  worked on for a while. On the wake date the topic returns to its column. Null = not snoozed. */
+	snoozedUntil: string | null;
 	/** ISO YYYY-MM-DD the topic entered its current status (aging-WIP signal). Null on legacy topics. */
 	statusSince: string | null;
 	/** ISO YYYY-MM-DD the topic first entered 'in-progress' (cycle-time start). Never overwritten. Null if never started. */

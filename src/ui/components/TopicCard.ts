@@ -11,6 +11,14 @@ export interface TopicCardOptions {
 	onStatusChange?: (topic: SprintTopic, newStatus: TopicStatus) => void;
 	/** Called when the blocked toggle is pressed. Omit to hide the blocked button. */
 	onBlockedToggle?: (topic: SprintTopic) => void;
+	/** Called when the snooze button is pressed (the event anchors the preset menu).
+	 *  Omit to hide the snooze button. */
+	onSnooze?: (topic: SprintTopic, evt: MouseEvent) => void;
+	/** Called when the wake button is pressed on a topic with `snoozedUntil` set. */
+	onWake?: (topic: SprintTopic) => void;
+	/** Whether the topic's snooze is currently active (from isTopicSnoozed). Drives the
+	 *  chip wording: active → "until <date>", expired-but-set → "woke <date>". */
+	snoozedActive?: boolean;
 	/** If true, show impact/effort/due-date metadata chips below the title. */
 	showMatrixMetadata?: boolean;
 	/** Lookup live JIRA data for a given key. Called once per key in `topic.jira[]`.
@@ -22,6 +30,9 @@ export interface TopicCardOptions {
 	/** Number of days after `lastNudged` before a waiting-on chip is marked stale.
 	 *  Default 7. */
 	nudgeThresholdDays?: number;
+	/** Days an in-progress topic may sit in its column (statusSince) before the card
+	 *  shows an aging badge. Omit to hide aging badges entirely. */
+	agingThresholdDays?: number;
 	/** Compute the derived block state (manual OR JIRA OR dependency). When provided, the
 	 *  card shows a derived BLOCKED badge with reasons; when omitted, falls back to the
 	 *  manual `topic.blocked` flag only (so callers that don't pass it are unaffected). */
@@ -106,6 +117,20 @@ export function renderTopicCard(
 		headerEl.createSpan({ cls: 'friday-kanban-card-blocked', text: 'BLOCKED' });
 	}
 
+	// Aging badge: an in-progress topic that has sat in its column past the aging-WIP
+	// threshold gets a day counter — stalled work should be visible where you look,
+	// not only in Analytics.
+	if (opts.agingThresholdDays !== undefined && topic.status === 'in-progress') {
+		const inColumn = computeDaysSince(topic.statusSince);
+		if (inColumn !== null && inColumn >= opts.agingThresholdDays) {
+			const badge = headerEl.createSpan({
+				cls: 'friday-kanban-card-aging',
+				text: `⏱ ${inColumn}d`,
+			});
+			badge.setAttribute('title', `In Progress for ${inColumn} days (threshold ${opts.agingThresholdDays}) — since ${topic.statusSince}`);
+		}
+	}
+
 	// JIRA tickets (0..n) — one row per linked key
 	for (const key of topic.jira) {
 		const lookup = opts.jiraLookup?.(key);
@@ -153,6 +178,30 @@ export function renderTopicCard(
 		}
 	}
 
+	// JIRA drift detection: the topic's Kanban state contradicts its linked issues.
+	// Only cached issue data is consulted — a key that hasn't loaded yet contributes
+	// nothing, so the chip never flickers on stale/partial information.
+	if (opts.jiraLookup && topic.jira.length > 0) {
+		const driftReasons: string[] = [];
+		const cached = topic.jira
+			.map(key => ({ key, info: opts.jiraLookup!(key).info }))
+			.filter((x): x is { key: string; info: JiraIssueInfo } => x.info !== null);
+		if (topic.status === 'done') {
+			// Finished topic, unfinished tickets — the board says done but JIRA disagrees.
+			const stillOpen = cached.filter(x => x.info.statusCategory === 'new' || x.info.statusCategory === 'indeterminate');
+			if (stillOpen.length > 0) {
+				driftReasons.push(`Topic is done but still open in JIRA: ${stillOpen.map(x => x.key).join(', ')}`);
+			}
+		} else if (cached.length === topic.jira.length && cached.every(x => x.info.statusCategory === 'done')) {
+			// Every linked ticket resolved, topic still on the board — likely forgotten.
+			driftReasons.push(`All JIRA issues resolved (${cached.map(x => x.key).join(', ')}) but the topic isn't done`);
+		}
+		if (driftReasons.length > 0) {
+			const chip = card.createDiv({ cls: 'friday-kanban-card-drift', text: '⚠ JIRA drift' });
+			chip.setAttribute('title', driftReasons.join(' · '));
+		}
+	}
+
 	// Optional matrix metadata (impact / effort / due date)
 	if (opts.showMatrixMetadata) {
 		const chips: string[] = [];
@@ -174,6 +223,20 @@ export function renderTopicCard(
 			chip.addClass('friday-kanban-card-assignee-stale');
 		}
 		chip.setAttribute('title', lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
+	}
+
+	// Snooze chip. Active snooze shows the wake date; an expired-but-uncleared snooze shows
+	// a "woke" marker so the return to the board is noticed (and can be cleared or renewed).
+	if (topic.snoozedUntil) {
+		const chip = card.createDiv({ cls: 'friday-kanban-card-snoozed' });
+		if (opts.snoozedActive) {
+			chip.setText(`\u{1F4A4} until ${topic.snoozedUntil}`);
+			chip.setAttribute('title', `Snoozed until ${topic.snoozedUntil}`);
+		} else {
+			chip.setText(`\u{1F4A4} woke ${topic.snoozedUntil}`);
+			chip.addClass('friday-kanban-card-snoozed-woke');
+			chip.setAttribute('title', `Snooze expired on ${topic.snoozedUntil} — clear it with Wake or snooze again`);
+		}
 	}
 
 	// Optional waiting-on chip. If waitingOn looks like an email and resolves to a team
@@ -253,8 +316,9 @@ export function renderTopicCard(
 	const transitions = STATUS_TRANSITIONS[topic.status];
 	const wantsStatusButtons = opts.onStatusChange && (transitions.left || transitions.right);
 	const wantsBlockedButton = opts.onBlockedToggle !== undefined;
+	const wantsSnoozeButton = opts.onSnooze !== undefined || (opts.onWake !== undefined && !!topic.snoozedUntil);
 
-	if (wantsStatusButtons || wantsBlockedButton) {
+	if (wantsStatusButtons || wantsBlockedButton || wantsSnoozeButton) {
 		const actionsDiv = card.createDiv({ cls: 'friday-kanban-card-actions' });
 
 		if (wantsStatusButtons && transitions.left) {
@@ -271,6 +335,24 @@ export function renderTopicCard(
 			rightBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				opts.onStatusChange!(topic, transitions.right!);
+			});
+		}
+		if (topic.snoozedUntil && opts.onWake) {
+			const wakeBtn = actionsDiv.createEl('button', {
+				text: '\u{1F4A4} Wake',
+				cls: 'friday-kanban-snoozed-active',
+			});
+			wakeBtn.setAttribute('title', 'Clear the snooze — the topic returns to its column');
+			wakeBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				opts.onWake!(topic);
+			});
+		} else if (opts.onSnooze) {
+			const snoozeBtn = actionsDiv.createEl('button', { text: '\u{1F4A4}' });
+			snoozeBtn.setAttribute('title', 'Snooze topic — defer it off the board for a while');
+			snoozeBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				opts.onSnooze!(topic, e);
 			});
 		}
 		if (wantsBlockedButton) {
