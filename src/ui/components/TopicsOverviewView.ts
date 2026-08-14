@@ -5,7 +5,7 @@ import { JiraService } from '../../services/jiraService';
 import { deriveTopicBlock, toJiraSignal, isTopicSnoozed } from '../../services/topicStatus';
 import { buildTopicIndex, TopicIndex, criticalPath } from '../../services/topicGraph';
 import { getWeekStartConfigurable, getISOWeekNumber, resolveDoneWindowDays, daysSinceIso, isoToPluginDate, pluginDateToIso } from '../../utils/dateUtils';
-import { renderTopicCard } from './TopicCard';
+import { renderTopicCard, assigneeColor, assigneeInitials } from './TopicCard';
 import { DueDateModal } from '../DueDateModal';
 
 /**
@@ -27,6 +27,9 @@ type ScopeFilter = 'all' | 'backlog' | 'archived';
  *  fields would silently reset the user's filters after any topic write). */
 let snoozedShelfExpanded = false;
 let persistedScope: ScopeFilter = 'all';
+/** Ownership tab: 'mine' = my + unassigned topics, 'team' = topics assigned to others.
+ *  Only meaningful while the ownership split is active (identity set + assignment in use). */
+let persistedOwnershipTab: 'mine' | 'team' = 'mine';
 let persistedAssigneeFilter = 'all';
 let persistedRoadmapZoom: RoadmapZoom = 'week';
 let persistedRoadmapGroupBy: 'assignee' | 'status' = 'assignee';
@@ -96,6 +99,9 @@ export class TopicsOverviewView {
 	private roadmapBody: HTMLElement | null = null;
 	/** Dependency index over all topics, rebuilt at the start of each render. */
 	private depIndex: TopicIndex | null = null;
+	/** The scope/search/assignee-filtered set BEFORE the ownership-tab cut — WIP limits are a
+	 *  board-wide policy, so column totals must count both tabs. Set at the top of render(). */
+	private boardTotalsSource: SprintTopic[] = [];
 
 	// Filter / zoom state is backed by module-level variables (see top of file) so the
 	// user's choices survive the view re-instantiation every data refresh triggers.
@@ -137,8 +143,29 @@ export class TopicsOverviewView {
 		this.el.empty();
 		this.depIndex = buildTopicIndex(this.topics);
 
-		// Header toolbar: sub-mode toggle + scope filter + new topic
+		// The ownership tabs replace the dropdown's mine/assigned-out/unassigned lenses —
+		// a stale persisted value from before the split would double-filter to nothing.
+		const split = this.ownershipSplitActive();
+		if (split && ['mine', 'assigned-out', 'unassigned'].includes(this.assigneeFilter)) {
+			this.assigneeFilter = 'all';
+		}
+
+		// Apply scope/search/assignee filters first — the ownership tab counts need them.
+		const filtered = this.applyFilters(this.topics);
+		this.boardTotalsSource = filtered;
+		const visible = split
+			? filtered.filter(t => this.isMineTopic(t) === (persistedOwnershipTab === 'mine'))
+			: filtered;
+
+		// Header toolbar: ownership tabs + sub-mode toggle + scope filter + new topic
 		const header = this.el.createDiv({ cls: 'friday-topics-header' });
+
+		if (split) {
+			const tabs = header.createDiv({ cls: 'friday-topics-ownership' });
+			const mineCount = filtered.filter(t => this.isMineTopic(t)).length;
+			this.renderOwnershipTab(tabs, 'mine', '\u{1F464} Mine', mineCount);
+			this.renderOwnershipTab(tabs, 'team', '\u{1F465} Team', filtered.length - mineCount);
+		}
 
 		const modeGroup = header.createDiv({ cls: 'friday-topics-modeswitch' });
 		this.renderModeButton(modeGroup, 'board', 'Board');
@@ -156,34 +183,64 @@ export class TopicsOverviewView {
 		const newBtn = header.createEl('button', { cls: 'friday-btn', text: '+ Topic' });
 		newBtn.addEventListener('click', () => this.onNewTopic());
 
-		// Apply filters
-		const filtered = this.applyFilters(this.topics);
-
 		// Kick off JIRA prefetch for every visible topic (no-op if module disabled).
 		// Results land asynchronously and trigger a re-render via JiraService events.
-		this.prefetchJiraKeys(filtered);
+		this.prefetchJiraKeys(visible);
 
 		// Render sub-mode body
 		const body = this.el.createDiv({ cls: 'friday-topics-body' });
-		if (filtered.length === 0) {
+		if (visible.length === 0) {
 			this.renderEmptyState(body);
 			return;
 		}
 
 		switch (this.subMode) {
 			case 'list':
-				this.renderTable(body, filtered);
+				this.renderTable(body, visible);
 				break;
 			case 'board':
-				this.renderBoard(body, filtered);
+				this.renderBoard(body, visible);
 				break;
 			case 'impactEffort':
-				this.renderImpactEffort(body, filtered);
+				this.renderImpactEffort(body, visible);
 				break;
 			case 'roadmap':
-				this.renderRoadmap(body, filtered);
+				this.renderRoadmap(body, visible);
 				break;
 		}
+	}
+
+	/** Who "me" is — settings.jiraEmail doubles as the user's identity. */
+	private me(): string | null {
+		return this.settings.jiraEmail?.trim() || null;
+	}
+
+	/** The Mine/Team tab split is active when we know who "me" is AND assignment is
+	 *  actually in use — otherwise a solo/unassigned vault keeps the classic single view. */
+	private ownershipSplitActive(): boolean {
+		return !!this.me() && this.topics.some(t => !!t.assignee);
+	}
+
+	/** Mine = assigned to me or unassigned (unowned work is the lead's to hand out). */
+	private isMineTopic(t: SprintTopic): boolean {
+		return !t.assignee || t.assignee === this.me();
+	}
+
+	/** Team tab shows other people's work — assignees deserve visual prominence there. */
+	private emphasizeAssignees(): boolean {
+		return this.ownershipSplitActive() && persistedOwnershipTab === 'team';
+	}
+
+	private renderOwnershipTab(parent: HTMLElement, tab: 'mine' | 'team', label: string, count: number): void {
+		const btn = parent.createEl('button', { cls: 'friday-topics-ownership-tab' });
+		btn.createSpan({ text: label });
+		btn.createSpan({ cls: 'friday-topics-ownership-count', text: String(count) });
+		if (tab === persistedOwnershipTab) btn.addClass('is-active');
+		btn.addEventListener('click', () => {
+			if (tab === persistedOwnershipTab) return;
+			persistedOwnershipTab = tab;
+			this.render();
+		});
 	}
 
 	/** Empty body. Distinguishes a genuine first run (no topic files at all) from an
@@ -252,6 +309,11 @@ export class TopicsOverviewView {
 		const active = (this.settings.teamMembers ?? []).filter(m => m.active);
 		if (active.length === 0) return;
 
+		// With the Mine/Team tabs active, the ownership lenses are redundant: the Mine tab
+		// needs no assignee filter at all, and the Team tab only needs the per-member picks.
+		const split = this.ownershipSplitActive();
+		if (split && persistedOwnershipTab === 'mine') return;
+
 		const wrapper = parent.createDiv({ cls: 'friday-topics-assigneefilter' });
 		const select = wrapper.createEl('select', { cls: 'friday-topics-assignee-select' });
 		const addOpt = (value: string, label: string, disabled = false) => {
@@ -262,14 +324,15 @@ export class TopicsOverviewView {
 		};
 		addOpt('all', 'All assignees');
 
-		// "Mine" and "Assigned out" — only show when we know who "me" is.
+		// Classic single view — keep the ownership lenses (only when we know who "me" is).
+		// Under the Mine/Team split the tabs replace them; only per-member picks remain.
 		const me = this.settings.jiraEmail?.trim();
-		if (me) {
+		if (me && !split) {
 			addOpt('mine', '\u{1F464} Mine');
 			addOpt('assigned-out', '\u{1F4E8} Assigned out');
 		}
 
-		addOpt('unassigned', '\u2205 Unassigned');
+		if (!split) addOpt('unassigned', '\u2205 Unassigned');
 		addOpt('__sep__', '──────────', true);
 
 		for (const m of active) {
@@ -440,8 +503,18 @@ export class TopicsOverviewView {
 			} else {
 				const lookup = assigneeLookup ? assigneeLookup(topic.assignee) : null;
 				const label = lookup?.label ?? topic.assignee;
-				const span = assigneeCell.createSpan({
-					cls: 'friday-topics-table-assignee-name',
+				// Team tab: avatar + bold name so ownership scans at a glance.
+				const host = this.emphasizeAssignees()
+					? assigneeCell.createDiv({ cls: 'friday-assignee-cellwrap' })
+					: assigneeCell;
+				if (this.emphasizeAssignees()) {
+					const avatar = host.createSpan({ cls: 'friday-assignee-avatar', text: assigneeInitials(label) });
+					avatar.style.backgroundColor = assigneeColor(topic.assignee);
+				}
+				const span = host.createSpan({
+					cls: this.emphasizeAssignees()
+						? 'friday-topics-table-assignee-name is-emphasized'
+						: 'friday-topics-table-assignee-name',
 					text: label,
 				});
 				if (lookup?.isInactive) {
@@ -495,56 +568,32 @@ export class TopicsOverviewView {
 
 		// Two extractions before the columns fill:
 		//  - Snoozed (deliberately deferred) topics park on a collapsed shelf at the bottom.
-		//  - Blocked topics move to a per-group Blocked strip — they need attention, but they
-		//    were crowding In Progress without being workable.
+		//  - Blocked topics move to the Blocked strip — they need attention, but they were
+		//    crowding In Progress without being workable.
 		const snoozed = topics.filter(t => isTopicSnoozed(t));
 		const active = topics.filter(t => !isTopicSnoozed(t));
 		const isBlockedOut = (t: SprintTopic): boolean =>
 			t.status !== 'done' && deriveBlock(t).state === 'blocked';
 
-		// WIP limits are a board-wide policy: totals count column cards across every group.
+		// WIP limits are a board-wide policy: totals count column cards across BOTH ownership
+		// tabs (boardTotalsSource is the pre-tab-cut filtered set), so the pill means the same
+		// thing whichever tab is open.
 		const totals: Record<TopicStatus, number> = { 'backlog': 0, 'open': 0, 'in-progress': 0, 'done': 0 };
-		for (const t of active) {
-			if (!isBlockedOut(t)) totals[t.status]++;
+		for (const t of this.boardTotalsSource) {
+			if (!isTopicSnoozed(t) && !isBlockedOut(t)) totals[t.status]++;
 		}
 
-		// Mine-vs-team split needs to know who "me" is (settings.jiraEmail) AND assignment to
-		// actually be in use — otherwise a solo/unassigned vault would land everything in the
-		// Unassigned strip with empty columns. Unassigned rides with "my topics": unowned work
-		// is the lead's to hand out.
-		const me = this.settings.jiraEmail?.trim() || null;
-		const usesAssignment = active.some(t => !!t.assignee);
-
-		if (me && usesAssignment) {
-			const mine = active.filter(t => !t.assignee || t.assignee === me);
-			const team = active.filter(t => !!t.assignee && t.assignee !== me);
-			// Skip an entirely empty group (e.g. the assignee filter is set to one member) —
-			// four empty columns under a group header is noise, not information.
-			if (mine.length > 0) {
-				this.renderBoardGroup(parent, {
-					label: '\u{1F464} My topics',
-					columns: mine.filter(t => t.assignee === me && !isBlockedOut(t)),
-					unassigned: mine.filter(t => !t.assignee && !isBlockedOut(t)),
-					blocked: mine.filter(isBlockedOut),
-					totals,
-				});
-			}
-			if (team.length > 0) {
-				this.renderBoardGroup(parent, {
-					label: '\u{1F465} Team topics',
-					columns: team.filter(t => !isBlockedOut(t)),
-					blocked: team.filter(isBlockedOut),
-					totals,
-				});
-			}
-		} else {
-			this.renderBoardGroup(parent, {
-				label: null,
-				columns: active.filter(t => !isBlockedOut(t)),
-				blocked: active.filter(isBlockedOut),
-				totals,
-			});
-		}
+		// The Mine tab pulls unassigned topics into their own strip (unowned work is the
+		// lead's to hand out); the Team tab and the classic single view keep everything in
+		// the status columns.
+		const wantUnassignedStrip = this.ownershipSplitActive() && persistedOwnershipTab === 'mine';
+		this.renderBoardGroup(parent, {
+			label: null,
+			columns: active.filter(t => !isBlockedOut(t) && !(wantUnassignedStrip && !t.assignee)),
+			unassigned: wantUnassignedStrip ? active.filter(t => !t.assignee && !isBlockedOut(t)) : undefined,
+			blocked: active.filter(isBlockedOut),
+			totals,
+		});
 
 		this.renderSnoozedShelf(parent, snoozed);
 	}
@@ -600,8 +649,8 @@ export class TopicsOverviewView {
 				cls: 'friday-topics-list-count',
 				text: limit !== null ? `${opts.totals[status]} / ${limit}` : `${group.length}`,
 			});
-			if (limit !== null && opts.label) {
-				countEl.setAttribute('title', 'Counts cards in this column across all groups');
+			if (limit !== null && this.ownershipSplitActive()) {
+				countEl.setAttribute('title', 'Counts cards in this column across both the Mine and Team tabs');
 			}
 			if (overWip) {
 				countEl.addClass('is-over-wip');
@@ -925,6 +974,7 @@ export class TopicsOverviewView {
 				new Notice(`Woke: ${t.title}`);
 			},
 			snoozedActive: isTopicSnoozed(topic),
+			emphasizeAssignee: this.emphasizeAssignees(),
 			jiraLookup,
 			assigneeLookup,
 			deriveBlock: this.makeDeriveBlock(),

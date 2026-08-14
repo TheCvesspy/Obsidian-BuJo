@@ -19,6 +19,10 @@ export interface TopicCardOptions {
 	/** Whether the topic's snooze is currently active (from isTopicSnoozed). Drives the
 	 *  chip wording: active → "until <date>", expired-but-set → "woke <date>". */
 	snoozedActive?: boolean;
+	/** Render the assignee prominently (colored initials avatar + bold name right under the
+	 *  title) instead of the small muted chip. Used by the Team tab, where whose-topic-is-this
+	 *  is the primary scanning question. */
+	emphasizeAssignee?: boolean;
 	/** If true, show impact/effort/due-date metadata chips below the title. */
 	showMatrixMetadata?: boolean;
 	/** Lookup live JIRA data for a given key. Called once per key in `topic.jira[]`.
@@ -56,6 +60,22 @@ const STATUS_LABELS: Record<TopicStatus, string> = {
 	'in-progress': 'In Progress',
 	'done': 'Done',
 };
+
+/** Deterministic per-person color from a stable key (the assignee email). Fixed saturation /
+ *  lightness keep white initials readable on both light and dark themes; the hue is a simple
+ *  string hash so the same person gets the same color on every card. */
+export function assigneeColor(key: string): string {
+	let h = 0;
+	for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+	return `hsl(${h % 360}, 48%, 42%)`;
+}
+
+/** Up to two initials from a display label ("Jana Dvořáková" → "JD", "jan.novak@x.cz" → "JN"). */
+export function assigneeInitials(label: string): string {
+	const parts = label.split(/[\s._@-]+/).filter(Boolean);
+	const initials = parts.slice(0, 2).map(p => p[0].toUpperCase()).join('');
+	return initials || '?';
+}
 
 /** Days between `isoDate` (YYYY-MM-DD) and today. Returns null for invalid input. */
 function computeDaysSince(isoDate: string | null): number | null {
@@ -129,6 +149,19 @@ export function renderTopicCard(
 			});
 			badge.setAttribute('title', `In Progress for ${inColumn} days (threshold ${opts.agingThresholdDays}) — since ${topic.statusSince}`);
 		}
+	}
+
+	// Prominent assignee identity (Team tab): colored initials avatar + name right under the
+	// title. Replaces the small muted chip further down when active.
+	if (opts.emphasizeAssignee && topic.assignee) {
+		const lookup = opts.assigneeLookup?.(topic.assignee) ?? null;
+		const label = lookup?.label ?? topic.assignee;
+		const hero = card.createDiv({ cls: 'friday-kanban-card-assignee-hero' });
+		const avatar = hero.createSpan({ cls: 'friday-assignee-avatar', text: assigneeInitials(label) });
+		avatar.style.backgroundColor = assigneeColor(topic.assignee);
+		const name = hero.createSpan({ cls: 'friday-kanban-card-assignee-name', text: label });
+		if (!lookup || lookup.isInactive) name.addClass('friday-kanban-card-assignee-stale');
+		hero.setAttribute('title', lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
 	}
 
 	// JIRA tickets (0..n) — one row per linked key
@@ -213,8 +246,8 @@ export function renderTopicCard(
 		}
 	}
 
-	// Optional assignee chip (shown when the topic has one set)
-	if (topic.assignee) {
+	// Optional assignee chip (shown when the topic has one set and the hero row isn't active)
+	if (topic.assignee && !opts.emphasizeAssignee) {
 		const lookup = opts.assigneeLookup?.(topic.assignee) ?? null;
 		const label = lookup?.label ?? topic.assignee;
 		const chip = card.createDiv({ cls: 'friday-kanban-card-assignee' });

@@ -7475,6 +7475,17 @@ var STATUS_LABELS = {
   "in-progress": "In Progress",
   "done": "Done"
 };
+function assigneeColor(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i++)
+    h = h * 31 + key.charCodeAt(i) >>> 0;
+  return `hsl(${h % 360}, 48%, 42%)`;
+}
+function assigneeInitials(label) {
+  const parts = label.split(/[\s._@-]+/).filter(Boolean);
+  const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+  return initials || "?";
+}
 function computeDaysSince(isoDate) {
   if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate))
     return null;
@@ -7486,7 +7497,7 @@ function computeDaysSince(isoDate) {
   return Math.floor((today - then) / (24 * 60 * 60 * 1e3));
 }
 function renderTopicCard(container, topic, opts) {
-  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
   const card = container.createDiv({ cls: "friday-kanban-card" });
   if (opts.draggable) {
     card.draggable = true;
@@ -7540,11 +7551,22 @@ function renderTopicCard(container, topic, opts) {
       badge.setAttribute("title", `In Progress for ${inColumn} days (threshold ${opts.agingThresholdDays}) \u2014 since ${topic.statusSince}`);
     }
   }
+  if (opts.emphasizeAssignee && topic.assignee) {
+    const lookup = (_c = (_b = opts.assigneeLookup) == null ? void 0 : _b.call(opts, topic.assignee)) != null ? _c : null;
+    const label = (_d = lookup == null ? void 0 : lookup.label) != null ? _d : topic.assignee;
+    const hero = card.createDiv({ cls: "friday-kanban-card-assignee-hero" });
+    const avatar = hero.createSpan({ cls: "friday-assignee-avatar", text: assigneeInitials(label) });
+    avatar.style.backgroundColor = assigneeColor(topic.assignee);
+    const name = hero.createSpan({ cls: "friday-kanban-card-assignee-name", text: label });
+    if (!lookup || lookup.isInactive)
+      name.addClass("friday-kanban-card-assignee-stale");
+    hero.setAttribute("title", lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
+  }
   for (const key of topic.jira) {
-    const lookup = (_b = opts.jiraLookup) == null ? void 0 : _b.call(opts, key);
-    const info = (_c = lookup == null ? void 0 : lookup.info) != null ? _c : null;
-    const loading = (_d = lookup == null ? void 0 : lookup.loading) != null ? _d : false;
-    const error = (_e = lookup == null ? void 0 : lookup.error) != null ? _e : null;
+    const lookup = (_e = opts.jiraLookup) == null ? void 0 : _e.call(opts, key);
+    const info = (_f = lookup == null ? void 0 : lookup.info) != null ? _f : null;
+    const loading = (_g = lookup == null ? void 0 : lookup.loading) != null ? _g : false;
+    const error = (_h = lookup == null ? void 0 : lookup.error) != null ? _h : null;
     const jiraRow = card.createDiv({ cls: "friday-kanban-card-jira-row" });
     const keyEl = jiraRow.createSpan({ cls: "friday-kanban-card-jira", text: key });
     if (info == null ? void 0 : info.issueUrl) {
@@ -7568,7 +7590,7 @@ function renderTopicCard(container, topic, opts) {
         text: info.status
       });
       statusEl.setAttribute("title", `JIRA status: ${info.status}`);
-      const assigneeLabel = (_f = info.assignee) != null ? _f : "Unassigned";
+      const assigneeLabel = (_i = info.assignee) != null ? _i : "Unassigned";
       const assigneeEl = jiraRow.createSpan({
         cls: "friday-jira-chip friday-jira-assignee",
         text: assigneeLabel
@@ -7611,9 +7633,9 @@ function renderTopicCard(container, topic, opts) {
       card.createDiv({ cls: "friday-kanban-card-meta", text: chips.join(" \u2022 ") });
     }
   }
-  if (topic.assignee) {
-    const lookup = (_h = (_g = opts.assigneeLookup) == null ? void 0 : _g.call(opts, topic.assignee)) != null ? _h : null;
-    const label = (_i = lookup == null ? void 0 : lookup.label) != null ? _i : topic.assignee;
+  if (topic.assignee && !opts.emphasizeAssignee) {
+    const lookup = (_k = (_j = opts.assigneeLookup) == null ? void 0 : _j.call(opts, topic.assignee)) != null ? _k : null;
+    const label = (_l = lookup == null ? void 0 : lookup.label) != null ? _l : topic.assignee;
     const chip = card.createDiv({ cls: "friday-kanban-card-assignee" });
     chip.setText(label);
     if (!lookup || lookup.isInactive) {
@@ -7634,10 +7656,10 @@ function renderTopicCard(container, topic, opts) {
   }
   if (topic.waitingOn) {
     const looksLikeEmail = topic.waitingOn.includes("@");
-    const lookup = looksLikeEmail ? (_k = (_j = opts.assigneeLookup) == null ? void 0 : _j.call(opts, topic.waitingOn)) != null ? _k : null : null;
-    const label = (_l = lookup == null ? void 0 : lookup.label) != null ? _l : topic.waitingOn;
+    const lookup = looksLikeEmail ? (_n = (_m = opts.assigneeLookup) == null ? void 0 : _m.call(opts, topic.waitingOn)) != null ? _n : null : null;
+    const label = (_o = lookup == null ? void 0 : lookup.label) != null ? _o : topic.waitingOn;
     const daysSinceNudge = computeDaysSince(topic.lastNudged);
-    const threshold = (_m = opts.nudgeThresholdDays) != null ? _m : 7;
+    const threshold = (_p = opts.nudgeThresholdDays) != null ? _p : 7;
     const suffix = topic.lastNudged === null ? " \xB7 never nudged" : daysSinceNudge !== null ? ` \xB7 ${daysSinceNudge}d` : "";
     const chip = card.createDiv({ cls: "friday-kanban-card-waiting" });
     chip.setText(`\u23F3 ${label}${suffix}`);
@@ -7646,7 +7668,7 @@ function renderTopicCard(container, topic, opts) {
       chip.addClass("friday-kanban-card-waiting-stale");
     chip.setAttribute("title", `Waiting on: ${label}${suffix}`);
   }
-  const deps = (_n = opts.dependencyLookup) == null ? void 0 : _n.call(opts, topic);
+  const deps = (_q = opts.dependencyLookup) == null ? void 0 : _q.call(opts, topic);
   if (deps && deps.blockedBy.length > 0) {
     const row = card.createDiv({ cls: "friday-kanban-card-deps" });
     row.createSpan({ cls: "friday-kanban-card-deps-label", text: "\u26D3 Blocked by: " });
@@ -7796,6 +7818,7 @@ var DueDateModal = class extends import_obsidian19.Modal {
 // src/ui/components/TopicsOverviewView.ts
 var snoozedShelfExpanded = false;
 var persistedScope = "all";
+var persistedOwnershipTab = "mine";
 var persistedAssigneeFilter = "all";
 var persistedRoadmapZoom = "week";
 var persistedRoadmapGroupBy = "assignee";
@@ -7847,6 +7870,9 @@ var TopicsOverviewView = class {
     this.roadmapBody = null;
     /** Dependency index over all topics, rebuilt at the start of each render. */
     this.depIndex = null;
+    /** The scope/search/assignee-filtered set BEFORE the ownership-tab cut — WIP limits are a
+     *  board-wide policy, so column totals must count both tabs. Set at the top of render(). */
+    this.boardTotalsSource = [];
     this.el = container.createDiv({ cls: "friday-topics-overview" });
     this.subMode = initialSubMode;
   }
@@ -7887,7 +7913,20 @@ var TopicsOverviewView = class {
   render() {
     this.el.empty();
     this.depIndex = buildTopicIndex(this.topics);
+    const split = this.ownershipSplitActive();
+    if (split && ["mine", "assigned-out", "unassigned"].includes(this.assigneeFilter)) {
+      this.assigneeFilter = "all";
+    }
+    const filtered = this.applyFilters(this.topics);
+    this.boardTotalsSource = filtered;
+    const visible = split ? filtered.filter((t) => this.isMineTopic(t) === (persistedOwnershipTab === "mine")) : filtered;
     const header = this.el.createDiv({ cls: "friday-topics-header" });
+    if (split) {
+      const tabs = header.createDiv({ cls: "friday-topics-ownership" });
+      const mineCount = filtered.filter((t) => this.isMineTopic(t)).length;
+      this.renderOwnershipTab(tabs, "mine", "\u{1F464} Mine", mineCount);
+      this.renderOwnershipTab(tabs, "team", "\u{1F465} Team", filtered.length - mineCount);
+    }
     const modeGroup = header.createDiv({ cls: "friday-topics-modeswitch" });
     this.renderModeButton(modeGroup, "board", "Board");
     this.renderModeButton(modeGroup, "list", "List");
@@ -7900,27 +7939,57 @@ var TopicsOverviewView = class {
     this.renderAssigneeFilter(header);
     const newBtn = header.createEl("button", { cls: "friday-btn", text: "+ Topic" });
     newBtn.addEventListener("click", () => this.onNewTopic());
-    const filtered = this.applyFilters(this.topics);
-    this.prefetchJiraKeys(filtered);
+    this.prefetchJiraKeys(visible);
     const body = this.el.createDiv({ cls: "friday-topics-body" });
-    if (filtered.length === 0) {
+    if (visible.length === 0) {
       this.renderEmptyState(body);
       return;
     }
     switch (this.subMode) {
       case "list":
-        this.renderTable(body, filtered);
+        this.renderTable(body, visible);
         break;
       case "board":
-        this.renderBoard(body, filtered);
+        this.renderBoard(body, visible);
         break;
       case "impactEffort":
-        this.renderImpactEffort(body, filtered);
+        this.renderImpactEffort(body, visible);
         break;
       case "roadmap":
-        this.renderRoadmap(body, filtered);
+        this.renderRoadmap(body, visible);
         break;
     }
+  }
+  /** Who "me" is — settings.jiraEmail doubles as the user's identity. */
+  me() {
+    var _a;
+    return ((_a = this.settings.jiraEmail) == null ? void 0 : _a.trim()) || null;
+  }
+  /** The Mine/Team tab split is active when we know who "me" is AND assignment is
+   *  actually in use — otherwise a solo/unassigned vault keeps the classic single view. */
+  ownershipSplitActive() {
+    return !!this.me() && this.topics.some((t) => !!t.assignee);
+  }
+  /** Mine = assigned to me or unassigned (unowned work is the lead's to hand out). */
+  isMineTopic(t) {
+    return !t.assignee || t.assignee === this.me();
+  }
+  /** Team tab shows other people's work — assignees deserve visual prominence there. */
+  emphasizeAssignees() {
+    return this.ownershipSplitActive() && persistedOwnershipTab === "team";
+  }
+  renderOwnershipTab(parent, tab, label, count) {
+    const btn = parent.createEl("button", { cls: "friday-topics-ownership-tab" });
+    btn.createSpan({ text: label });
+    btn.createSpan({ cls: "friday-topics-ownership-count", text: String(count) });
+    if (tab === persistedOwnershipTab)
+      btn.addClass("is-active");
+    btn.addEventListener("click", () => {
+      if (tab === persistedOwnershipTab)
+        return;
+      persistedOwnershipTab = tab;
+      this.render();
+    });
   }
   /** Empty body. Distinguishes a genuine first run (no topic files at all) from an
    *  over-eager filter, so a fresh install — which lands here, since Topics is the default
@@ -7987,6 +8056,9 @@ var TopicsOverviewView = class {
     const active = ((_a = this.settings.teamMembers) != null ? _a : []).filter((m) => m.active);
     if (active.length === 0)
       return;
+    const split = this.ownershipSplitActive();
+    if (split && persistedOwnershipTab === "mine")
+      return;
     const wrapper = parent.createDiv({ cls: "friday-topics-assigneefilter" });
     const select = wrapper.createEl("select", { cls: "friday-topics-assignee-select" });
     const addOpt = (value, label, disabled = false) => {
@@ -7999,11 +8071,12 @@ var TopicsOverviewView = class {
     };
     addOpt("all", "All assignees");
     const me = (_b = this.settings.jiraEmail) == null ? void 0 : _b.trim();
-    if (me) {
+    if (me && !split) {
       addOpt("mine", "\u{1F464} Mine");
       addOpt("assigned-out", "\u{1F4E8} Assigned out");
     }
-    addOpt("unassigned", "\u2205 Unassigned");
+    if (!split)
+      addOpt("unassigned", "\u2205 Unassigned");
     addOpt("__sep__", "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", true);
     for (const m of active) {
       addOpt(m.email, m.nickname || m.fullName || m.email);
@@ -8150,8 +8223,13 @@ var TopicsOverviewView = class {
       } else {
         const lookup = assigneeLookup ? assigneeLookup(topic.assignee) : null;
         const label = (_d = lookup == null ? void 0 : lookup.label) != null ? _d : topic.assignee;
-        const span = assigneeCell.createSpan({
-          cls: "friday-topics-table-assignee-name",
+        const host = this.emphasizeAssignees() ? assigneeCell.createDiv({ cls: "friday-assignee-cellwrap" }) : assigneeCell;
+        if (this.emphasizeAssignees()) {
+          const avatar = host.createSpan({ cls: "friday-assignee-avatar", text: assigneeInitials(label) });
+          avatar.style.backgroundColor = assigneeColor(topic.assignee);
+        }
+        const span = host.createSpan({
+          cls: this.emphasizeAssignees() ? "friday-topics-table-assignee-name is-emphasized" : "friday-topics-table-assignee-name",
           text: label
         });
         if (lookup == null ? void 0 : lookup.isInactive) {
@@ -8195,46 +8273,23 @@ var TopicsOverviewView = class {
   }
   // ── Board sub-mode (kanban) ───────────────────────────────────
   renderBoard(parent, topics) {
-    var _a;
     const deriveBlock = this.makeDeriveBlock();
     const snoozed = topics.filter((t) => isTopicSnoozed(t));
     const active = topics.filter((t) => !isTopicSnoozed(t));
     const isBlockedOut = (t) => t.status !== "done" && deriveBlock(t).state === "blocked";
     const totals = { "backlog": 0, "open": 0, "in-progress": 0, "done": 0 };
-    for (const t of active) {
-      if (!isBlockedOut(t))
+    for (const t of this.boardTotalsSource) {
+      if (!isTopicSnoozed(t) && !isBlockedOut(t))
         totals[t.status]++;
     }
-    const me = ((_a = this.settings.jiraEmail) == null ? void 0 : _a.trim()) || null;
-    const usesAssignment = active.some((t) => !!t.assignee);
-    if (me && usesAssignment) {
-      const mine = active.filter((t) => !t.assignee || t.assignee === me);
-      const team = active.filter((t) => !!t.assignee && t.assignee !== me);
-      if (mine.length > 0) {
-        this.renderBoardGroup(parent, {
-          label: "\u{1F464} My topics",
-          columns: mine.filter((t) => t.assignee === me && !isBlockedOut(t)),
-          unassigned: mine.filter((t) => !t.assignee && !isBlockedOut(t)),
-          blocked: mine.filter(isBlockedOut),
-          totals
-        });
-      }
-      if (team.length > 0) {
-        this.renderBoardGroup(parent, {
-          label: "\u{1F465} Team topics",
-          columns: team.filter((t) => !isBlockedOut(t)),
-          blocked: team.filter(isBlockedOut),
-          totals
-        });
-      }
-    } else {
-      this.renderBoardGroup(parent, {
-        label: null,
-        columns: active.filter((t) => !isBlockedOut(t)),
-        blocked: active.filter(isBlockedOut),
-        totals
-      });
-    }
+    const wantUnassignedStrip = this.ownershipSplitActive() && persistedOwnershipTab === "mine";
+    this.renderBoardGroup(parent, {
+      label: null,
+      columns: active.filter((t) => !isBlockedOut(t) && !(wantUnassignedStrip && !t.assignee)),
+      unassigned: wantUnassignedStrip ? active.filter((t) => !t.assignee && !isBlockedOut(t)) : void 0,
+      blocked: active.filter(isBlockedOut),
+      totals
+    });
     this.renderSnoozedShelf(parent, snoozed);
   }
   /** One ownership group of the board: a header (when labelled), the four status columns,
@@ -8269,8 +8324,8 @@ var TopicsOverviewView = class {
         cls: "friday-topics-list-count",
         text: limit !== null ? `${opts.totals[status]} / ${limit}` : `${group.length}`
       });
-      if (limit !== null && opts.label) {
-        countEl.setAttribute("title", "Counts cards in this column across all groups");
+      if (limit !== null && this.ownershipSplitActive()) {
+        countEl.setAttribute("title", "Counts cards in this column across both the Mine and Team tabs");
       }
       if (overWip) {
         countEl.addClass("is-over-wip");
@@ -8568,6 +8623,7 @@ var TopicsOverviewView = class {
         new import_obsidian20.Notice(`Woke: ${t.title}`);
       },
       snoozedActive: isTopicSnoozed(topic),
+      emphasizeAssignee: this.emphasizeAssignees(),
       jiraLookup,
       assigneeLookup,
       deriveBlock: this.makeDeriveBlock(),

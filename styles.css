@@ -2887,16 +2887,94 @@
     background-color: var(--background-modifier-hover);
 }
 
-/* ─── Board ownership groups (My topics / Team topics) ────── */
+/* ─── Ownership tabs (Mine / Team) ─────────────────────────── */
 
+.friday-topics-ownership {
+    display: flex;
+    gap: 3px;
+    background: var(--background-modifier-hover);
+    border-radius: 8px;
+    padding: 3px;
+}
+
+.friday-topics-ownership-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.friday-topics-ownership-tab.is-active {
+    background: var(--background-primary);
+    color: var(--text-normal);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.friday-topics-ownership-count {
+    font-size: 11px;
+    background: var(--background-modifier-border);
+    border-radius: 10px;
+    padding: 0 7px;
+}
+
+.friday-topics-ownership-tab.is-active .friday-topics-ownership-count {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent, #fff);
+}
+
+/* ─── Assignee identity (avatar + name, Team tab) ──────────── */
+
+.friday-assignee-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+}
+
+.friday-kanban-card-assignee-hero {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 2px 0;
+}
+
+.friday-kanban-card-assignee-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.friday-assignee-cellwrap {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.friday-topics-table-assignee-name.is-emphasized {
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+/* Legacy in-board group header (kept for the label:null single-group path). */
 .friday-topics-group {
     display: flex;
     flex-direction: column;
     gap: 8px;
-}
-
-.friday-topics-group + .friday-topics-group {
-    margin-top: 14px;
 }
 
 .friday-topics-group-header {
