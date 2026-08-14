@@ -37,7 +37,7 @@ import { SprintTopicModal } from './ui/SprintTopicModal';
 import { JiraKeyPromptModal } from './ui/JiraKeyPromptModal';
 import { TopicSwitcherModal } from './ui/TopicSwitcherModal';
 import { pickFromList } from './ui/pickers';
-import { getWeekId, getWeekStartConfigurable, isoToPluginDate, pluginDateToIso } from './utils/dateUtils';
+import { getWeekId, getWeekStartConfigurable, isoToPluginDate, pluginDateToIso, formatDateISO } from './utils/dateUtils';
 import { McpServer, generateMcpToken, noticeForError } from './mcp/server';
 import { taskTools } from './mcp/tools/tasks';
 import { topicTools } from './mcp/tools/topics';
@@ -1076,7 +1076,13 @@ export default class FridayPlugin extends Plugin {
 			try {
 				const rollup = this.teamRollupService.buildRollup();
 				const r = rollup.members.find(x => x.email.toLowerCase() === (member.email ?? '').toLowerCase());
-				const agenda = r ? buildOneOnOneAgenda(r) : undefined;
+				const agenda = r
+					? await buildOneOnOneAgenda(r, {
+						vault: this.app.vault,
+						sinceIso: member.lastOneOnOne ? formatDateISO(member.lastOneOnOne) : null,
+						agingThresholdDays: this.settings.agingWipThresholdDays ?? 7,
+					})
+					: undefined;
 				const file = await this.teamMemberService.startOneOnOne(member, new Date(), agenda);
 				const leaf = this.app.workspace.getLeaf(false);
 				await leaf.openFile(file);

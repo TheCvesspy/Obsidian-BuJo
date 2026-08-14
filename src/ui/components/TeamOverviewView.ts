@@ -3,6 +3,7 @@ import { TeamMemberPage, PluginSettings, MemberRollup, SprintTopic, JiraDashboar
 import { VIEW_TYPE_JIRA_DASHBOARD } from '../../constants';
 import { TeamMemberService, CadenceSignal } from '../../services/teamMemberService';
 import { buildOneOnOneAgenda } from '../../services/teamRollupService';
+import { formatDateISO } from '../../utils/dateUtils';
 import { createCadenceChip, createLoadChip } from '../icons';
 import { OneOnOneModal } from '../OneOnOneModal';
 
@@ -297,7 +298,13 @@ export class TeamOverviewView {
 	private async startOneOnOne(member: TeamMemberPage): Promise<void> {
 		try {
 			const r = this.rollupByEmail.get((member.email ?? '').toLowerCase());
-			const agenda = r ? buildOneOnOneAgenda(r) : undefined;
+			const agenda = r
+				? await buildOneOnOneAgenda(r, {
+					vault: this.app.vault,
+					sinceIso: member.lastOneOnOne ? formatDateISO(member.lastOneOnOne) : null,
+					agingThresholdDays: this.settings.agingWipThresholdDays ?? 7,
+				})
+				: undefined;
 			const file = await this.service.startOneOnOne(member, new Date(), agenda);
 			const leaf = this.app.workspace.getLeaf(false);
 			await leaf.openFile(file);

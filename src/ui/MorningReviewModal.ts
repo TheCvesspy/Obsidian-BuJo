@@ -1,8 +1,10 @@
-import { App, Modal, Notice } from 'obsidian';
+import { App, Modal, Notice, TFile } from 'obsidian';
 import { SprintTopic, PluginSettings, TeamMember } from '../types';
 import { DailyNoteService } from '../services/dailyNoteService';
 import { TeamMemberService, OverdueOneOnOne } from '../services/teamMemberService';
 import { SprintTopicService } from '../services/sprintTopicService';
+import { deriveTopicBlock, deriveTopicRisk, TopicRisk } from '../services/topicStatus';
+import { buildTopicIndex } from '../services/topicGraph';
 import { isoToPluginDate } from '../utils/dateUtils';
 import { buildTaskLine } from './InsertTaskModal';
 
@@ -42,6 +44,11 @@ export class MorningReviewModal extends Modal {
             this.renderOverdueOneOnOnes(contentEl, overdueOneOnOnes);
         }
 
+        const atRiskTopics = await this.getAtRiskTopics();
+        if (atRiskTopics.length > 0) {
+            this.renderAtRiskTopics(contentEl, atRiskTopics);
+        }
+
         const staleWaitingTopics = await this.getStaleWaitingTopics();
         if (staleWaitingTopics.length > 0) {
             this.renderStaleWaitingTopics(contentEl, staleWaitingTopics);
@@ -52,7 +59,7 @@ export class MorningReviewModal extends Modal {
             this.renderWokenTopics(contentEl, wokenTopics);
         }
 
-        if (overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0 && wokenTopics.length === 0) {
+        if (overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0 && wokenTopics.length === 0 && atRiskTopics.length === 0) {
             contentEl.createEl('p', {
                 text: 'Nothing needs a nudge. Your due & overdue work lives in the Today tab.',
                 cls: 'friday-empty',
@@ -183,6 +190,65 @@ export class MorningReviewModal extends Modal {
                 const daysSince = Math.floor((todayMs - then) / (24 * 60 * 60 * 1000));
                 return daysSince > threshold;
             });
+    }
+
+    /** Topics at schedule risk (deriveTopicRisk): overdue, or due within the risk window
+     *  while not started / behind on tasks / blocked. Sorted soonest-due first. Blocked
+     *  state feeds from the manual flag + dependency graph (no JIRA cache in the modal). */
+    private async getAtRiskTopics(): Promise<Array<{ topic: SprintTopic; risk: TopicRisk }>> {
+        if (!this.topicService) return [];
+        const all = await this.topicService.getAllTopics();
+        const index = buildTopicIndex(all);
+        const isBlocked = (t: SprintTopic): boolean =>
+            deriveTopicBlock({ topic: t, blockersOf: (x) => index.blockersOf(x) }).state === 'blocked';
+        return all
+            .map(topic => ({ topic, risk: deriveTopicRisk(topic, isBlocked(topic)) }))
+            .filter(x => x.risk.atRisk)
+            .sort((a, b) => (a.topic.dueDate ?? '').localeCompare(b.topic.dueDate ?? ''));
+    }
+
+    /** Section: topics at schedule risk. Read-only rows (the fix lives on the board) with
+     *  an Open action that jumps to the topic file. */
+    private renderAtRiskTopics(container: HTMLElement, items: Array<{ topic: SprintTopic; risk: TopicRisk }>): void {
+        const section = container.createDiv({ cls: 'friday-review-section friday-review-atrisk' });
+        const header = section.createDiv({ cls: 'friday-review-section-header' });
+        header.createSpan({ text: '⚠ At risk', cls: 'friday-review-section-title' });
+        header.createSpan({ text: ` (${items.length})`, cls: 'friday-review-section-count' });
+
+        const members: TeamMember[] = this.settings?.teamMembers ?? [];
+        const byEmail = new Map(members.map(m => [m.email, m]));
+
+        for (const { topic, risk } of items) {
+            const row = section.createDiv({ cls: 'friday-migration-item friday-atrisk-row' });
+
+            const infoEl = row.createDiv({ cls: 'friday-migration-item-info' });
+            const textEl = infoEl.createDiv({ cls: 'friday-migration-item-text' });
+            textEl.createSpan({ text: topic.title, cls: 'friday-waiting-topic' });
+            if (topic.assignee) {
+                const m = byEmail.get(topic.assignee);
+                textEl.createSpan({
+                    cls: 'friday-atrisk-owner',
+                    text: ` — ${m ? (m.nickname || m.fullName || m.email) : topic.assignee}`,
+                });
+            }
+
+            const metaEl = infoEl.createDiv({ cls: 'friday-migration-item-meta' });
+            metaEl.createSpan({ text: risk.reasons.join(' · '), cls: 'friday-atrisk-reasons' });
+
+            const actionsEl = row.createDiv({ cls: 'friday-migration-item-actions' });
+            const openBtn = actionsEl.createEl('button', { text: 'Open', cls: 'friday-btn' });
+            openBtn.addEventListener('click', async () => {
+                const file = this.app.vault.getAbstractFileByPath(topic.filePath);
+                if (!(file instanceof TFile)) {
+                    new Notice(`Topic file not found: ${topic.filePath}`);
+                    return;
+                }
+                const leaf = this.app.workspace.getLeaf(false);
+                await leaf.openFile(file);
+                this.app.workspace.revealLeaf(leaf);
+                this.close();
+            });
+        }
     }
 
     /** Topics whose snooze has expired but wasn't cleared: `snoozedUntil` is set, the date

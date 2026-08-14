@@ -484,10 +484,11 @@ v3 retired the old daily-migration morning-shuffle. Tasks now **float by date** 
 
 ### What the modal shows (`MorningReviewModal`)
 1. **Overdue 1:1s** — team members whose 1:1 cadence has elapsed (`teamService.getOverdueOneOnOnes()`). Each row's **Schedule 1:1** appends a reminder line to today's daily note.
-2. **Waiting on** — non-done topics with `waitingOn` set whose last nudge is missing or older than `nudgeThresholdDays`. Each row offers **Just nudged** (`markNudged` → updates `lastNudged`) or **Unblock** (clears `waitingOn`/`lastNudged`).
-3. **Woke from snooze** — non-done topics whose `snoozedUntil` has passed but wasn't cleared (they're already back in their board column). Each row offers **Back on board** (clears the stale snooze) or **+1 week** (renews it from today) — the wake becomes a decision, not an accident.
-4. **Quick capture** — a raw task line written under today's daily note `## Tasks` (`buildTaskLine` + `addRawTaskLine`).
-5. **Empty state** — when no nudge section has content, a note points the user to the Today tab.
+2. **⚠ At risk** — topics at schedule risk (`deriveTopicRisk`: overdue, or due within 7 days while not started / behind on tasks / blocked), owner + reasons per row, soonest-due first, with an **Open** action. Read-only — the fix lives on the board.
+3. **Waiting on** — non-done topics with `waitingOn` set whose last nudge is missing or older than `nudgeThresholdDays`. Each row offers **Just nudged** (`markNudged` → updates `lastNudged`) or **Unblock** (clears `waitingOn`/`lastNudged`).
+4. **Woke from snooze** — non-done topics whose `snoozedUntil` has passed but wasn't cleared (they're already back in their board column). Each row offers **Back on board** (clears the stale snooze) or **+1 week** (renews it from today) — the wake becomes a decision, not an accident.
+5. **Quick capture** — a raw task line written under today's daily note `## Tasks` (`buildTaskLine` + `addRawTaskLine`).
+6. **Empty state** — when no nudge section has content, a note points the user to the Today tab.
 
 Due/overdue task triage is intentionally **not** here — it lives in the Today view, where tasks can be completed, rescheduled (edit `@due`), snoozed, or dropped inline.
 
@@ -740,12 +741,13 @@ A topic renders as **blocked** when any of three signals fires (`deriveTopicBloc
 - **Impact / Effort** — 2×2 grid: Quick Wins / Big Bets / Fill-ins / Time Sinks (`highImpact = impact ∈ {critical, high}`, `smallEffort = effort ∈ {xs, s}`); topics missing either field land in an **Inbox** below the grid, whose quick-edit selects exist to size them.
 - **Roadmap** — scrollable, zoomable Gantt-style timeline on a fixed pixels-per-day scale (`ROADMAP_PX_PER_DAY`: day 30 / week 13 / month 4.4). Opens centred on the current week; the focus date (`roadmapCenterMs`) is kept under the viewport centre across zoom changes and repaints. Navigation: native scrollbar, drag-to-pan (pointer drag on the timeline background; ignored when the drag starts on a bar/label so clicks still open the topic), and Shift+scroll.
   - Each bar runs `startDate → dueDate` (`computeTopicSpan`): start prefers `startDate` then `startedAt` then `dueDate`; end prefers `dueDate` then `startDate` then `startedAt`. End day is inclusive (an N-day span is N+1 day-columns wide). Topics with none of `startDate` / `startedAt` / `dueDate` go to the **No date** tray.
+  - Assignee lanes carry a **capacity chip** (`3/5` — committed topics vs effective target from `buildTopicLoadIndex`, red when over); the same load labels appear in the owner dropdowns (quick-edit + modal), and picking an owner who ends up over target raises a heads-up Notice.
   - Bars are grouped into lanes by **Assignee** or **Status**. Colour encodes blocked / done / overdue / critical-path; a two-tier axis (months-or-years + day/week/month ruler), week/month gridlines, weekend shading (day zoom), and a today line render behind the bars. The left column (group + topic labels) and the axis corner are `position: sticky; left: 0` so they stay frozen while the timeline scrolls. Done topics are hidden unless the "Done" scope is active.
   - Repaints (zoom / group / ⌖ Today) go through `repaintRoadmap`, which re-renders only the roadmap body — not the whole Topics view — so scroll/zoom feel smooth.
 
 ### Card signals (`TopicCard.ts`)
 
-Beyond title/priority/JIRA rows, a card can carry: **BLOCKED badge** (derived; reasons in tooltip), **⏱ aging badge** (in-progress longer than `agingWipThresholdDays`, orange, days-in-column count), **⚠ JIRA drift chip** (Kanban state contradicts linked issues: topic done while an issue is open, or all issues resolved while the topic isn't done — computed from cached issue data only, so it never fires on partial loads), **💤 snooze chip** ("until \<date\>" while asleep; orange "woke \<date\>" when expired-but-uncleared), assignee / waiting-on (with nudge staleness) chips, dependency chips, external ref chips, linked pages, and a task progress bar. The action row offers status arrows, ⚠ blocked toggle, and 💤 snooze (preset menu: 1w / 2w / 1m / 3m / pick a date) or 💤 Wake.
+Beyond title/priority/JIRA rows, a card can carry: **BLOCKED badge** (derived; reasons in tooltip), **AT RISK badge** (amber; `deriveTopicRisk` — overdue, or due within 7 days while not started / under 50% task progress / blocked; snoozed topics never flag), **⏱ aging badge** (in-progress longer than `agingWipThresholdDays`, orange, days-in-column count), **⚠ JIRA drift chip** (Kanban state contradicts linked issues: topic done while an issue is open, or all issues resolved while the topic isn't done — computed from cached issue data only, so it never fires on partial loads), **💤 snooze chip** ("until \<date\>" while asleep; orange "woke \<date\>" when expired-but-uncleared), assignee / waiting-on (with nudge staleness) chips, dependency chips, external ref chips, linked pages, and a task progress bar. The action row offers status arrows, ⚠ blocked toggle, and 💤 snooze (preset menu: 1w / 2w / 1m / 3m / pick a date) or 💤 Wake.
 
 ### Filters & persistence
 

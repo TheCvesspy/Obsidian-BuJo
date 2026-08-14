@@ -3034,6 +3034,50 @@
     opacity: 0.75;
 }
 
+/* At-risk badge: schedule early-warning (overdue / due soon while not started, behind,
+   or blocked). Amber — softer than the red BLOCKED badge. */
+.friday-kanban-card-atrisk {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-on-accent, #fff);
+    background: var(--color-orange, #e68a00);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+    cursor: help;
+}
+
+.friday-topics-table-atrisk {
+    color: var(--color-orange, #e68a00);
+    font-size: 12px;
+    margin-right: 4px;
+    cursor: help;
+}
+
+/* Capacity chip on roadmap assignee lanes: committed load vs target. */
+.friday-roadmap-lane-load {
+    font-size: 10px;
+    font-weight: 700;
+    background: var(--background-modifier-hover);
+    border-radius: 8px;
+    padding: 0 6px;
+    margin-left: 6px;
+}
+.friday-roadmap-lane-load.is-over {
+    background: var(--color-red, #e5534b);
+    color: var(--text-on-accent, #fff);
+}
+
+/* Morning Review: at-risk rows */
+.friday-atrisk-owner {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+.friday-atrisk-reasons {
+    color: var(--color-orange, #e68a00);
+}
+
 /* Aging badge: in-progress card sitting in its column past the aging-WIP threshold. */
 .friday-kanban-card-aging {
     font-size: 10px;

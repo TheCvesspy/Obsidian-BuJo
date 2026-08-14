@@ -37,7 +37,7 @@ __export(main_exports, {
   default: () => FridayPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian43 = require("obsidian");
+var import_obsidian44 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_WORK_TYPES = [
@@ -6061,6 +6061,9 @@ ${out.join("\n")}
 ---` + body;
 }
 
+// src/services/teamRollupService.ts
+var import_obsidian15 = require("obsidian");
+
 // src/utils/teamBucket.ts
 function bucketIssuesByMember(issues, members) {
   const byEmail = /* @__PURE__ */ new Map();
@@ -6175,12 +6178,41 @@ function deriveTopicBlock(input) {
   const state = sources.manual || sources.jira || sources.deps ? "blocked" : "clear";
   return { state, reasons, sources };
 }
+function localTodayIso() {
+  const now = /* @__PURE__ */ new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
 function isTopicSnoozed(topic) {
   if (!topic.snoozedUntil || topic.status === "done")
     return false;
-  const now = /* @__PURE__ */ new Date();
-  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  return topic.snoozedUntil > todayIso;
+  return topic.snoozedUntil > localTodayIso();
+}
+var RISK_WINDOW_DAYS = 7;
+function deriveTopicRisk(topic, isBlocked) {
+  const reasons = [];
+  if (topic.status === "done" || isTopicSnoozed(topic) || !topic.dueDate) {
+    return { atRisk: false, reasons };
+  }
+  const due = (/* @__PURE__ */ new Date(topic.dueDate + "T00:00:00")).getTime();
+  if (isNaN(due))
+    return { atRisk: false, reasons };
+  const today = (/* @__PURE__ */ new Date(localTodayIso() + "T00:00:00")).getTime();
+  const days = Math.round((due - today) / 864e5);
+  const dueLabel = days === 0 ? "due today" : `due in ${days}d`;
+  if (days < 0) {
+    reasons.push(`Overdue by ${-days}d`);
+  } else if (days <= RISK_WINDOW_DAYS) {
+    if (topic.status === "backlog" || topic.status === "open") {
+      reasons.push(`${dueLabel[0].toUpperCase()}${dueLabel.slice(1)} but not started`);
+    }
+    if (topic.taskTotal > 0 && topic.taskDone / topic.taskTotal < 0.5) {
+      reasons.push(`Tasks at ${topic.taskDone}/${topic.taskTotal} and ${dueLabel}`);
+    }
+    if (isBlocked) {
+      reasons.push(`Blocked and ${dueLabel}`);
+    }
+  }
+  return { atRisk: reasons.length > 0, reasons };
 }
 function toJiraSignal(info) {
   if (!info)
@@ -6230,7 +6262,8 @@ var TeamRollupService = class {
       const topicsOpen = memberTopics.filter((t) => t.status === "open").length;
       const topicsInProgress = memberTopics.filter((t) => t.status === "in-progress").length;
       const topicsDone = memberTopics.filter((t) => t.status === "done").length;
-      const topicsBlocked = memberTopics.filter((t) => t.status !== "done" && isTopicBlocked(t)).length;
+      const blockedTopics = memberTopics.filter((t) => t.status !== "done" && isTopicBlocked(t));
+      const topicsBlocked = blockedTopics.length;
       const counts = {
         jiraBlocked,
         jiraInProgress,
@@ -6279,6 +6312,7 @@ var TeamRollupService = class {
         drivingTopics: memberTopics.filter((t) => t.status === "in-progress"),
         jiraIssues: jissues,
         topics: memberTopics,
+        blockedTopics,
         counts,
         load
       });
@@ -6348,7 +6382,13 @@ var TeamRollupService = class {
     return { generatedAt: now.getTime(), jiraIncluded, members, topBlockers, atRisk, overdueOneOnOnes };
   }
 };
-function buildOneOnOneAgenda(m) {
+var NOTE_ENTRY_REGEX = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[—–-]\s*(.+)$/;
+async function buildOneOnOneAgenda(m, opts = {}) {
+  var _a, _b;
+  const todayIso = formatDateISO(/* @__PURE__ */ new Date());
+  const sinceIso = (_a = opts.sinceIso) != null ? _a : isoDaysAgo(14);
+  const agingDays = (_b = opts.agingThresholdDays) != null ? _b : 7;
+  const blockedPaths = new Set(m.blockedTopics.map((t) => t.filePath));
   const lines = [];
   const driving = [
     ...m.drivingTopics.map((t) => `- ${t.title}`),
@@ -6357,19 +6397,71 @@ function buildOneOnOneAgenda(m) {
   if (driving.length > 0)
     lines.push("**Currently driving**", ...driving, "");
   const blocked = [
-    ...m.topics.filter((t) => t.status !== "done" && t.blocked).map((t) => `- ${t.title}`),
-    ...m.jiraIssues.filter((i) => i.flagged).map((i) => `- ${i.key} \u2014 ${i.summary}`)
+    ...m.blockedTopics.map((t) => `- ${t.title}${t.blocked ? "" : " (dependency)"}`),
+    ...m.jiraIssues.filter((i) => i.flagged && i.statusCategory !== "done").map((i) => `- ${i.key} \u2014 ${i.summary}`)
   ];
   if (blocked.length > 0)
     lines.push("**Blocked / flagged**", ...blocked, "");
+  const atRisk = m.topics.map((t) => ({ t, risk: deriveTopicRisk(t, blockedPaths.has(t.filePath)) })).filter((x) => x.risk.atRisk).map((x) => `- ${x.t.title} \u2014 ${x.risk.reasons.join("; ")}`);
+  if (atRisk.length > 0)
+    lines.push("**At risk**", ...atRisk, "");
+  const aging = m.drivingTopics.map((t) => ({ t, days: t.statusSince ? daysBetween(t.statusSince, todayIso) : null })).filter((x) => x.days !== null && x.days >= agingDays).map((x) => `- ${x.t.title} \u2014 in progress ${x.days}d`);
+  if (aging.length > 0)
+    lines.push("**Sitting in In Progress**", ...aging, "");
   const waiting = m.topics.filter((t) => t.status !== "done" && t.waitingOn).map((t) => `- ${t.title} (waiting on ${t.waitingOn})`);
   if (waiting.length > 0)
     lines.push("**Waiting on**", ...waiting, "");
+  const doneSince = m.topics.filter((t) => t.status === "done" && t.doneAt && t.doneAt >= sinceIso).map((t) => `- ${t.title} (done ${t.doneAt})`);
+  if (doneSince.length > 0)
+    lines.push(`**Done since ${sinceIso}**`, ...doneSince, "");
+  if (opts.vault) {
+    const notes = await collectRecentTopicNotes(opts.vault, m.topics, sinceIso);
+    if (notes.length > 0) {
+      lines.push(`**Notes logged since ${sinceIso}**`, ...notes.map((n) => `- ${n.topic}: (${n.date}) ${n.text}`), "");
+    }
+  }
   return lines.join("\n").trim();
+}
+async function collectRecentTopicNotes(vault, topics, sinceIso) {
+  const out = [];
+  for (const t of topics) {
+    const file = vault.getAbstractFileByPath(t.filePath);
+    if (!(file instanceof import_obsidian15.TFile))
+      continue;
+    let content;
+    try {
+      content = await vault.cachedRead(file);
+    } catch (e) {
+      continue;
+    }
+    let inNotes = false;
+    for (const line of content.split("\n")) {
+      if (/^##\s+Notes\s*$/i.test(line)) {
+        inNotes = true;
+        continue;
+      }
+      if (inNotes && /^##\s+/.test(line))
+        break;
+      if (!inNotes)
+        continue;
+      const match = line.trim().match(NOTE_ENTRY_REGEX);
+      if (match && match[1] >= sinceIso) {
+        out.push({ topic: t.title, date: match[1], text: match[2].trim() });
+      }
+    }
+  }
+  out.sort((a, b) => b.date.localeCompare(a.date));
+  return out.slice(0, 12);
+}
+function isoDaysAgo(n) {
+  const d = /* @__PURE__ */ new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - n);
+  return formatDateISO(d);
 }
 
 // src/services/teamDigestService.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 var TeamDigestService = class {
   constructor(vault, getSettings, rollupService, teamJiraService) {
     this.vault = vault;
@@ -6392,14 +6484,14 @@ var TeamDigestService = class {
     const md = this.buildMarkdown(rollup, date);
     const path = this.getDigestPath(date);
     const folder = path.substring(0, path.lastIndexOf("/"));
-    if (folder && !(this.vault.getAbstractFileByPath(folder) instanceof import_obsidian15.TFolder)) {
+    if (folder && !(this.vault.getAbstractFileByPath(folder) instanceof import_obsidian16.TFolder)) {
       try {
         await this.vault.createFolder(folder);
       } catch (e) {
       }
     }
     const existing = this.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian15.TFile) {
+    if (existing instanceof import_obsidian16.TFile) {
       await this.vault.modify(existing, md);
       return existing;
     }
@@ -6471,7 +6563,7 @@ var TeamDigestService = class {
 };
 
 // src/ui/FridayView.ts
-var import_obsidian29 = require("obsidian");
+var import_obsidian30 = require("obsidian");
 
 // src/ui/components/ViewSwitcher.ts
 var ViewSwitcher = class {
@@ -6640,10 +6732,10 @@ var GroupHeader = class {
 };
 
 // src/ui/components/TaskItemRow.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 
 // src/ui/icons.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 var PRIORITY_CLASSES = {
   high: "friday-priority-high",
   medium: "friday-priority-medium",
@@ -6810,7 +6902,7 @@ var TaskItemRow = class {
     }
     if (task.description) {
       const descToggle = this.el.createEl("button", { cls: "friday-desc-toggle", text: "\u2026" });
-      (0, import_obsidian17.setTooltip)(descToggle, "Show/hide description");
+      (0, import_obsidian18.setTooltip)(descToggle, "Show/hide description");
       descToggle.setAttribute("aria-label", "Show/hide description");
     }
     if (isParent && isCollapsed && callbacks.getTaskById) {
@@ -6836,8 +6928,8 @@ var TaskItemRow = class {
     }
     const actionButton = (icon, tooltip, onClick) => {
       const btn = this.el.createEl("button", { cls: "friday-row-action" });
-      (0, import_obsidian17.setIcon)(btn, icon);
-      (0, import_obsidian17.setTooltip)(btn, tooltip);
+      (0, import_obsidian18.setIcon)(btn, icon);
+      (0, import_obsidian18.setTooltip)(btn, tooltip);
       btn.setAttribute("aria-label", tooltip);
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -7111,7 +7203,7 @@ var UpcomingView = class {
 };
 
 // src/ui/components/TriageView.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 var TriageView = class {
   constructor(container, store, settings, callbacks, searchQuery = "", onProcess) {
     this.container = container;
@@ -7134,7 +7226,7 @@ var TriageView = class {
     header.createSpan({ cls: "friday-pending-count", text: ` (${items.length} to sort)` });
     if (items.length > 0 && this.onProcess) {
       const btn = header.createEl("button", { cls: "friday-triage-process-btn", text: "\u26A1 Process" });
-      (0, import_obsidian18.setTooltip)(btn, "Triage one item at a time (keyboard-driven)");
+      (0, import_obsidian19.setTooltip)(btn, "Triage one item at a time (keyboard-driven)");
       btn.addEventListener("click", () => this.onProcess());
     }
     if (items.length === 0) {
@@ -7460,7 +7552,41 @@ var MonthlyView = class {
 };
 
 // src/ui/components/TopicsOverviewView.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian21 = require("obsidian");
+
+// src/utils/capacity.ts
+function buildTopicLoadIndex(topics, settings) {
+  var _a, _b, _c, _d, _e, _f;
+  const counts = /* @__PURE__ */ new Map();
+  for (const t of topics) {
+    if (!t.assignee)
+      continue;
+    if (t.status !== "open" && t.status !== "in-progress")
+      continue;
+    if (isTopicSnoozed(t))
+      continue;
+    const key = t.assignee.toLowerCase();
+    counts.set(key, ((_a = counts.get(key)) != null ? _a : 0) + 1);
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const m of (_b = settings.teamMembers) != null ? _b : []) {
+    if (!m.email)
+      continue;
+    const key = m.email.toLowerCase();
+    const load = (_c = counts.get(key)) != null ? _c : 0;
+    const base = (_e = (_d = m.targetConcurrentItems) != null ? _d : settings.defaultTargetConcurrentItems) != null ? _e : 5;
+    const target = Math.round(base * (((_f = m.availabilityPercent) != null ? _f : 100) / 100) * 10) / 10;
+    out.set(key, { load, target, over: target > 0 && load > target });
+  }
+  for (const [key, load] of counts) {
+    if (!out.has(key))
+      out.set(key, { load, target: 0, over: false });
+  }
+  return out;
+}
+function formatTopicLoad(l) {
+  return l.target > 0 ? `${l.load}/${l.target}` : String(l.load);
+}
 
 // src/ui/components/TopicCard.ts
 var STATUS_TRANSITIONS = {
@@ -7497,7 +7623,7 @@ function computeDaysSince(isoDate) {
   return Math.floor((today - then) / (24 * 60 * 60 * 1e3));
 }
 function renderTopicCard(container, topic, opts) {
-  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
   const card = container.createDiv({ cls: "friday-kanban-card" });
   if (opts.draggable) {
     card.draggable = true;
@@ -7541,6 +7667,10 @@ function renderTopicCard(container, topic, opts) {
   } else if (topic.blocked) {
     headerEl.createSpan({ cls: "friday-kanban-card-blocked", text: "BLOCKED" });
   }
+  if ((_b = opts.risk) == null ? void 0 : _b.atRisk) {
+    const badge = headerEl.createSpan({ cls: "friday-kanban-card-atrisk", text: "AT RISK" });
+    badge.setAttribute("title", opts.risk.reasons.join(" \xB7 "));
+  }
   if (opts.agingThresholdDays !== void 0 && topic.status === "in-progress") {
     const inColumn = computeDaysSince(topic.statusSince);
     if (inColumn !== null && inColumn >= opts.agingThresholdDays) {
@@ -7552,8 +7682,8 @@ function renderTopicCard(container, topic, opts) {
     }
   }
   if (opts.emphasizeAssignee && topic.assignee) {
-    const lookup = (_c = (_b = opts.assigneeLookup) == null ? void 0 : _b.call(opts, topic.assignee)) != null ? _c : null;
-    const label = (_d = lookup == null ? void 0 : lookup.label) != null ? _d : topic.assignee;
+    const lookup = (_d = (_c = opts.assigneeLookup) == null ? void 0 : _c.call(opts, topic.assignee)) != null ? _d : null;
+    const label = (_e = lookup == null ? void 0 : lookup.label) != null ? _e : topic.assignee;
     const hero = card.createDiv({ cls: "friday-kanban-card-assignee-hero" });
     const avatar = hero.createSpan({ cls: "friday-assignee-avatar", text: assigneeInitials(label) });
     avatar.style.backgroundColor = assigneeColor(topic.assignee);
@@ -7563,10 +7693,10 @@ function renderTopicCard(container, topic, opts) {
     hero.setAttribute("title", lookup ? `Assignee: ${label}` : `Assignee: ${topic.assignee} (not in team)`);
   }
   for (const key of topic.jira) {
-    const lookup = (_e = opts.jiraLookup) == null ? void 0 : _e.call(opts, key);
-    const info = (_f = lookup == null ? void 0 : lookup.info) != null ? _f : null;
-    const loading = (_g = lookup == null ? void 0 : lookup.loading) != null ? _g : false;
-    const error = (_h = lookup == null ? void 0 : lookup.error) != null ? _h : null;
+    const lookup = (_f = opts.jiraLookup) == null ? void 0 : _f.call(opts, key);
+    const info = (_g = lookup == null ? void 0 : lookup.info) != null ? _g : null;
+    const loading = (_h = lookup == null ? void 0 : lookup.loading) != null ? _h : false;
+    const error = (_i = lookup == null ? void 0 : lookup.error) != null ? _i : null;
     const jiraRow = card.createDiv({ cls: "friday-kanban-card-jira-row" });
     const keyEl = jiraRow.createSpan({ cls: "friday-kanban-card-jira", text: key });
     if (info == null ? void 0 : info.issueUrl) {
@@ -7590,7 +7720,7 @@ function renderTopicCard(container, topic, opts) {
         text: info.status
       });
       statusEl.setAttribute("title", `JIRA status: ${info.status}`);
-      const assigneeLabel = (_i = info.assignee) != null ? _i : "Unassigned";
+      const assigneeLabel = (_j = info.assignee) != null ? _j : "Unassigned";
       const assigneeEl = jiraRow.createSpan({
         cls: "friday-jira-chip friday-jira-assignee",
         text: assigneeLabel
@@ -7634,8 +7764,8 @@ function renderTopicCard(container, topic, opts) {
     }
   }
   if (topic.assignee && !opts.emphasizeAssignee) {
-    const lookup = (_k = (_j = opts.assigneeLookup) == null ? void 0 : _j.call(opts, topic.assignee)) != null ? _k : null;
-    const label = (_l = lookup == null ? void 0 : lookup.label) != null ? _l : topic.assignee;
+    const lookup = (_l = (_k = opts.assigneeLookup) == null ? void 0 : _k.call(opts, topic.assignee)) != null ? _l : null;
+    const label = (_m = lookup == null ? void 0 : lookup.label) != null ? _m : topic.assignee;
     const chip = card.createDiv({ cls: "friday-kanban-card-assignee" });
     chip.setText(label);
     if (!lookup || lookup.isInactive) {
@@ -7656,10 +7786,10 @@ function renderTopicCard(container, topic, opts) {
   }
   if (topic.waitingOn) {
     const looksLikeEmail = topic.waitingOn.includes("@");
-    const lookup = looksLikeEmail ? (_n = (_m = opts.assigneeLookup) == null ? void 0 : _m.call(opts, topic.waitingOn)) != null ? _n : null : null;
-    const label = (_o = lookup == null ? void 0 : lookup.label) != null ? _o : topic.waitingOn;
+    const lookup = looksLikeEmail ? (_o = (_n = opts.assigneeLookup) == null ? void 0 : _n.call(opts, topic.waitingOn)) != null ? _o : null : null;
+    const label = (_p = lookup == null ? void 0 : lookup.label) != null ? _p : topic.waitingOn;
     const daysSinceNudge = computeDaysSince(topic.lastNudged);
-    const threshold = (_p = opts.nudgeThresholdDays) != null ? _p : 7;
+    const threshold = (_q = opts.nudgeThresholdDays) != null ? _q : 7;
     const suffix = topic.lastNudged === null ? " \xB7 never nudged" : daysSinceNudge !== null ? ` \xB7 ${daysSinceNudge}d` : "";
     const chip = card.createDiv({ cls: "friday-kanban-card-waiting" });
     chip.setText(`\u23F3 ${label}${suffix}`);
@@ -7668,7 +7798,7 @@ function renderTopicCard(container, topic, opts) {
       chip.addClass("friday-kanban-card-waiting-stale");
     chip.setAttribute("title", `Waiting on: ${label}${suffix}`);
   }
-  const deps = (_q = opts.dependencyLookup) == null ? void 0 : _q.call(opts, topic);
+  const deps = (_r = opts.dependencyLookup) == null ? void 0 : _r.call(opts, topic);
   if (deps && deps.blockedBy.length > 0) {
     const row = card.createDiv({ cls: "friday-kanban-card-deps" });
     row.createSpan({ cls: "friday-kanban-card-deps-label", text: "\u26D3 Blocked by: " });
@@ -7770,8 +7900,8 @@ function renderTopicCard(container, topic, opts) {
 }
 
 // src/ui/DueDateModal.ts
-var import_obsidian19 = require("obsidian");
-var DueDateModal = class extends import_obsidian19.Modal {
+var import_obsidian20 = require("obsidian");
+var DueDateModal = class extends import_obsidian20.Modal {
   constructor(app, currentDate, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -7782,7 +7912,7 @@ var DueDateModal = class extends import_obsidian19.Modal {
     const { contentEl } = this;
     this.modalEl.addClass("friday-due-modal");
     this.setTitle("Set due date");
-    new import_obsidian19.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian20.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.isoValue;
       text.onChange((v) => {
@@ -7796,7 +7926,7 @@ var DueDateModal = class extends import_obsidian19.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    const btnContainer = new import_obsidian19.Setting(contentEl);
+    const btnContainer = new import_obsidian20.Setting(contentEl);
     btnContainer.addButton(
       (btn) => btn.setButtonText("Set").setCta().onClick(() => {
         this.onSubmit(this.value.trim());
@@ -8148,6 +8278,7 @@ var TopicsOverviewView = class {
     const sorted = [...topics].sort((a, b) => this.sortByPriorityImpact(a, b));
     const jiraLookup = this.makeJiraLookup();
     const assigneeLookup = this.makeAssigneeLookup();
+    const deriveBlock = this.makeDeriveBlock();
     const myEmail = (_b = (_a = this.settings.jiraEmail) == null ? void 0 : _a.trim()) != null ? _b : "";
     const table = parent.createEl("table", { cls: "friday-topics-table" });
     const thead = table.createEl("thead");
@@ -8174,6 +8305,10 @@ var TopicsOverviewView = class {
       if (isTopicSnoozed(topic)) {
         row.addClass("is-snoozed");
         titleCell.createSpan({ cls: "friday-topics-table-snoozed", text: "\u{1F4A4}" }).setAttribute("title", `Snoozed until ${topic.snoozedUntil}`);
+      }
+      const risk = deriveTopicRisk(topic, deriveBlock(topic).state === "blocked");
+      if (risk.atRisk) {
+        titleCell.createSpan({ cls: "friday-topics-table-atrisk", text: "\u26A0" }).setAttribute("title", `At risk: ${risk.reasons.join(" \xB7 ")}`);
       }
       const titleLink = titleCell.createEl("a", {
         cls: "friday-topics-table-titlelink",
@@ -8410,7 +8545,7 @@ var TopicsOverviewView = class {
   }
   /** Snooze presets + a custom date picker, shown at the cursor. Mirrors the task snooze menu. */
   showTopicSnoozeMenu(topic, evt) {
-    const menu = new import_obsidian20.Menu();
+    const menu = new import_obsidian21.Menu();
     const presets = [
       ["1 week", 7],
       ["2 weeks", 14],
@@ -8421,7 +8556,7 @@ var TopicsOverviewView = class {
       menu.addItem((item) => item.setTitle(label).setIcon("moon").onClick(async () => {
         const until = isoDaysFromNow(days);
         await this.topicService.setTopicSnooze(topic.filePath, until);
-        new import_obsidian20.Notice(`Snoozed until ${until}: ${topic.title}`);
+        new import_obsidian21.Notice(`Snoozed until ${until}: ${topic.title}`);
       }));
     }
     const app = this.app;
@@ -8431,7 +8566,7 @@ var TopicsOverviewView = class {
         new DueDateModal(app, topic.snoozedUntil ? isoToPluginDate(topic.snoozedUntil) : "", async (pluginDate) => {
           const iso = pluginDate ? pluginDateToIso(pluginDate) : null;
           await this.topicService.setTopicSnooze(topic.filePath, iso);
-          new import_obsidian20.Notice(iso ? `Snoozed until ${iso}: ${topic.title}` : `Snooze cleared: ${topic.title}`);
+          new import_obsidian21.Notice(iso ? `Snoozed until ${iso}: ${topic.title}` : `Snooze cleared: ${topic.title}`);
         }).open();
       }));
     }
@@ -8495,7 +8630,7 @@ var TopicsOverviewView = class {
               (t) => t.status === targetStatus && t.filePath !== filePath
             ).length + 1;
             if (incoming > limit) {
-              new import_obsidian20.Notice(`Heads up: "${this.statusLabel(targetStatus)}" is over its WIP limit (${incoming} / ${limit}).`);
+              new import_obsidian21.Notice(`Heads up: "${this.statusLabel(targetStatus)}" is over its WIP limit (${incoming} / ${limit}).`);
             }
           }
         }
@@ -8504,7 +8639,7 @@ var TopicsOverviewView = class {
           const derived = this.makeDeriveBlock()(topic);
           const external = derived.reasons.filter((r) => r !== "Manually blocked");
           if (external.length > 0) {
-            new import_obsidian20.Notice(`"${topic.title}" is still blocked (${external.join(" \xB7 ")}) \u2014 it stays in the Blocked section.`);
+            new import_obsidian21.Notice(`"${topic.title}" is still blocked (${external.join(" \xB7 ")}) \u2014 it stays in the Blocked section.`);
           }
         }
         await this.persistColumnOrder(targetStatus, topic, dropIndex);
@@ -8609,10 +8744,12 @@ var TopicsOverviewView = class {
     var _a, _b;
     const jiraLookup = this.makeJiraLookup();
     const assigneeLookup = this.makeAssigneeLookup();
+    const deriveBlock = this.makeDeriveBlock();
     const card = renderTopicCard(parent, topic, {
       draggable: (_a = opts.draggable) != null ? _a : false,
       isDragging: this.isDragging,
       showMatrixMetadata: true,
+      risk: deriveTopicRisk(topic, deriveBlock(topic).state === "blocked"),
       onTitleClick: (t) => this.onTopicClick(t),
       onBlockedToggle: async (t) => {
         await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
@@ -8620,13 +8757,13 @@ var TopicsOverviewView = class {
       onSnooze: (t, evt) => this.showTopicSnoozeMenu(t, evt),
       onWake: async (t) => {
         await this.topicService.setTopicSnooze(t.filePath, null);
-        new import_obsidian20.Notice(`Woke: ${t.title}`);
+        new import_obsidian21.Notice(`Woke: ${t.title}`);
       },
       snoozedActive: isTopicSnoozed(topic),
       emphasizeAssignee: this.emphasizeAssignees(),
       jiraLookup,
       assigneeLookup,
-      deriveBlock: this.makeDeriveBlock(),
+      deriveBlock,
       dependencyLookup: (t) => {
         var _a2, _b2, _c, _d;
         return {
@@ -8703,19 +8840,32 @@ var TopicsOverviewView = class {
     ], (_b = topic.effort) != null ? _b : "", (v) => this.topicService.setTopicEffort(topic.filePath, v || null));
     const members = ((_c = this.settings.teamMembers) != null ? _c : []).filter((m) => m.active);
     if (members.length > 0) {
+      const loadIndex = buildTopicLoadIndex(this.topics, this.settings);
+      const memberLabel = (email, name) => {
+        const l = loadIndex.get(email.toLowerCase());
+        return l ? `${name} \xB7 ${formatTopicLoad(l)}${l.over ? " \u26A0" : ""}` : name;
+      };
       const opts = [
         { value: "", label: "Owner \u2014" },
-        ...members.map((m) => ({ value: m.email, label: m.nickname || m.fullName || m.email }))
+        ...members.map((m) => ({ value: m.email, label: memberLabel(m.email, m.nickname || m.fullName || m.email) }))
       ];
       if (topic.assignee && !members.some((m) => m.email === topic.assignee)) {
         opts.push({ value: topic.assignee, label: topic.assignee });
       }
-      addSelect(
-        "Assignee",
-        opts,
-        (_d = topic.assignee) != null ? _d : "",
-        (v) => this.topicService.updateTopicFrontmatter(topic.filePath, { assignee: v || null })
-      );
+      addSelect("Assignee", opts, (_d = topic.assignee) != null ? _d : "", async (v) => {
+        var _a2;
+        await this.topicService.updateTopicFrontmatter(topic.filePath, { assignee: v || null });
+        const l = v ? loadIndex.get(v.toLowerCase()) : void 0;
+        if (l && l.target > 0) {
+          const counted = ((_a2 = topic.assignee) == null ? void 0 : _a2.toLowerCase()) === v.toLowerCase() || !((topic.status === "open" || topic.status === "in-progress") && !isTopicSnoozed(topic));
+          const newLoad = counted ? l.load : l.load + 1;
+          if (newLoad > l.target) {
+            const member = members.find((m) => m.email.toLowerCase() === v.toLowerCase());
+            const name = member ? member.nickname || member.fullName || member.email : v;
+            new import_obsidian21.Notice(`Heads up: ${name} now has ${newLoad} committed topics (target ${l.target}).`);
+          }
+        }
+      });
     }
   }
   sortByPriorityImpact(a, b) {
@@ -8899,7 +9049,7 @@ var TopicsOverviewView = class {
     return { startMs, endMs };
   }
   renderRoadmapChart(parent, dated) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const pxPerDay = ROADMAP_PX_PER_DAY[this.roadmapZoom];
     const weekStartDay = (_a = this.settings.weekStartDay) != null ? _a : 1;
     const now = /* @__PURE__ */ new Date();
@@ -8960,9 +9110,27 @@ var TopicsOverviewView = class {
     const critical = new Set(criticalPath(this.topics));
     const deriveBlock = this.makeDeriveBlock();
     const lanes = canvas.createDiv({ cls: "friday-roadmap-lanes" });
+    const loadByLabel = /* @__PURE__ */ new Map();
+    if (this.roadmapGroupBy === "assignee") {
+      const loadIndex = buildTopicLoadIndex(this.topics, this.settings);
+      for (const m of (_b = this.settings.teamMembers) != null ? _b : []) {
+        const l = loadIndex.get(m.email.toLowerCase());
+        if (l)
+          loadByLabel.set(m.nickname || m.fullName || m.email, { text: formatTopicLoad(l), over: l.over });
+      }
+    }
     for (const [groupLabel, items] of this.groupForRoadmap(dated)) {
       const lane = lanes.createDiv({ cls: "friday-roadmap-lane" });
-      const laneHeader = lane.createDiv({ cls: "friday-roadmap-lane-header", text: groupLabel });
+      const laneHeader = lane.createDiv({ cls: "friday-roadmap-lane-header" });
+      laneHeader.createSpan({ text: groupLabel });
+      const laneLoad = loadByLabel.get(groupLabel);
+      if (laneLoad) {
+        const chip = laneHeader.createSpan({
+          cls: `friday-roadmap-lane-load${laneLoad.over ? " is-over" : ""}`,
+          text: laneLoad.text
+        });
+        chip.setAttribute("title", laneLoad.over ? "Over capacity: committed topics (To Do + In Progress) exceed the target" : "Committed topics (To Do + In Progress) vs capacity target");
+      }
       laneHeader.style.width = `${ROADMAP_LABEL_W}px`;
       for (const { topic, startMs, endMs } of items) {
         const row = lane.createDiv({ cls: "friday-roadmap-row" });
@@ -8970,7 +9138,7 @@ var TopicsOverviewView = class {
         labelEl.style.width = `${ROADMAP_LABEL_W}px`;
         if (topic.blockedBy.length > 0) {
           const glyph = labelEl.createSpan({ text: "\u26D3 " });
-          const blockers = ((_c = (_b = this.depIndex) == null ? void 0 : _b.blockersOf(topic)) != null ? _c : []).map((b) => b.title).join(", ");
+          const blockers = ((_d = (_c = this.depIndex) == null ? void 0 : _c.blockersOf(topic)) != null ? _d : []).map((b) => b.title).join(", ");
           glyph.setAttribute("title", blockers ? `Blocked by: ${blockers}` : "Has dependencies");
         }
         const titleSpan = labelEl.createSpan({ cls: "friday-roadmap-row-title", text: topic.title });
@@ -9778,15 +9946,15 @@ var CalendarView = class {
 };
 
 // src/ui/components/SyntaxReference.ts
-var import_obsidian21 = require("obsidian");
-var SyntaxReferenceModal = class extends import_obsidian21.Modal {
+var import_obsidian22 = require("obsidian");
+var SyntaxReferenceModal = class extends import_obsidian22.Modal {
   constructor(app) {
     super(app);
   }
   /** Try to get the active markdown editor (if any) */
   getActiveEditor() {
     var _a;
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian21.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian22.MarkdownView);
     return (_a = view == null ? void 0 : view.editor) != null ? _a : null;
   }
   /** Insert text at cursor position in the active editor */
@@ -9916,11 +10084,11 @@ var SyntaxReferenceModal = class extends import_obsidian21.Modal {
 };
 
 // src/ui/components/AddTaskBar.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 
 // src/ui/InsertTaskModal.ts
-var import_obsidian22 = require("obsidian");
-var InsertTaskModal = class extends import_obsidian22.Modal {
+var import_obsidian23 = require("obsidian");
+var InsertTaskModal = class extends import_obsidian23.Modal {
   constructor(app, onSubmit, workTypes = [], purposes = []) {
     super(app);
     this.onSubmit = onSubmit;
@@ -9938,7 +10106,7 @@ var InsertTaskModal = class extends import_obsidian22.Modal {
     const { contentEl } = this;
     this.modalEl.addClass("friday-insert-modal");
     this.setTitle("Quick create task");
-    new import_obsidian22.Setting(contentEl).setName("Task text").addText((text) => {
+    new import_obsidian23.Setting(contentEl).setName("Task text").addText((text) => {
       text.setPlaceholder("What needs to be done?").onChange((v) => {
         this.text = v;
       });
@@ -9948,7 +10116,7 @@ var InsertTaskModal = class extends import_obsidian22.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian22.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian23.Setting(contentEl).setName("Priority").addDropdown(
       (dd) => dd.addOptions({
         none: "None",
         high: "High",
@@ -9958,13 +10126,13 @@ var InsertTaskModal = class extends import_obsidian22.Modal {
         this.priority = v;
       })
     );
-    new import_obsidian22.Setting(contentEl).setName("Due date").addText((text) => {
+    new import_obsidian23.Setting(contentEl).setName("Due date").addText((text) => {
       text.inputEl.type = "date";
       text.onChange((v) => {
         this.dueDate = v ? isoToPluginDate(v) : "";
       });
     });
-    new import_obsidian22.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
+    new import_obsidian23.Setting(contentEl).setName("Type").setDesc("Optional: classify this item").addDropdown(
       (dd) => dd.addOptions({
         "": "Auto (from heading)",
         "task": "Task",
@@ -9974,7 +10142,7 @@ var InsertTaskModal = class extends import_obsidian22.Modal {
       })
     );
     if (this.workTypes.length > 0) {
-      new import_obsidian22.Setting(contentEl).setName("Work type").addDropdown((dd) => {
+      new import_obsidian23.Setting(contentEl).setName("Work type").addDropdown((dd) => {
         const options = { "": "None" };
         for (const wt of this.workTypes) {
           options[wt.shortCode] = `${wt.name} (${wt.shortCode})`;
@@ -9985,7 +10153,7 @@ var InsertTaskModal = class extends import_obsidian22.Modal {
       });
     }
     if (this.purposes.length > 0) {
-      new import_obsidian22.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
+      new import_obsidian23.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
         const options = { "": "None" };
         for (const p of this.purposes) {
           options[p.shortCode] = `${p.name} (${p.shortCode})`;
@@ -9995,7 +10163,7 @@ var InsertTaskModal = class extends import_obsidian22.Modal {
         });
       });
     }
-    const descSetting = new import_obsidian22.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
+    const descSetting = new import_obsidian23.Setting(contentEl).setName("Description").setDesc("Optional: additional details (will be indented below the task)");
     const descArea = descSetting.controlEl.createEl("textarea", {
       cls: "friday-insert-description",
       attr: { rows: "3", placeholder: "Additional context, notes, links..." }
@@ -10003,7 +10171,7 @@ var InsertTaskModal = class extends import_obsidian22.Modal {
     descArea.addEventListener("input", () => {
       this.description = descArea.value;
     });
-    new import_obsidian22.Setting(contentEl).addButton(
+    new import_obsidian23.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Create").setCta().onClick(() => this.submit())
     );
   }
@@ -10127,7 +10295,7 @@ var AddTaskBar = class {
     const dateStr = formatDateISO(today);
     const filePath = `${settings.dailyNotePath}/${dateStr}.md`;
     const existing = this.app.vault.getAbstractFileByPath(filePath);
-    if (existing && existing instanceof import_obsidian23.TFile) {
+    if (existing && existing instanceof import_obsidian24.TFile) {
       let content = await this.app.vault.read(existing);
       let insertPos = this.findHeadingSection(content, this.target);
       if (insertPos === -1) {
@@ -10188,8 +10356,8 @@ ${this.target === "tasks" ? taskLine + "\n\n" : ""}## Migrated Tasks
 };
 
 // src/ui/SprintTopicModal.ts
-var import_obsidian24 = require("obsidian");
-var PageSuggestModal = class extends import_obsidian24.FuzzySuggestModal {
+var import_obsidian25 = require("obsidian");
+var PageSuggestModal = class extends import_obsidian25.FuzzySuggestModal {
   constructor(app, onChoose) {
     super(app);
     this.onChoose = onChoose;
@@ -10205,7 +10373,7 @@ var PageSuggestModal = class extends import_obsidian24.FuzzySuggestModal {
     this.onChoose(item);
   }
 };
-var TopicPickerModal = class extends import_obsidian24.FuzzySuggestModal {
+var TopicPickerModal = class extends import_obsidian25.FuzzySuggestModal {
   constructor(app, items, onChoose) {
     super(app);
     this.items = items;
@@ -10222,7 +10390,7 @@ var TopicPickerModal = class extends import_obsidian24.FuzzySuggestModal {
     this.onChoose(t);
   }
 };
-var SprintTopicModal = class extends import_obsidian24.Modal {
+var SprintTopicModal = class extends import_obsidian25.Modal {
   constructor(app, topicService, onSave, editTopic, prefill, settings, allTopics = []) {
     super(app);
     this.topicService = topicService;
@@ -10303,7 +10471,7 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
     contentEl.createEl("h2", {
       text: this.editTopic ? "Edit Topic" : "New Topic"
     });
-    new import_obsidian24.Setting(contentEl).setName("Title").addText((text) => {
+    new import_obsidian25.Setting(contentEl).setName("Title").addText((text) => {
       text.setPlaceholder("Topic title").setValue(this.title).onChange((value) => {
         this.title = value;
       });
@@ -10313,12 +10481,12 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian24.Setting(contentEl).setName("JIRA Ticket(s)").setDesc("Optional. One or more JIRA keys, comma-separated (e.g. PROJ-1, PROJ-2).").addText(
+    new import_obsidian25.Setting(contentEl).setName("JIRA Ticket(s)").setDesc("Optional. One or more JIRA keys, comma-separated (e.g. PROJ-1, PROJ-2).").addText(
       (text) => text.setPlaceholder("PROJ-123, PROJ-124").setValue(this.jira).onChange((value) => {
         this.jira = value;
       })
     );
-    new import_obsidian24.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian25.Setting(contentEl).setName("Priority").addDropdown(
       (dropdown) => dropdown.addOptions({
         ["none" /* None */]: "None",
         ["low" /* Low */]: "Low",
@@ -10333,6 +10501,11 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
     const myEmail = (_l = (_k = (_j = this.settings) == null ? void 0 : _j.jiraEmail) == null ? void 0 : _k.trim()) != null ? _l : "";
     if (activeMembers.length > 0 || this.assignee || myEmail) {
       const options = { "": "\u2014 Unassigned \u2014" };
+      const loadIndex = this.settings ? buildTopicLoadIndex(this.allTopics, this.settings) : null;
+      const withLoad = (email, name) => {
+        const l = loadIndex == null ? void 0 : loadIndex.get(email.toLowerCase());
+        return l ? `${name} \xB7 ${formatTopicLoad(l)}${l.over ? " \u26A0" : ""}` : name;
+      };
       if (myEmail) {
         const myMember = teamMembers.find((m) => m.email === myEmail);
         const myLabel = myMember ? `\u{1F464} Me (${myMember.nickname || myMember.fullName || myMember.email})` : "\u{1F464} Me";
@@ -10341,20 +10514,20 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
       for (const m of activeMembers) {
         if (m.email === myEmail)
           continue;
-        options[m.email] = m.nickname || m.fullName || m.email;
+        options[m.email] = withLoad(m.email, m.nickname || m.fullName || m.email);
       }
       if (this.assignee && !(this.assignee in options)) {
         const stale = teamMembers.find((m) => m.email === this.assignee);
         const label = stale ? `${stale.nickname || stale.fullName || stale.email} \xB7 inactive` : `${this.assignee} \xB7 removed`;
         options[this.assignee] = label;
       }
-      new import_obsidian24.Setting(contentEl).setName("Assignee").setDesc('Who owns this topic. "Me" maps to your configured JIRA email.').addDropdown(
+      new import_obsidian25.Setting(contentEl).setName("Assignee").setDesc('Who owns this topic. "Me" maps to your configured JIRA email.').addDropdown(
         (dropdown) => dropdown.addOptions(options).setValue(this.assignee).onChange((value) => {
           this.assignee = value;
         })
       );
     }
-    new import_obsidian24.Setting(contentEl).setName("Impact").setDesc("Strategic impact \u2014 drives the Impact / Effort matrix and list-view sort order").addDropdown(
+    new import_obsidian25.Setting(contentEl).setName("Impact").setDesc("Strategic impact \u2014 drives the Impact / Effort matrix and list-view sort order").addDropdown(
       (dropdown) => {
         var _a2;
         return dropdown.addOptions({
@@ -10368,7 +10541,7 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
         });
       }
     );
-    new import_obsidian24.Setting(contentEl).setName("Effort").setDesc("Size estimate \u2014 drives Impact/Effort matrix quadrant").addDropdown(
+    new import_obsidian25.Setting(contentEl).setName("Effort").setDesc("Size estimate \u2014 drives Impact/Effort matrix quadrant").addDropdown(
       (dropdown) => {
         var _a2;
         return dropdown.addOptions({
@@ -10383,21 +10556,21 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
         });
       }
     );
-    new import_obsidian24.Setting(contentEl).setName("Start date").setDesc("Optional planned start \u2014 the left edge of the topic\u2019s bar on the Roadmap.").addText((text) => {
+    new import_obsidian25.Setting(contentEl).setName("Start date").setDesc("Optional planned start \u2014 the left edge of the topic\u2019s bar on the Roadmap.").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.startDate);
       text.onChange((value) => {
         this.startDate = value;
       });
     });
-    new import_obsidian24.Setting(contentEl).setName("Due date").setDesc("Optional deadline \u2014 overdue cue in the table, and the right edge of the bar on the Roadmap.").addText((text) => {
+    new import_obsidian25.Setting(contentEl).setName("Due date").setDesc("Optional deadline \u2014 overdue cue in the table, and the right edge of the bar on the Roadmap.").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.dueDate);
       text.onChange((value) => {
         this.dueDate = value;
       });
     });
-    new import_obsidian24.Setting(contentEl).setName("Snoozed until").setDesc("Defer the topic \u2014 it parks on the Board\u2019s Snoozed shelf and wakes on this date. Not the same as blocked (work that should continue but can\u2019t).").addText((text) => {
+    new import_obsidian25.Setting(contentEl).setName("Snoozed until").setDesc("Defer the topic \u2014 it parks on the Board\u2019s Snoozed shelf and wakes on this date. Not the same as blocked (work that should continue but can\u2019t).").addText((text) => {
       text.inputEl.type = "date";
       text.setValue(this.snoozedUntil);
       text.onChange((value) => {
@@ -10405,7 +10578,7 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
       });
     });
     this.renderWaitingOnSetting(contentEl, activeMembers, teamMembers);
-    const linkedSetting = new import_obsidian24.Setting(contentEl).setName("Linked Pages").addButton(
+    const linkedSetting = new import_obsidian25.Setting(contentEl).setName("Linked Pages").addButton(
       (btn) => btn.setButtonText("+ Add Page").onClick(() => {
         new PageSuggestModal(this.app, (file) => {
           const pageName = file.path.replace(/\.md$/, "");
@@ -10421,7 +10594,7 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
     this.renderRefsSection(contentEl);
     this.renderBlockedBySection(contentEl);
     this.errorEl = contentEl.createDiv({ cls: "friday-modal-error" });
-    new import_obsidian24.Setting(contentEl).addButton(
+    new import_obsidian25.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(() => void this.save())
     );
   }
@@ -10442,7 +10615,7 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
       }
       options["other"] = "\u2014 Other (type below) \u2014";
       const currentValue = this.waitingOnMode === "none" ? "none" : this.waitingOnMode === "member" ? `member:${this.waitingOnMember}` : "other";
-      new import_obsidian24.Setting(wrapper).setName("Waiting on").setDesc("Who is blocking this topic \u2014 team member or external party").addDropdown(
+      new import_obsidian25.Setting(wrapper).setName("Waiting on").setDesc("Who is blocking this topic \u2014 team member or external party").addDropdown(
         (dropdown) => dropdown.addOptions(options).setValue(currentValue).onChange((value) => {
           if (value === "none") {
             this.waitingOnMode = "none";
@@ -10460,14 +10633,14 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
         })
       );
       if (this.waitingOnMode === "other") {
-        new import_obsidian24.Setting(wrapper).setName("Waiting on (text)").setDesc('External party \u2014 e.g. "Legal", "Vendor X", "Customer"').addText(
+        new import_obsidian25.Setting(wrapper).setName("Waiting on (text)").setDesc('External party \u2014 e.g. "Legal", "Vendor X", "Customer"').addText(
           (text) => text.setPlaceholder("e.g. Legal").setValue(this.waitingOnFreeText).onChange((value) => {
             this.waitingOnFreeText = value;
           })
         );
       }
       if (this.waitingOnMode !== "none") {
-        new import_obsidian24.Setting(wrapper).setName("Last nudged").setDesc("When you last followed up. Leave blank if never nudged.").addText((text) => {
+        new import_obsidian25.Setting(wrapper).setName("Last nudged").setDesc("When you last followed up. Leave blank if never nudged.").addText((text) => {
           text.inputEl.type = "date";
           text.setValue(this.lastNudged);
           text.onChange((value) => {
@@ -10607,13 +10780,13 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
   /** "Blocked by" dependency picker — choose other topics that block this one.
    *  Self and already-selected topics are excluded; true cycles are caught on save. */
   renderBlockedBySection(contentEl) {
-    const setting = new import_obsidian24.Setting(contentEl).setName("Blocked by").setDesc("Other topics that must finish first. Cycles are rejected on save.").addButton(
+    const setting = new import_obsidian25.Setting(contentEl).setName("Blocked by").setDesc("Other topics that must finish first. Cycles are rejected on save.").addButton(
       (btn) => btn.setButtonText("+ Add blocker").onClick(() => {
         var _a;
         const selfPath = (_a = this.editTopic) == null ? void 0 : _a.filePath;
         const candidates = this.allTopics.filter((t) => t.filePath !== selfPath && !this.blockedBy.includes(t.filePath));
         if (candidates.length === 0) {
-          new import_obsidian24.Notice("No other topics available to add.");
+          new import_obsidian25.Notice("No other topics available to add.");
           return;
         }
         new TopicPickerModal(this.app, candidates, (t) => {
@@ -10659,12 +10832,12 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
     for (const p of toAdd) {
       const res = await this.topicService.addDependency(filePath, p);
       if (!res.ok)
-        new import_obsidian24.Notice(`Skipped blocker: ${(_a = res.reason) != null ? _a : "rejected"}`);
+        new import_obsidian25.Notice(`Skipped blocker: ${(_a = res.reason) != null ? _a : "rejected"}`);
     }
   }
   /** References section: label+URL chip list + an add form. */
   renderRefsSection(contentEl) {
-    const setting = new import_obsidian24.Setting(contentEl).setName("References").setDesc("External links (Confluence, Figma, SAP, Miro, \u2026). label \xB7 host");
+    const setting = new import_obsidian25.Setting(contentEl).setName("References").setDesc("External links (Confluence, Figma, SAP, Miro, \u2026). label \xB7 host");
     this.refsContainer = setting.settingEl.createDiv({ cls: "friday-refs-chips" });
     const addForm = setting.settingEl.createDiv({ cls: "friday-refs-add-form" });
     const labelInput = addForm.createEl("input", { type: "text", placeholder: "Label (e.g. Confluence)" });
@@ -10741,10 +10914,10 @@ var SprintTopicModal = class extends import_obsidian24.Modal {
 };
 
 // src/ui/TopicPickerModal.ts
-var import_obsidian25 = require("obsidian");
+var import_obsidian26 = require("obsidian");
 var STATUS_ORDER = { "in-progress": 0, open: 1, backlog: 2, done: 3 };
 var STATUS_GLYPH = { "in-progress": "\u{1F535}", open: "\u26AA", backlog: "\u23F3", done: "\u2705" };
-var TopicPickerModal2 = class extends import_obsidian25.FuzzySuggestModal {
+var TopicPickerModal2 = class extends import_obsidian26.FuzzySuggestModal {
   constructor(app, topics, onChoose) {
     super(app);
     this.topics = topics;
@@ -10771,7 +10944,7 @@ var TopicPickerModal2 = class extends import_obsidian25.FuzzySuggestModal {
     var _a;
     const topic = match.item;
     el.createSpan({ text: `${(_a = STATUS_GLYPH[topic.status]) != null ? _a : "\u26AA"} ` });
-    (0, import_obsidian25.renderResults)(el.createSpan(), topic.title, match.match);
+    (0, import_obsidian26.renderResults)(el.createSpan(), topic.title, match.match);
   }
   onChooseItem(topic) {
     this.onChoose(topic);
@@ -10779,7 +10952,7 @@ var TopicPickerModal2 = class extends import_obsidian25.FuzzySuggestModal {
 };
 
 // src/ui/TriageProcessModal.ts
-var import_obsidian26 = require("obsidian");
+var import_obsidian27 = require("obsidian");
 var SNOOZE_PRESETS = [
   ["Tomorrow", 1],
   ["3 days", 3],
@@ -10787,7 +10960,7 @@ var SNOOZE_PRESETS = [
   ["2 weeks", 14],
   ["Month", 30]
 ];
-var TriageProcessModal = class extends import_obsidian26.Modal {
+var TriageProcessModal = class extends import_obsidian27.Modal {
   constructor(app, items, ops) {
     super(app);
     this.items = items;
@@ -10902,7 +11075,7 @@ var TriageProcessModal = class extends import_obsidian26.Modal {
       return;
     const topics = await this.ops.getTopics();
     if (topics.length === 0) {
-      new import_obsidian26.Notice("No topics yet \u2014 create one in the Topics view first.");
+      new import_obsidian27.Notice("No topics yet \u2014 create one in the Topics view first.");
       return;
     }
     new TopicPickerModal2(this.app, topics, (topic) => {
@@ -10965,7 +11138,7 @@ var TriageProcessModal = class extends import_obsidian26.Modal {
       if (danger)
         btn.addClass("friday-triage-proc-action-danger");
       const iconEl = btn.createSpan({ cls: "friday-triage-proc-action-icon" });
-      (0, import_obsidian26.setIcon)(iconEl, icon);
+      (0, import_obsidian27.setIcon)(iconEl, icon);
       btn.createSpan({ text: label });
       btn.createEl("kbd", { text: key });
       btn.addEventListener("click", (e) => {
@@ -11030,7 +11203,7 @@ var TriageProcessModal = class extends import_obsidian26.Modal {
 };
 
 // src/ui/TaskEditModal.ts
-var import_obsidian27 = require("obsidian");
+var import_obsidian28 = require("obsidian");
 var STATUS_OPTIONS = [
   [" " /* Open */, "Open"],
   ["x" /* Done */, "Done"],
@@ -11038,7 +11211,7 @@ var STATUS_OPTIONS = [
   [">" /* Migrated */, "Migrated"],
   ["<" /* Scheduled */, "Scheduled"]
 ];
-var TaskEditModal = class extends import_obsidian27.Modal {
+var TaskEditModal = class extends import_obsidian28.Modal {
   constructor(app, task, settings, onSubmit) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     super(app);
@@ -11079,7 +11252,7 @@ var TaskEditModal = class extends import_obsidian27.Modal {
       this.submit();
       return false;
     });
-    new import_obsidian27.Setting(contentEl).setName("Task text").addText((text) => {
+    new import_obsidian28.Setting(contentEl).setName("Task text").addText((text) => {
       text.setValue(this.text).onChange((v) => {
         this.text = v;
       });
@@ -11088,19 +11261,19 @@ var TaskEditModal = class extends import_obsidian27.Modal {
           this.submit();
       });
     });
-    new import_obsidian27.Setting(contentEl).setName("Status").addDropdown((dd) => {
+    new import_obsidian28.Setting(contentEl).setName("Status").addDropdown((dd) => {
       for (const [value, label] of STATUS_OPTIONS)
         dd.addOption(value, label);
       dd.setValue(this.status).onChange((v) => {
         this.status = v;
       });
     });
-    new import_obsidian27.Setting(contentEl).setName("Priority").addDropdown(
+    new import_obsidian28.Setting(contentEl).setName("Priority").addDropdown(
       (dd) => dd.addOptions({ none: "None", high: "High", medium: "Medium", low: "Low" }).setValue(this.priority).onChange((v) => {
         this.priority = v;
       })
     );
-    const dueSetting = new import_obsidian27.Setting(contentEl).setName("Due date");
+    const dueSetting = new import_obsidian28.Setting(contentEl).setName("Due date");
     if (this.task.dueDateRaw && !this.init.dueIso) {
       dueSetting.setDesc(`Currently "@due ${this.task.dueDateRaw}" (unresolved) \u2014 picking a date replaces it.`);
     }
@@ -11111,7 +11284,7 @@ var TaskEditModal = class extends import_obsidian27.Modal {
         this.dueIso = v;
       });
     });
-    const snoozeSetting = new import_obsidian27.Setting(contentEl).setName("Snooze until").setDesc("Hides the task from Today/Overdue until this date. Empty = not snoozed.");
+    const snoozeSetting = new import_obsidian28.Setting(contentEl).setName("Snooze until").setDesc("Hides the task from Today/Overdue until this date. Empty = not snoozed.");
     snoozeSetting.addText((text) => {
       text.inputEl.type = "date";
       text.inputEl.value = this.snoozeIso;
@@ -11119,16 +11292,16 @@ var TaskEditModal = class extends import_obsidian27.Modal {
         this.snoozeIso = v;
       });
     });
-    new import_obsidian27.Setting(contentEl).setName("Someday").setDesc("Dateless backlog \u2014 turning this on clears due & snooze on save.").addToggle((t) => t.setValue(this.someday).onChange((v) => {
+    new import_obsidian28.Setting(contentEl).setName("Someday").setDesc("Dateless backlog \u2014 turning this on clears due & snooze on save.").addToggle((t) => t.setValue(this.someday).onChange((v) => {
       this.someday = v;
     }));
-    new import_obsidian27.Setting(contentEl).setName("Type").addDropdown(
+    new import_obsidian28.Setting(contentEl).setName("Type").addDropdown(
       (dd) => dd.addOptions({ "": "Auto (from heading)", "task": "Task", "openpoint": "Open Point" }).setValue(this.typeTag).onChange((v) => {
         this.typeTag = v;
       })
     );
     if (this.settings.workTypes.length > 0) {
-      new import_obsidian27.Setting(contentEl).setName("Work type").addDropdown((dd) => {
+      new import_obsidian28.Setting(contentEl).setName("Work type").addDropdown((dd) => {
         const options = { "": "None" };
         for (const wt of this.settings.workTypes)
           options[wt.shortCode] = `${wt.name} (${wt.shortCode})`;
@@ -11138,7 +11311,7 @@ var TaskEditModal = class extends import_obsidian27.Modal {
       });
     }
     if (this.settings.purposes.length > 0) {
-      new import_obsidian27.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
+      new import_obsidian28.Setting(contentEl).setName("Purpose").addDropdown((dd) => {
         const options = { "": "None" };
         for (const p of this.settings.purposes)
           options[p.shortCode] = `${p.name} (${p.shortCode})`;
@@ -11147,7 +11320,7 @@ var TaskEditModal = class extends import_obsidian27.Modal {
         });
       });
     }
-    const descSetting = new import_obsidian27.Setting(contentEl).setName("Description").setDesc("Indented lines below the task. Subtasks are not affected. Ctrl/Cmd+Enter saves.");
+    const descSetting = new import_obsidian28.Setting(contentEl).setName("Description").setDesc("Indented lines below the task. Subtasks are not affected. Ctrl/Cmd+Enter saves.");
     const descArea = descSetting.controlEl.createEl("textarea", {
       cls: "friday-insert-description",
       attr: { rows: "3", placeholder: "Additional context, notes, links..." }
@@ -11156,7 +11329,7 @@ var TaskEditModal = class extends import_obsidian27.Modal {
     descArea.addEventListener("input", () => {
       this.description = descArea.value;
     });
-    const buttons = new import_obsidian27.Setting(contentEl);
+    const buttons = new import_obsidian28.Setting(contentEl);
     buttons.addButton(
       (btn) => btn.setButtonText("Save").setCta().onClick(() => this.submit())
     );
@@ -11170,7 +11343,7 @@ var TaskEditModal = class extends import_obsidian27.Modal {
   }
   submit() {
     if (!this.text.trim()) {
-      new import_obsidian27.Notice("Task text cannot be empty.");
+      new import_obsidian28.Notice("Task text cannot be empty.");
       return;
     }
     const edits = {};
@@ -11210,8 +11383,8 @@ var TaskEditModal = class extends import_obsidian27.Modal {
 };
 
 // src/ui/SubtaskConfirmModal.ts
-var import_obsidian28 = require("obsidian");
-var SubtaskConfirmModal = class extends import_obsidian28.Modal {
+var import_obsidian29 = require("obsidian");
+var SubtaskConfirmModal = class extends import_obsidian29.Modal {
   constructor(app, task, openChildCount, actionLabel = "Complete") {
     super(app);
     this.task = task;
@@ -11274,7 +11447,7 @@ var SubtaskConfirmModal = class extends import_obsidian28.Modal {
 };
 
 // src/ui/FridayView.ts
-var FridayView = class extends import_obsidian29.ItemView {
+var FridayView = class extends import_obsidian30.ItemView {
   constructor(leaf, store, writer, sprintTopicService, scanner, analyticsService, monthlyAnalyticsService, monthlyNoteService, jiraService, settings, getData, onSaveSnapshot, onSaveMonthlySnapshot) {
     super(leaf);
     this.store = store;
@@ -11380,14 +11553,14 @@ var FridayView = class extends import_obsidian29.ItemView {
             return;
           const ok = await this.writer.updateTaskFields(task, edits);
           if (ok)
-            new import_obsidian29.Notice(`Updated: ${task.text}`);
+            new import_obsidian30.Notice(`Updated: ${task.text}`);
           else
-            new import_obsidian29.Notice("Could not locate the task \u2014 the file may have changed. Try again.");
+            new import_obsidian30.Notice("Could not locate the task \u2014 the file may have changed. Try again.");
         }).open();
       },
       onSomeday: async (task) => {
         await this.writer.setSomeday(task, true);
-        new import_obsidian29.Notice(`Sent to Someday: ${task.text}`);
+        new import_obsidian30.Notice(`Sent to Someday: ${task.text}`);
       },
       onWake: async (task) => {
         if (task.someday)
@@ -11402,7 +11575,7 @@ var FridayView = class extends import_obsidian29.ItemView {
         let leaf = null;
         this.app.workspace.iterateAllLeaves((l) => {
           var _a;
-          if (!leaf && l.view instanceof import_obsidian29.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
+          if (!leaf && l.view instanceof import_obsidian30.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === task.sourcePath) {
             leaf = l;
           }
         });
@@ -11436,7 +11609,7 @@ var FridayView = class extends import_obsidian29.ItemView {
   }
   /** Snooze presets + a custom date picker, shown at the cursor. */
   showSnoozeMenu(task, evt) {
-    const menu = new import_obsidian29.Menu();
+    const menu = new import_obsidian30.Menu();
     const presets = [
       ["Tomorrow", 1],
       ["In 3 days", 3],
@@ -11447,7 +11620,7 @@ var FridayView = class extends import_obsidian29.ItemView {
     for (const [label, days] of presets) {
       menu.addItem((item) => item.setTitle(label).setIcon("alarm-clock").onClick(async () => {
         await this.writer.setSnooze(task, this.formatForWrite(this.daysFromNow(days)));
-        new import_obsidian29.Notice(`Snoozed until ${label.toLowerCase()}: ${task.text}`);
+        new import_obsidian30.Notice(`Snoozed until ${label.toLowerCase()}: ${task.text}`);
       }));
     }
     menu.addSeparator();
@@ -11457,7 +11630,7 @@ var FridayView = class extends import_obsidian29.ItemView {
           return;
         const iso = pluginDateToIso(pluginDate);
         await this.writer.setSnooze(task, this.settings.dateFormat === "dmy" ? pluginDate : iso);
-        new import_obsidian29.Notice(`Snoozed until ${iso}: ${task.text}`);
+        new import_obsidian30.Notice(`Snoozed until ${iso}: ${task.text}`);
       }).open();
     }));
     menu.showAtMouseEvent(evt);
@@ -11475,13 +11648,13 @@ var FridayView = class extends import_obsidian29.ItemView {
             return;
           const iso = pluginDateToIso(pluginDate);
           await this.writer.updateDueDate(task, this.settings.dateFormat === "dmy" ? pluginDate : iso);
-          new import_obsidian29.Notice(`Due ${iso}: ${task.text}`);
+          new import_obsidian30.Notice(`Due ${iso}: ${task.text}`);
         }).open();
       },
       onSendToTopic: (task) => void this.pickTopicAndMove(task),
       onDrop: async (task) => {
         await this.writer.setStatus(task, "-" /* Cancelled */);
-        new import_obsidian29.Notice(`Dropped: ${task.text}`);
+        new import_obsidian30.Notice(`Dropped: ${task.text}`);
       }
     };
   }
@@ -11489,7 +11662,7 @@ var FridayView = class extends import_obsidian29.ItemView {
   async pickTopicAndMove(task) {
     const topics = await this.sprintTopicService.getAllTopics();
     if (topics.length === 0) {
-      new import_obsidian29.Notice("No topics yet \u2014 create one in the Topics view first.");
+      new import_obsidian30.Notice("No topics yet \u2014 create one in the Topics view first.");
       return;
     }
     new TopicPickerModal2(this.app, topics, (topic) => {
@@ -11501,28 +11674,28 @@ var FridayView = class extends import_obsidian29.ItemView {
    *  checked BEFORE the block is removed from its source, so a bad target can't
    *  lose the task. */
   async moveTaskToTopic(task, topic) {
-    if (!(this.app.vault.getAbstractFileByPath(topic.filePath) instanceof import_obsidian29.TFile)) {
-      new import_obsidian29.Notice(`Topic file not found: ${topic.filePath}`);
+    if (!(this.app.vault.getAbstractFileByPath(topic.filePath) instanceof import_obsidian30.TFile)) {
+      new import_obsidian30.Notice(`Topic file not found: ${topic.filePath}`);
       return false;
     }
     const block = await this.writer.removeTaskBlock(task);
     if (!block) {
-      new import_obsidian29.Notice("Could not locate the task \u2014 the file may have changed. Try again.");
+      new import_obsidian30.Notice("Could not locate the task \u2014 the file may have changed. Try again.");
       return false;
     }
     const ok = await this.sprintTopicService.appendTasksToTopic(topic.filePath, block);
     if (!ok) {
-      new import_obsidian29.Notice(`Could not write to topic "${topic.title}".`);
+      new import_obsidian30.Notice(`Could not write to topic "${topic.title}".`);
       return false;
     }
-    new import_obsidian29.Notice(`Moved to ${topic.title}: ${task.text}`);
+    new import_obsidian30.Notice(`Moved to ${topic.title}: ${task.text}`);
     return true;
   }
   /** Launch the focused card-by-card triage processor over the current queue. */
   openTriageProcessor() {
     const items = this.store.getTriage(this.settings.tasksFilePath);
     if (items.length === 0) {
-      new import_obsidian29.Notice("Inbox zero \u2014 nothing to process.");
+      new import_obsidian30.Notice("Inbox zero \u2014 nothing to process.");
       return;
     }
     new TriageProcessModal(this.app, items, {
@@ -11742,9 +11915,9 @@ var FridayView = class extends import_obsidian29.ItemView {
 };
 
 // src/ui/JiraDashboardView.ts
-var import_obsidian30 = require("obsidian");
+var import_obsidian31 = require("obsidian");
 var UNMATCHED_MEMBER_KEY = "__unmatched__";
-var TopicSuggestModal = class extends import_obsidian30.FuzzySuggestModal {
+var TopicSuggestModal = class extends import_obsidian31.FuzzySuggestModal {
   constructor(app, topics, onChoose) {
     super(app);
     this.topics = topics;
@@ -11762,7 +11935,7 @@ var TopicSuggestModal = class extends import_obsidian30.FuzzySuggestModal {
     this.onChoose(t);
   }
 };
-var JiraDashboardView = class extends import_obsidian30.ItemView {
+var JiraDashboardView = class extends import_obsidian31.ItemView {
   constructor(leaf, dashboardService, getSettings, saveSettings, getAllTopics, topicService, onTopicsChanged, teamService) {
     super(leaf);
     this.dashboardService = dashboardService;
@@ -11821,7 +11994,7 @@ var JiraDashboardView = class extends import_obsidian30.ItemView {
         defaultCollapsed: true
       }
     ];
-    this.debouncedSearch = (0, import_obsidian30.debounce)((value) => {
+    this.debouncedSearch = (0, import_obsidian31.debounce)((value) => {
       this.searchQuery = value;
       this.renderContent();
     }, SEARCH_DEBOUNCE_MS, false);
@@ -12173,7 +12346,7 @@ var JiraDashboardView = class extends import_obsidian30.ItemView {
   }
   async openTopic(topic) {
     const file = this.app.vault.getAbstractFileByPath(topic.filePath);
-    if (!(file instanceof import_obsidian30.TFile))
+    if (!(file instanceof import_obsidian31.TFile))
       return;
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
@@ -12320,7 +12493,7 @@ var JiraDashboardView = class extends import_obsidian30.ItemView {
   // Both flows go through the normal topic-write path (createTopic / updateTopicFrontmatter)
   // so they participate in the scanner's file-watch → onTopicsChange → re-render cycle.
   openRowContextMenu(evt, issue, linkedTopics) {
-    const menu = new import_obsidian30.Menu();
+    const menu = new import_obsidian31.Menu();
     menu.addItem((item) => item.setTitle("Create topic from this issue").setIcon("plus").onClick(() => this.createTopicFromIssue(issue)));
     const allTopics = this.getAllTopics();
     const linkableTopics = allTopics.filter((t) => !t.jira.includes(issue.key));
@@ -12342,7 +12515,7 @@ var JiraDashboardView = class extends import_obsidian30.ItemView {
       this.app,
       this.topicService,
       (topic) => {
-        new import_obsidian30.Notice(`Topic created: ${topic.title}`);
+        new import_obsidian31.Notice(`Topic created: ${topic.title}`);
       },
       void 0,
       {
@@ -12356,14 +12529,14 @@ var JiraDashboardView = class extends import_obsidian30.ItemView {
   }
   linkIssueToTopic(issue, candidateTopics) {
     if (candidateTopics.length === 0) {
-      new import_obsidian30.Notice("Every topic is already linked to this issue.");
+      new import_obsidian31.Notice("Every topic is already linked to this issue.");
       return;
     }
     new TopicSuggestModal(this.app, candidateTopics, async (topic) => {
       var _a;
       const seen = new Set(topic.jira);
       if (seen.has(issue.key)) {
-        new import_obsidian30.Notice(`${topic.title} already linked to ${issue.key}.`);
+        new import_obsidian31.Notice(`${topic.title} already linked to ${issue.key}.`);
         return;
       }
       const merged = [...topic.jira, issue.key];
@@ -12371,10 +12544,10 @@ var JiraDashboardView = class extends import_obsidian30.ItemView {
         await this.topicService.updateTopicFrontmatter(topic.filePath, {
           jira: merged.join(", ")
         });
-        new import_obsidian30.Notice(`Linked ${issue.key} \u2192 ${topic.title}`);
+        new import_obsidian31.Notice(`Linked ${issue.key} \u2192 ${topic.title}`);
       } catch (err) {
         console.error("[JIRA Dashboard] link-to-topic failed:", err);
-        new import_obsidian30.Notice(`Failed to link: ${(_a = err.message) != null ? _a : err}`);
+        new import_obsidian31.Notice(`Failed to link: ${(_a = err.message) != null ? _a : err}`);
       }
     }).open();
   }
@@ -12615,14 +12788,14 @@ var JiraDashboardView = class extends import_obsidian30.ItemView {
 };
 
 // src/ui/TeamDashboardView.ts
-var import_obsidian34 = require("obsidian");
+var import_obsidian35 = require("obsidian");
 
 // src/ui/components/TeamOverviewView.ts
-var import_obsidian32 = require("obsidian");
+var import_obsidian33 = require("obsidian");
 
 // src/ui/OneOnOneModal.ts
-var import_obsidian31 = require("obsidian");
-var OneOnOneModal = class extends import_obsidian31.FuzzySuggestModal {
+var import_obsidian32 = require("obsidian");
+var OneOnOneModal = class extends import_obsidian32.FuzzySuggestModal {
   constructor(app, members, onSelect) {
     super(app);
     this.members = members;
@@ -12880,7 +13053,7 @@ var TeamOverviewView = class {
   async openFile(path) {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) {
-      new import_obsidian32.Notice(`File not found: ${path}`);
+      new import_obsidian33.Notice(`File not found: ${path}`);
       return;
     }
     const leaf = this.reuseOrCreateLeaf(path);
@@ -12892,29 +13065,33 @@ var TeamOverviewView = class {
     let existing = null;
     this.app.workspace.iterateAllLeaves((l) => {
       var _a;
-      if (!existing && l.view instanceof import_obsidian32.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === path) {
+      if (!existing && l.view instanceof import_obsidian33.MarkdownView && ((_a = l.view.file) == null ? void 0 : _a.path) === path) {
         existing = l;
       }
     });
     return existing != null ? existing : this.app.workspace.getLeaf(false);
   }
   async startOneOnOne(member) {
-    var _a;
+    var _a, _b;
     try {
       const r = this.rollupByEmail.get(((_a = member.email) != null ? _a : "").toLowerCase());
-      const agenda = r ? buildOneOnOneAgenda(r) : void 0;
+      const agenda = r ? await buildOneOnOneAgenda(r, {
+        vault: this.app.vault,
+        sinceIso: member.lastOneOnOne ? formatDateISO(member.lastOneOnOne) : null,
+        agingThresholdDays: (_b = this.settings.agingWipThresholdDays) != null ? _b : 7
+      }) : void 0;
       const file = await this.service.startOneOnOne(member, /* @__PURE__ */ new Date(), agenda);
       const leaf = this.app.workspace.getLeaf(false);
       await leaf.openFile(file);
       this.app.workspace.revealLeaf(leaf);
     } catch (e) {
-      new import_obsidian32.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
+      new import_obsidian33.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
     }
   }
   openOneOnOnePicker() {
     const members = this.service.getActiveMembers();
     if (members.length === 0) {
-      new import_obsidian32.Notice("No active team members to pick from.");
+      new import_obsidian33.Notice("No active team members to pick from.");
       return;
     }
     new OneOnOneModal(this.app, members, (picked) => this.startOneOnOne(picked)).open();
@@ -12973,7 +13150,7 @@ function mostRecentSessionPath(member) {
 }
 
 // src/ui/components/TeamStatusSummary.ts
-var import_obsidian33 = require("obsidian");
+var import_obsidian34 = require("obsidian");
 var TeamStatusSummary = class {
   constructor(container, app, rollup, freshnessLabel, opts) {
     this.container = container;
@@ -13067,7 +13244,7 @@ var TeamStatusSummary = class {
         return;
       }
       const file = this.app.vault.getAbstractFileByPath(ref);
-      if (file instanceof import_obsidian33.TFile) {
+      if (file instanceof import_obsidian34.TFile) {
         const leaf = this.app.workspace.getLeaf(false);
         void leaf.openFile(file);
         this.app.workspace.revealLeaf(leaf);
@@ -13114,7 +13291,7 @@ var TeamWorkloadTrend = class {
 };
 
 // src/ui/TeamDashboardView.ts
-var TeamDashboardView = class extends import_obsidian34.ItemView {
+var TeamDashboardView = class extends import_obsidian35.ItemView {
   constructor(leaf, service, rollupService, digestService, jiraTeamService, getSettings, onTeamChanged, onTopicsChanged, onActivateJiraTeamTab, getData) {
     super(leaf);
     this.service = service;
@@ -13204,7 +13381,7 @@ var TeamDashboardView = class extends import_obsidian34.ItemView {
     new TeamStatusSummary(this.contentContainer, this.app, rollup, this.freshnessLabel(rollup.jiraIncluded), {
       onCopyDigest: () => {
         void navigator.clipboard.writeText(this.digestService.buildMarkdown(rollup, /* @__PURE__ */ new Date()));
-        new import_obsidian34.Notice("Team digest copied to clipboard.");
+        new import_obsidian35.Notice("Team digest copied to clipboard.");
       },
       onGenerateDigest: async () => {
         try {
@@ -13212,9 +13389,9 @@ var TeamDashboardView = class extends import_obsidian34.ItemView {
           const leaf = this.app.workspace.getLeaf(false);
           await leaf.openFile(file);
           this.app.workspace.revealLeaf(leaf);
-          new import_obsidian34.Notice("Team status digest generated.");
+          new import_obsidian35.Notice("Team status digest generated.");
         } catch (e) {
-          new import_obsidian34.Notice(`Could not generate digest: ${e instanceof Error ? e.message : "error"}`);
+          new import_obsidian35.Notice(`Could not generate digest: ${e instanceof Error ? e.message : "error"}`);
         }
       }
     }).render();
@@ -13251,8 +13428,8 @@ var TeamDashboardView = class extends import_obsidian34.ItemView {
 };
 
 // src/ui/MorningReviewModal.ts
-var import_obsidian35 = require("obsidian");
-var MorningReviewModal = class extends import_obsidian35.Modal {
+var import_obsidian36 = require("obsidian");
+var MorningReviewModal = class extends import_obsidian36.Modal {
   constructor(app, dailyNotes, teamService, topicService, settings) {
     super(app);
     this.dailyNotes = dailyNotes;
@@ -13270,6 +13447,10 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
     if (overdueOneOnOnes.length > 0) {
       this.renderOverdueOneOnOnes(contentEl, overdueOneOnOnes);
     }
+    const atRiskTopics = await this.getAtRiskTopics();
+    if (atRiskTopics.length > 0) {
+      this.renderAtRiskTopics(contentEl, atRiskTopics);
+    }
     const staleWaitingTopics = await this.getStaleWaitingTopics();
     if (staleWaitingTopics.length > 0) {
       this.renderStaleWaitingTopics(contentEl, staleWaitingTopics);
@@ -13278,7 +13459,7 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
     if (wokenTopics.length > 0) {
       this.renderWokenTopics(contentEl, wokenTopics);
     }
-    if (overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0 && wokenTopics.length === 0) {
+    if (overdueOneOnOnes.length === 0 && staleWaitingTopics.length === 0 && wokenTopics.length === 0 && atRiskTopics.length === 0) {
       contentEl.createEl("p", {
         text: "Nothing needs a nudge. Your due & overdue work lives in the Today tab.",
         cls: "friday-empty"
@@ -13367,7 +13548,7 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
           scheduleBtn.disabled = true;
           scheduleBtn.addClass("is-active");
         } catch (e) {
-          new import_obsidian35.Notice(`Could not schedule reminder: ${e instanceof Error ? e.message : "unknown error"}`);
+          new import_obsidian36.Notice(`Could not schedule reminder: ${e instanceof Error ? e.message : "unknown error"}`);
         }
       });
     }
@@ -13393,6 +13574,59 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
       const daysSince = Math.floor((todayMs - then) / (24 * 60 * 60 * 1e3));
       return daysSince > threshold;
     });
+  }
+  /** Topics at schedule risk (deriveTopicRisk): overdue, or due within the risk window
+   *  while not started / behind on tasks / blocked. Sorted soonest-due first. Blocked
+   *  state feeds from the manual flag + dependency graph (no JIRA cache in the modal). */
+  async getAtRiskTopics() {
+    if (!this.topicService)
+      return [];
+    const all = await this.topicService.getAllTopics();
+    const index = buildTopicIndex(all);
+    const isBlocked = (t) => deriveTopicBlock({ topic: t, blockersOf: (x) => index.blockersOf(x) }).state === "blocked";
+    return all.map((topic) => ({ topic, risk: deriveTopicRisk(topic, isBlocked(topic)) })).filter((x) => x.risk.atRisk).sort((a, b) => {
+      var _a, _b;
+      return ((_a = a.topic.dueDate) != null ? _a : "").localeCompare((_b = b.topic.dueDate) != null ? _b : "");
+    });
+  }
+  /** Section: topics at schedule risk. Read-only rows (the fix lives on the board) with
+   *  an Open action that jumps to the topic file. */
+  renderAtRiskTopics(container, items) {
+    var _a, _b;
+    const section = container.createDiv({ cls: "friday-review-section friday-review-atrisk" });
+    const header = section.createDiv({ cls: "friday-review-section-header" });
+    header.createSpan({ text: "\u26A0 At risk", cls: "friday-review-section-title" });
+    header.createSpan({ text: ` (${items.length})`, cls: "friday-review-section-count" });
+    const members = (_b = (_a = this.settings) == null ? void 0 : _a.teamMembers) != null ? _b : [];
+    const byEmail = new Map(members.map((m) => [m.email, m]));
+    for (const { topic, risk } of items) {
+      const row = section.createDiv({ cls: "friday-migration-item friday-atrisk-row" });
+      const infoEl = row.createDiv({ cls: "friday-migration-item-info" });
+      const textEl = infoEl.createDiv({ cls: "friday-migration-item-text" });
+      textEl.createSpan({ text: topic.title, cls: "friday-waiting-topic" });
+      if (topic.assignee) {
+        const m = byEmail.get(topic.assignee);
+        textEl.createSpan({
+          cls: "friday-atrisk-owner",
+          text: ` \u2014 ${m ? m.nickname || m.fullName || m.email : topic.assignee}`
+        });
+      }
+      const metaEl = infoEl.createDiv({ cls: "friday-migration-item-meta" });
+      metaEl.createSpan({ text: risk.reasons.join(" \xB7 "), cls: "friday-atrisk-reasons" });
+      const actionsEl = row.createDiv({ cls: "friday-migration-item-actions" });
+      const openBtn = actionsEl.createEl("button", { text: "Open", cls: "friday-btn" });
+      openBtn.addEventListener("click", async () => {
+        const file = this.app.vault.getAbstractFileByPath(topic.filePath);
+        if (!(file instanceof import_obsidian36.TFile)) {
+          new import_obsidian36.Notice(`Topic file not found: ${topic.filePath}`);
+          return;
+        }
+        const leaf = this.app.workspace.getLeaf(false);
+        await leaf.openFile(file);
+        this.app.workspace.revealLeaf(leaf);
+        this.close();
+      });
+    }
   }
   /** Topics whose snooze has expired but wasn't cleared: `snoozedUntil` is set, the date
    *  is today or earlier, and the topic isn't done. They're already back in their board
@@ -13446,7 +13680,7 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
           await this.topicService.setTopicSnooze(topic.filePath, null);
           settle(wakeBtn, "Awake \u2713");
         } catch (e) {
-          new import_obsidian35.Notice(`Could not clear snooze: ${e instanceof Error ? e.message : "unknown error"}`);
+          new import_obsidian36.Notice(`Could not clear snooze: ${e instanceof Error ? e.message : "unknown error"}`);
         }
       });
       renewBtn.addEventListener("click", async () => {
@@ -13458,7 +13692,7 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
           await this.topicService.setTopicSnooze(topic.filePath, until);
           settle(renewBtn, `Until ${until} \u2713`);
         } catch (e) {
-          new import_obsidian35.Notice(`Could not renew snooze: ${e instanceof Error ? e.message : "unknown error"}`);
+          new import_obsidian36.Notice(`Could not renew snooze: ${e instanceof Error ? e.message : "unknown error"}`);
         }
       });
     }
@@ -13496,7 +13730,7 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
           nudgedBtn.disabled = true;
           nudgedBtn.addClass("is-active");
         } catch (e) {
-          new import_obsidian35.Notice(`Could not mark nudged: ${e instanceof Error ? e.message : "unknown error"}`);
+          new import_obsidian36.Notice(`Could not mark nudged: ${e instanceof Error ? e.message : "unknown error"}`);
         }
       });
       const clearBtn = actionsEl.createEl("button", {
@@ -13514,7 +13748,7 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
           nudgedBtn.disabled = true;
           clearBtn.addClass("is-active");
         } catch (e) {
-          new import_obsidian35.Notice(`Could not unblock: ${e instanceof Error ? e.message : "unknown error"}`);
+          new import_obsidian36.Notice(`Could not unblock: ${e instanceof Error ? e.message : "unknown error"}`);
         }
       });
     }
@@ -13522,8 +13756,8 @@ var MorningReviewModal = class extends import_obsidian35.Modal {
 };
 
 // src/ui/WeeklyReviewModal.ts
-var import_obsidian36 = require("obsidian");
-var WeeklyReviewModal = class extends import_obsidian36.Modal {
+var import_obsidian37 = require("obsidian");
+var WeeklyReviewModal = class extends import_obsidian37.Modal {
   constructor(app, analyticsService, settings, weeklyHistory, onSaveSnapshot, precomputedStats) {
     super(app);
     this.analyticsService = analyticsService;
@@ -13601,8 +13835,8 @@ var WeeklyReviewModal = class extends import_obsidian36.Modal {
 };
 
 // src/ui/MonthlyReviewModal.ts
-var import_obsidian37 = require("obsidian");
-var MonthlyReviewModal = class extends import_obsidian37.Modal {
+var import_obsidian38 = require("obsidian");
+var MonthlyReviewModal = class extends import_obsidian38.Modal {
   constructor(app, monthlyAnalytics, monthlyNotes, _store, _settings, monthlyHistory, onSaveSnapshot) {
     super(app);
     this.monthlyAnalytics = monthlyAnalytics;
@@ -13683,8 +13917,8 @@ var MonthlyReviewModal = class extends import_obsidian37.Modal {
 };
 
 // src/ui/QuickCaptureModal.ts
-var import_obsidian38 = require("obsidian");
-var QuickCaptureModal = class extends import_obsidian38.Modal {
+var import_obsidian39 = require("obsidian");
+var QuickCaptureModal = class extends import_obsidian39.Modal {
   constructor(app, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -13737,8 +13971,8 @@ var QuickCaptureModal = class extends import_obsidian38.Modal {
 };
 
 // src/ui/TextPromptModal.ts
-var import_obsidian39 = require("obsidian");
-var TextPromptModal = class extends import_obsidian39.Modal {
+var import_obsidian40 = require("obsidian");
+var TextPromptModal = class extends import_obsidian40.Modal {
   constructor(app, titleText, placeholder, onSubmit, submitLabel = "Add") {
     super(app);
     this.titleText = titleText;
@@ -13756,7 +13990,7 @@ var TextPromptModal = class extends import_obsidian39.Modal {
       this.onSubmit(text);
       this.close();
     };
-    new import_obsidian39.Setting(this.contentEl).addText((text) => {
+    new import_obsidian40.Setting(this.contentEl).addText((text) => {
       text.setPlaceholder(this.placeholder).onChange((v) => {
         this.value = v;
       });
@@ -13769,7 +14003,7 @@ var TextPromptModal = class extends import_obsidian39.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian39.Setting(this.contentEl).addButton((btn) => btn.setButtonText(this.submitLabel).setCta().onClick(submit));
+    new import_obsidian40.Setting(this.contentEl).addButton((btn) => btn.setButtonText(this.submitLabel).setCta().onClick(submit));
   }
   onClose() {
     this.contentEl.empty();
@@ -13777,8 +14011,8 @@ var TextPromptModal = class extends import_obsidian39.Modal {
 };
 
 // src/ui/JiraKeyPromptModal.ts
-var import_obsidian40 = require("obsidian");
-var JiraKeyPromptModal = class extends import_obsidian40.Modal {
+var import_obsidian41 = require("obsidian");
+var JiraKeyPromptModal = class extends import_obsidian41.Modal {
   constructor(app, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -13822,7 +14056,7 @@ var JiraKeyPromptModal = class extends import_obsidian40.Modal {
       }
       this.close();
     };
-    new import_obsidian40.Setting(contentEl).setName("JIRA issue key(s)").addText((text) => {
+    new import_obsidian41.Setting(contentEl).setName("JIRA issue key(s)").addText((text) => {
       text.setPlaceholder("PROJ-123, PROJ-124").onChange((v) => {
         this.key = v;
       });
@@ -13834,7 +14068,7 @@ var JiraKeyPromptModal = class extends import_obsidian40.Modal {
       });
       setTimeout(() => text.inputEl.focus(), 50);
     });
-    new import_obsidian40.Setting(contentEl).addButton((btn) => {
+    new import_obsidian41.Setting(contentEl).addButton((btn) => {
       submitBtn = btn.buttonEl;
       btn.setButtonText("Fetch & create").setCta().onClick(() => void run());
     });
@@ -13845,14 +14079,14 @@ var JiraKeyPromptModal = class extends import_obsidian40.Modal {
 };
 
 // src/ui/TopicSwitcherModal.ts
-var import_obsidian41 = require("obsidian");
+var import_obsidian42 = require("obsidian");
 var STATUS_LABEL = {
   backlog: "Backlog",
   open: "To Do",
   "in-progress": "In Progress",
   done: "Done"
 };
-var TopicSwitcherModal = class extends import_obsidian41.FuzzySuggestModal {
+var TopicSwitcherModal = class extends import_obsidian42.FuzzySuggestModal {
   constructor(app, topics, onChoose, settings) {
     super(app);
     this.topics = topics;
@@ -13894,8 +14128,8 @@ var TopicSwitcherModal = class extends import_obsidian41.FuzzySuggestModal {
 };
 
 // src/ui/pickers.ts
-var import_obsidian42 = require("obsidian");
-var GenericPickerModal = class extends import_obsidian42.FuzzySuggestModal {
+var import_obsidian43 = require("obsidian");
+var GenericPickerModal = class extends import_obsidian43.FuzzySuggestModal {
   constructor(app, options, resolveChoice, opts) {
     var _a;
     super(app);
@@ -15326,7 +15560,7 @@ function teamMemberUpdateTool(deps) {
 }
 
 // src/main.ts
-var FridayPlugin = class extends import_obsidian43.Plugin {
+var FridayPlugin = class extends import_obsidian44.Plugin {
   async onload() {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     const saved = await this.loadData();
@@ -15485,7 +15719,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         const topicsFolder = this.settings.sprintTopicsPath + "/";
-        if (file instanceof import_obsidian43.TFile && oldPath.startsWith(topicsFolder)) {
+        if (file instanceof import_obsidian44.TFile && oldPath.startsWith(topicsFolder)) {
           void this.sprintTopicService.handleTopicRename(oldPath, file.path);
         }
       })
@@ -15545,7 +15779,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: () => {
         const topics = this.scanner.getAllTopics();
         if (topics.length === 0) {
-          new import_obsidian43.Notice("No topics found.");
+          new import_obsidian44.Notice("No topics found.");
           return;
         }
         new TopicSwitcherModal(this.app, topics, (t) => {
@@ -15566,7 +15800,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       name: "Create topic from JIRA issue",
       callback: () => {
         if (!this.jiraService.isEnabled()) {
-          new import_obsidian43.Notice("Enable the JIRA module in Settings to create topics from issues.");
+          new import_obsidian44.Notice("Enable the JIRA module in Settings to create topics from issues.");
           return;
         }
         new JiraKeyPromptModal(this.app, async (raw) => {
@@ -15603,12 +15837,12 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
           }
           if (keys.length === 1) {
             if (created.length === 1) {
-              new import_obsidian43.Notice(`Topic created from ${keys[0]}: ${created[0].title}`);
+              new import_obsidian44.Notice(`Topic created from ${keys[0]}: ${created[0].title}`);
               void this.openTopicFile(created[0].filePath);
               return null;
             }
             if (linked.length === 1) {
-              new import_obsidian43.Notice(`${keys[0]} is already linked \u2014 opening existing topic.`);
+              new import_obsidian44.Notice(`${keys[0]} is already linked \u2014 opening existing topic.`);
               void this.openTopicFile(linked[0].topic.filePath);
               return null;
             }
@@ -15621,7 +15855,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
             parts.push(`skipped ${linked.length} already-linked`);
           if (failed.length)
             parts.push(`${failed.length} failed`);
-          new import_obsidian43.Notice(`JIRA \u2192 topics: ${parts.join(", ")}.`);
+          new import_obsidian44.Notice(`JIRA \u2192 topics: ${parts.join(", ")}.`);
           if (created.length === 0 && linked.length === 0) {
             return `None created. ${failed.map((f) => `${f.key}: ${f.reason}`).join("; ")}`;
           }
@@ -15634,23 +15868,23 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       name: "Sync topic dependencies from JIRA",
       callback: async () => {
         if (!this.jiraService.isEnabled()) {
-          new import_obsidian43.Notice("Enable the JIRA module in Settings to sync dependencies.");
+          new import_obsidian44.Notice("Enable the JIRA module in Settings to sync dependencies.");
           return;
         }
         const topics = this.scanner.getAllTopics();
         const linkedCount = topics.filter((t) => t.jira.length > 0).length;
         if (linkedCount === 0) {
-          new import_obsidian43.Notice("No topics are linked to JIRA issues.");
+          new import_obsidian44.Notice("No topics are linked to JIRA issues.");
           return;
         }
-        new import_obsidian43.Notice(`Syncing dependencies from JIRA for ${linkedCount} topic(s)\u2026`);
+        new import_obsidian44.Notice(`Syncing dependencies from JIRA for ${linkedCount} topic(s)\u2026`);
         const { added, rejected } = await syncTopicDependenciesFromJira(
           this.sprintTopicService,
           this.jiraService,
           topics
         );
         const tail = rejected > 0 ? ` (${rejected} skipped \u2014 cycle/invalid)` : "";
-        new import_obsidian43.Notice(added > 0 ? `Dependency sync: added ${added} link(s)${tail}.` : `Dependency sync: nothing new${tail}.`);
+        new import_obsidian44.Notice(added > 0 ? `Dependency sync: added ${added} link(s)${tail}.` : `Dependency sync: nothing new${tail}.`);
       }
     });
     this.addCommand({
@@ -15659,7 +15893,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: async () => {
         const topics = this.scanner.getAllTopics();
         if (topics.length === 0) {
-          new import_obsidian43.Notice("No topics found.");
+          new import_obsidian44.Notice("No topics found.");
           return;
         }
         const topic = await pickFromList(this.app, topics.map((t) => ({
@@ -15678,7 +15912,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
         if (status === null)
           return;
         await this.sprintTopicService.setTopicStatus(topic.filePath, status);
-        new import_obsidian43.Notice(`Moved "${topic.title}" \u2192 ${this.topicColumnLabel(status)}`);
+        new import_obsidian44.Notice(`Moved "${topic.title}" \u2192 ${this.topicColumnLabel(status)}`);
       }
     });
     this.addCommand({
@@ -15687,7 +15921,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: async () => {
         const topics = this.scanner.getAllTopics();
         if (topics.length === 0) {
-          new import_obsidian43.Notice("No topics found.");
+          new import_obsidian44.Notice("No topics found.");
           return;
         }
         const topic = await pickFromList(this.app, topics.map((t) => ({
@@ -15698,7 +15932,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
         if (!topic)
           return;
         await this.sprintTopicService.setTopicBlocked(topic.filePath, !topic.blocked);
-        new import_obsidian43.Notice(`${topic.blocked ? "Unblocked" : "Blocked"}: ${topic.title}`);
+        new import_obsidian44.Notice(`${topic.blocked ? "Unblocked" : "Blocked"}: ${topic.title}`);
       }
     });
     this.addCommand({
@@ -15707,7 +15941,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: async () => {
         const topics = this.scanner.getAllTopics();
         if (topics.length === 0) {
-          new import_obsidian43.Notice("No topics found.");
+          new import_obsidian44.Notice("No topics found.");
           return;
         }
         const topic = await pickFromList(this.app, topics.map((t) => {
@@ -15724,7 +15958,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
         new DueDateModal(this.app, current, async (pluginDate) => {
           const iso = pluginDate ? pluginDateToIso(pluginDate) : null;
           await this.sprintTopicService.setTopicDueDate(topic.filePath, iso);
-          new import_obsidian43.Notice(iso ? `Due ${iso}: ${topic.title}` : `Due date cleared: ${topic.title}`);
+          new import_obsidian44.Notice(iso ? `Due ${iso}: ${topic.title}` : `Due date cleared: ${topic.title}`);
         }).open();
       }
     });
@@ -15734,7 +15968,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: async () => {
         const topics = this.scanner.getAllTopics();
         if (topics.length === 0) {
-          new import_obsidian43.Notice("No topics found.");
+          new import_obsidian44.Notice("No topics found.");
           return;
         }
         const topic = await pickFromList(this.app, topics.map((t) => ({
@@ -15756,7 +15990,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
           return;
         if (choice === 0) {
           await this.sprintTopicService.setTopicSnooze(topic.filePath, null);
-          new import_obsidian43.Notice(`Woke: ${topic.title}`);
+          new import_obsidian44.Notice(`Woke: ${topic.title}`);
           return;
         }
         if (choice === -1) {
@@ -15764,7 +15998,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
           new DueDateModal(this.app, current, async (pluginDate) => {
             const iso = pluginDate ? pluginDateToIso(pluginDate) : null;
             await this.sprintTopicService.setTopicSnooze(topic.filePath, iso);
-            new import_obsidian43.Notice(iso ? `Snoozed until ${iso}: ${topic.title}` : `Snooze cleared: ${topic.title}`);
+            new import_obsidian44.Notice(iso ? `Snoozed until ${iso}: ${topic.title}` : `Snooze cleared: ${topic.title}`);
           }).open();
           return;
         }
@@ -15773,7 +16007,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
         d.setDate(d.getDate() + choice);
         const until = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         await this.sprintTopicService.setTopicSnooze(topic.filePath, until);
-        new import_obsidian43.Notice(`Snoozed until ${until}: ${topic.title}`);
+        new import_obsidian44.Notice(`Snoozed until ${until}: ${topic.title}`);
       }
     });
     this.addCommand({
@@ -15782,7 +16016,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: async () => {
         const topics = this.scanner.getAllTopics();
         if (topics.length === 0) {
-          new import_obsidian43.Notice("No topics found.");
+          new import_obsidian44.Notice("No topics found.");
           return;
         }
         const topic = await pickFromList(this.app, topics.map((t) => ({
@@ -15798,7 +16032,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
           "What happened / what was decided\u2026",
           async (text) => {
             const ok = await this.sprintTopicService.appendTopicNote(topic.filePath, text);
-            new import_obsidian43.Notice(ok ? `Note added to "${topic.title}".` : "Could not add the note.");
+            new import_obsidian44.Notice(ok ? `Note added to "${topic.title}".` : "Could not add the note.");
           }
         ).open();
       }
@@ -15819,7 +16053,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
           return;
         const res = await this.sprintTopicService.archiveDoneTopics(choice);
         const skippedTail = res.skipped > 0 ? ` (${res.skipped} skipped)` : "";
-        new import_obsidian43.Notice(res.archived > 0 ? `Archived ${res.archived} topic(s) \u2192 ${this.sprintTopicService.getArchiveFolderPath()}/${skippedTail}` : `Nothing to archive${skippedTail}.`);
+        new import_obsidian44.Notice(res.archived > 0 ? `Archived ${res.archived} topic(s) \u2192 ${this.sprintTopicService.getArchiveFolderPath()}/${skippedTail}` : `Nothing to archive${skippedTail}.`);
       }
     });
     this.addCommand({
@@ -15860,9 +16094,9 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
           const leaf = this.app.workspace.getLeaf(false);
           await leaf.openFile(file);
           this.app.workspace.revealLeaf(leaf);
-          new import_obsidian43.Notice("Team status digest generated.");
+          new import_obsidian44.Notice("Team status digest generated.");
         } catch (e) {
-          new import_obsidian43.Notice(`Could not generate digest: ${e instanceof Error ? e.message : "error"}`);
+          new import_obsidian44.Notice(`Could not generate digest: ${e instanceof Error ? e.message : "error"}`);
         }
       }
     });
@@ -15871,7 +16105,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       name: "Capture Workload Snapshot",
       callback: async () => {
         const ok = await this.captureWorkloadSnapshot(/* @__PURE__ */ new Date());
-        new import_obsidian43.Notice(ok ? "Workload snapshot captured." : "No active team members to snapshot.");
+        new import_obsidian44.Notice(ok ? "Workload snapshot captured." : "No active team members to snapshot.");
       }
     });
     this.addCommand({
@@ -15880,13 +16114,13 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: async () => {
         const result = await this.archiveService.archiveCompleted();
         if (result.archived === 0 && result.skipped === 0) {
-          new import_obsidian43.Notice("No completed tasks to archive.");
+          new import_obsidian44.Notice("No completed tasks to archive.");
         } else {
           const parts = [`Archived ${result.archived} task(s) to ${result.files.length} file(s).`];
           if (result.skipped > 0) {
             parts.push(`${result.skipped} skipped (source file edited since last scan \u2014 try again).`);
           }
-          new import_obsidian43.Notice(parts.join(" "));
+          new import_obsidian44.Notice(parts.join(" "));
         }
       }
     });
@@ -15897,11 +16131,11 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
         const path = this.tasksInboxService.todayDailyPath(/* @__PURE__ */ new Date());
         const moved = await this.tasksInboxService.sweepDailyInbox(path);
         if (moved === 0) {
-          new import_obsidian43.Notice("Nothing in today's Inbox to sweep.");
+          new import_obsidian44.Notice("Nothing in today's Inbox to sweep.");
         } else {
           await this.scanner.fullScan();
           this.store.setTasks(this.scanner.getAllTasks());
-          new import_obsidian43.Notice(`Swept ${moved} item(s) into Tasks.md.`);
+          new import_obsidian44.Notice(`Swept ${moved} item(s) into Tasks.md.`);
         }
       }
     });
@@ -15911,7 +16145,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       editorCallback: (editor) => {
         const line = editor.getCursor().line;
         if (!/^\s*-\s*\[[ x><!/-]\]/i.test(editor.getLine(line))) {
-          new import_obsidian43.Notice("Put the cursor on a task line first.");
+          new import_obsidian44.Notice("Put the cursor on a task line first.");
           return;
         }
         new DueDateModal(this.app, "", (pluginDate) => {
@@ -15928,7 +16162,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       editorCallback: (editor) => {
         const line = editor.getCursor().line;
         if (!/^\s*-\s*\[[ x><!/-]\]/i.test(editor.getLine(line))) {
-          new import_obsidian43.Notice("Put the cursor on a task line first.");
+          new import_obsidian44.Notice("Put the cursor on a task line first.");
           return;
         }
         this.setLineSomeday(editor, line, true);
@@ -15949,7 +16183,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
       callback: () => {
         new InsertTaskModal(this.app, async (result) => {
           const block = buildTaskBlock(result.text, result.priority, result.dueDate, result.typeTag, result.workType, result.purpose, result.description);
-          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian43.MarkdownView);
+          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian44.MarkdownView);
           if (activeView == null ? void 0 : activeView.editor) {
             const editor = activeView.editor;
             const cursor = editor.getCursor();
@@ -15958,7 +16192,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
             editor.setCursor({ line: cursor.line + insertedLines, ch: 0 });
           } else {
             await this.tasksInboxService.appendLines(block.split("\n"));
-            new import_obsidian43.Notice("Task added to Tasks.md");
+            new import_obsidian44.Notice("Task added to Tasks.md");
           }
         }, this.settings.workTypes, this.settings.purposes).open();
       }
@@ -15975,7 +16209,7 @@ var FridayPlugin = class extends import_obsidian43.Plugin {
           const block = rest ? `- [ ] ${first}
 ${rest}` : `- [ ] ${first}`;
           await this.dailyNoteService.addRawInboxLine(block, /* @__PURE__ */ new Date());
-          new import_obsidian43.Notice("Captured to today's Inbox");
+          new import_obsidian44.Notice("Captured to today's Inbox");
         }).open();
       }
     });
@@ -16077,7 +16311,7 @@ ${rest}` : `- [ ] ${first}`;
    *  from onload, after settings changes, and from manual UI buttons. No-op on mobile
    *  (Node's http module is unavailable there). */
   async applyMcpServerState() {
-    if (!import_obsidian43.Platform.isDesktop)
+    if (!import_obsidian44.Platform.isDesktop)
       return;
     if (this.settings.mcpEnabled) {
       if (!this.settings.mcpToken) {
@@ -16109,7 +16343,7 @@ ${rest}` : `- [ ] ${first}`;
       if (changed > 0) {
         await this.scanner.fullScan();
         this.store.setTasks(this.scanner.getAllTasks());
-        new import_obsidian43.Notice(`Friday: migrated ${changed} topic(s) to the Kanban board.`);
+        new import_obsidian44.Notice(`Friday: migrated ${changed} topic(s) to the Kanban board.`);
       }
     } catch (e) {
       console.error("[Friday] Kanban migration failed:", e);
@@ -16199,7 +16433,7 @@ ${rest}` : `- [ ] ${first}`;
     if (created > 0) {
       await this.scanner.fullScan();
       this.store.setTasks(this.scanner.getAllTasks());
-      new import_obsidian43.Notice(`Friday: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
+      new import_obsidian44.Notice(`Friday: generated ${created} person page(s) in ${this.settings.teamFolderPath}/. Open them to fill in details.`);
     }
   }
   async activateView(newTab = false) {
@@ -16265,8 +16499,8 @@ ${rest}` : `- [ ] ${first}`;
   /** Open a topic markdown file in the active leaf. */
   async openTopicFile(path) {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian43.TFile)) {
-      new import_obsidian43.Notice("Topic file not found.");
+    if (!(file instanceof import_obsidian44.TFile)) {
+      new import_obsidian44.Notice("Topic file not found.");
       return;
     }
     const leaf = this.app.workspace.getLeaf(false);
@@ -16295,23 +16529,28 @@ ${rest}` : `- [ ] ${first}`;
   openOneOnOnePicker() {
     const members = this.teamMemberService.getActiveMembers();
     if (members.length === 0) {
-      new import_obsidian43.Notice("No active team members found. Create a person page under " + this.settings.teamFolderPath + "/.");
+      new import_obsidian44.Notice("No active team members found. Create a person page under " + this.settings.teamFolderPath + "/.");
       return;
     }
     new OneOnOneModal(this.app, members, async (member) => {
+      var _a;
       try {
         const rollup = this.teamRollupService.buildRollup();
         const r = rollup.members.find((x) => {
-          var _a;
-          return x.email.toLowerCase() === ((_a = member.email) != null ? _a : "").toLowerCase();
+          var _a2;
+          return x.email.toLowerCase() === ((_a2 = member.email) != null ? _a2 : "").toLowerCase();
         });
-        const agenda = r ? buildOneOnOneAgenda(r) : void 0;
+        const agenda = r ? await buildOneOnOneAgenda(r, {
+          vault: this.app.vault,
+          sinceIso: member.lastOneOnOne ? formatDateISO(member.lastOneOnOne) : null,
+          agingThresholdDays: (_a = this.settings.agingWipThresholdDays) != null ? _a : 7
+        }) : void 0;
         const file = await this.teamMemberService.startOneOnOne(member, /* @__PURE__ */ new Date(), agenda);
         const leaf = this.app.workspace.getLeaf(false);
         await leaf.openFile(file);
         this.app.workspace.revealLeaf(leaf);
       } catch (e) {
-        new import_obsidian43.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
+        new import_obsidian44.Notice(`Could not start 1:1: ${e instanceof Error ? e.message : "unknown error"}`);
       }
     }).open();
   }
@@ -16327,7 +16566,7 @@ ${rest}` : `- [ ] ${first}`;
       if (result.archived > 0) {
         await this.scanner.fullScan();
         this.store.setTasks(this.scanner.getAllTasks());
-        new import_obsidian43.Notice(`Friday: archived ${result.archived} completed task(s) from ${this.settings.tasksFilePath.split("/").pop()}.`);
+        new import_obsidian44.Notice(`Friday: archived ${result.archived} completed task(s) from ${this.settings.tasksFilePath.split("/").pop()}.`);
       }
     } catch (e) {
       console.error("[Friday] Inbox cleanup failed:", e);
@@ -16440,7 +16679,7 @@ ${rest}` : `- [ ] ${first}`;
     let line = editor.getLine(lineNum);
     line = SNOOZE_DATE_REGEX.test(line) ? line.replace(SNOOZE_DATE_REGEX, `@snooze ${dateRaw}`) : `${line.trimEnd()} @snooze ${dateRaw}`;
     editor.setLine(lineNum, line.replace(/\s{2,}/g, " ").trimEnd());
-    new import_obsidian43.Notice("Task snoozed.");
+    new import_obsidian44.Notice("Task snoozed.");
   }
   /** Toggle #someday on a line (v3). Turning on strips @due and @snooze (Someday is dateless). */
   setLineSomeday(editor, lineNum, on) {
@@ -16453,18 +16692,18 @@ ${rest}` : `- [ ] ${first}`;
       line = line.replace(SOMEDAY_TAG_REGEX, "");
     }
     editor.setLine(lineNum, line.replace(/\s{2,}/g, " ").trimEnd());
-    new import_obsidian43.Notice(on ? "Sent to Someday." : "Removed from Someday.");
+    new import_obsidian44.Notice(on ? "Sent to Someday." : "Removed from Someday.");
   }
   /** Remove any @snooze and #someday from a line (v3), reactivating the task. */
   wakeLine(editor, lineNum) {
     const line = editor.getLine(lineNum);
     const woken = line.replace(SNOOZE_DATE_REGEX, "").replace(SOMEDAY_TAG_REGEX, "").replace(/\s{2,}/g, " ").trimEnd();
     if (woken === line) {
-      new import_obsidian43.Notice("Nothing to wake on this line.");
+      new import_obsidian44.Notice("Nothing to wake on this line.");
       return;
     }
     editor.setLine(lineNum, woken);
-    new import_obsidian43.Notice("Task woken.");
+    new import_obsidian44.Notice("Task woken.");
   }
   onunload() {
     var _a;

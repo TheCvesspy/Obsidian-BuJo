@@ -590,6 +590,9 @@ export interface MemberRollup {
 	jiraIssues: JiraDashboardIssue[];
 	/** All topics assigned to this member, any status. */
 	topics: SprintTopic[];
+	/** Non-done topics with a DERIVED block (manual flag OR unfinished dependency).
+	 *  Richer than filtering `topics` by the manual flag — powers the 1:1 agenda. */
+	blockedTopics: SprintTopic[];
 	counts: WorkloadCounts;
 	load: LoadSignal;
 }

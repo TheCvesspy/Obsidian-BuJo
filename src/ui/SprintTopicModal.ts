@@ -2,6 +2,7 @@ import { App, Modal, Setting, FuzzySuggestModal, TFile, Notice } from 'obsidian'
 import { SprintTopic, Priority, TopicImpact, TopicEffort, PluginSettings, TeamMember } from '../types';
 import { SprintTopicService } from '../services/sprintTopicService';
 import { serializeRefs } from '../parser/topicParser';
+import { buildTopicLoadIndex, formatTopicLoad } from '../utils/capacity';
 
 /** Fuzzy file picker that returns the selected page name */
 class PageSuggestModal extends FuzzySuggestModal<TFile> {
@@ -173,6 +174,14 @@ export class SprintTopicModal extends Modal {
 		if (activeMembers.length > 0 || this.assignee || myEmail) {
 			const options: Record<string, string> = { '': '— Unassigned —' };
 
+			// Capacity context: committed topic load vs effective target per member,
+			// so over-assignment is visible right in the picker.
+			const loadIndex = this.settings ? buildTopicLoadIndex(this.allTopics, this.settings) : null;
+			const withLoad = (email: string, name: string): string => {
+				const l = loadIndex?.get(email.toLowerCase());
+				return l ? `${name} · ${formatTopicLoad(l)}${l.over ? ' ⚠' : ''}` : name;
+			};
+
 			// "Me" sits at the top with a person glyph. Backed by settings.jiraEmail
 			// so it stores the same value as the JIRA assignee match — that way the
 			// JIRA dashboard's "Mine" lens and the topic's assignee stay coherent.
@@ -187,7 +196,7 @@ export class SprintTopicModal extends Modal {
 			for (const m of activeMembers) {
 				// Skip the entry that's already shown as "Me" — don't duplicate yourself.
 				if (m.email === myEmail) continue;
-				options[m.email] = m.nickname || m.fullName || m.email;
+				options[m.email] = withLoad(m.email, m.nickname || m.fullName || m.email);
 			}
 
 			// If the current assignee isn't in the active list (inactive or removed),

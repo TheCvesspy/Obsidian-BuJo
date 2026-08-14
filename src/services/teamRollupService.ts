@@ -8,11 +8,12 @@ import {
 	BlockerEntry,
 	RiskEntry,
 } from '../types';
+import { Vault, TFile } from 'obsidian';
 import { TeamMemberService } from './teamMemberService';
 import { JiraTeamService } from './jiraTeamService';
 import { bucketIssuesByMember } from '../utils/teamBucket';
 import { buildTopicIndex } from './topicGraph';
-import { deriveTopicBlock } from './topicStatus';
+import { deriveTopicBlock, deriveTopicRisk } from './topicStatus';
 import { formatDateISO, daysBetween } from '../utils/dateUtils';
 
 /**
@@ -65,7 +66,8 @@ export class TeamRollupService {
 			const topicsOpen = memberTopics.filter(t => t.status === 'open').length;
 			const topicsInProgress = memberTopics.filter(t => t.status === 'in-progress').length;
 			const topicsDone = memberTopics.filter(t => t.status === 'done').length;
-			const topicsBlocked = memberTopics.filter(t => t.status !== 'done' && isTopicBlocked(t)).length;
+			const blockedTopics = memberTopics.filter(t => t.status !== 'done' && isTopicBlocked(t));
+			const topicsBlocked = blockedTopics.length;
 
 			const counts: WorkloadCounts = {
 				jiraBlocked, jiraInProgress, jiraOpen, jiraDone,
@@ -110,6 +112,7 @@ export class TeamRollupService {
 				drivingTopics: memberTopics.filter(t => t.status === 'in-progress'),
 				jiraIssues: jissues,
 				topics: memberTopics,
+				blockedTopics,
 				counts,
 				load,
 			});
@@ -177,10 +180,33 @@ export class TeamRollupService {
 	}
 }
 
-/** Build a markdown 1:1 prep agenda for one member from their roll-up: what they're driving,
- *  what's blocked/flagged, and who they're waiting on. Returns '' when nothing notable. */
-export function buildOneOnOneAgenda(m: MemberRollup): string {
+export interface OneOnOneAgendaOptions {
+	/** Read topic bodies for recent `## Notes` log entries. Omit to skip that section. */
+	vault?: Vault;
+	/** ISO date of the previous 1:1 — bounds "done since" and "notes since".
+	 *  Null/omitted falls back to the last 14 days. */
+	sinceIso?: string | null;
+	/** Aging threshold for the "sitting in In Progress" section (default 7). */
+	agingThresholdDays?: number;
+}
+
+/** Matches the dated log entries `appendTopicNote` writes: `- **YYYY-MM-DD** — text`. */
+const NOTE_ENTRY_REGEX = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[—–-]\s*(.+)$/;
+
+/**
+ * Build a markdown 1:1 prep agenda for one member from their roll-up — the member's full
+ * topic picture at sit-down time: what they're driving, what's blocked/flagged, what's at
+ * schedule risk, what's been sitting in In Progress, who they're waiting on, what they
+ * finished since the last 1:1, and the dated notes logged on their topics since then.
+ * Returns '' when nothing is notable.
+ */
+export async function buildOneOnOneAgenda(m: MemberRollup, opts: OneOnOneAgendaOptions = {}): Promise<string> {
+	const todayIso = formatDateISO(new Date());
+	const sinceIso = opts.sinceIso ?? isoDaysAgo(14);
+	const agingDays = opts.agingThresholdDays ?? 7;
+	const blockedPaths = new Set(m.blockedTopics.map(t => t.filePath));
 	const lines: string[] = [];
+
 	const driving = [
 		...m.drivingTopics.map(t => `- ${t.title}`),
 		...m.drivingJira.map(i => `- ${i.key} — ${i.summary}`),
@@ -188,15 +214,80 @@ export function buildOneOnOneAgenda(m: MemberRollup): string {
 	if (driving.length > 0) lines.push('**Currently driving**', ...driving, '');
 
 	const blocked = [
-		...m.topics.filter(t => t.status !== 'done' && t.blocked).map(t => `- ${t.title}`),
-		...m.jiraIssues.filter(i => i.flagged).map(i => `- ${i.key} — ${i.summary}`),
+		...m.blockedTopics.map(t => `- ${t.title}${t.blocked ? '' : ' (dependency)'}`),
+		...m.jiraIssues.filter(i => i.flagged && i.statusCategory !== 'done').map(i => `- ${i.key} — ${i.summary}`),
 	];
 	if (blocked.length > 0) lines.push('**Blocked / flagged**', ...blocked, '');
+
+	const atRisk = m.topics
+		.map(t => ({ t, risk: deriveTopicRisk(t, blockedPaths.has(t.filePath)) }))
+		.filter(x => x.risk.atRisk)
+		.map(x => `- ${x.t.title} — ${x.risk.reasons.join('; ')}`);
+	if (atRisk.length > 0) lines.push('**At risk**', ...atRisk, '');
+
+	const aging = m.drivingTopics
+		.map(t => ({ t, days: t.statusSince ? daysBetween(t.statusSince, todayIso) : null }))
+		.filter(x => x.days !== null && x.days >= agingDays)
+		.map(x => `- ${x.t.title} — in progress ${x.days}d`);
+	if (aging.length > 0) lines.push('**Sitting in In Progress**', ...aging, '');
 
 	const waiting = m.topics
 		.filter(t => t.status !== 'done' && t.waitingOn)
 		.map(t => `- ${t.title} (waiting on ${t.waitingOn})`);
 	if (waiting.length > 0) lines.push('**Waiting on**', ...waiting, '');
 
+	const doneSince = m.topics
+		.filter(t => t.status === 'done' && t.doneAt && t.doneAt >= sinceIso)
+		.map(t => `- ${t.title} (done ${t.doneAt})`);
+	if (doneSince.length > 0) lines.push(`**Done since ${sinceIso}**`, ...doneSince, '');
+
+	if (opts.vault) {
+		const notes = await collectRecentTopicNotes(opts.vault, m.topics, sinceIso);
+		if (notes.length > 0) {
+			lines.push(`**Notes logged since ${sinceIso}**`, ...notes.map(n => `- ${n.topic}: (${n.date}) ${n.text}`), '');
+		}
+	}
+
 	return lines.join('\n').trim();
+}
+
+/** Extract dated `## Notes` log entries (`- **YYYY-MM-DD** — text`) newer than `sinceIso`
+ *  from each topic's file body. Newest first, capped at 12 so a chatty week doesn't
+ *  swallow the agenda. Unreadable files are skipped silently. */
+async function collectRecentTopicNotes(
+	vault: Vault,
+	topics: SprintTopic[],
+	sinceIso: string,
+): Promise<Array<{ topic: string; date: string; text: string }>> {
+	const out: Array<{ topic: string; date: string; text: string }> = [];
+	for (const t of topics) {
+		const file = vault.getAbstractFileByPath(t.filePath);
+		if (!(file instanceof TFile)) continue;
+		let content: string;
+		try {
+			content = await vault.cachedRead(file);
+		} catch {
+			continue;
+		}
+		let inNotes = false;
+		for (const line of content.split('\n')) {
+			if (/^##\s+Notes\s*$/i.test(line)) { inNotes = true; continue; }
+			if (inNotes && /^##\s+/.test(line)) break;
+			if (!inNotes) continue;
+			const match = line.trim().match(NOTE_ENTRY_REGEX);
+			if (match && match[1] >= sinceIso) {
+				out.push({ topic: t.title, date: match[1], text: match[2].trim() });
+			}
+		}
+	}
+	out.sort((a, b) => b.date.localeCompare(a.date));
+	return out.slice(0, 12);
+}
+
+/** Local ISO date N days ago (fallback window when a member has no prior 1:1). */
+function isoDaysAgo(n: number): string {
+	const d = new Date();
+	d.setHours(0, 0, 0, 0);
+	d.setDate(d.getDate() - n);
+	return formatDateISO(d);
 }

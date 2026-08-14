@@ -2,7 +2,8 @@ import { App, Menu, Notice } from 'obsidian';
 import { PluginSettings, SprintTopic, TopicStatus, Priority, TopicImpact, TopicEffort } from '../../types';
 import { SprintTopicService } from '../../services/sprintTopicService';
 import { JiraService } from '../../services/jiraService';
-import { deriveTopicBlock, toJiraSignal, isTopicSnoozed } from '../../services/topicStatus';
+import { deriveTopicBlock, toJiraSignal, isTopicSnoozed, deriveTopicRisk } from '../../services/topicStatus';
+import { buildTopicLoadIndex, formatTopicLoad } from '../../utils/capacity';
 import { buildTopicIndex, TopicIndex, criticalPath } from '../../services/topicGraph';
 import { getWeekStartConfigurable, getISOWeekNumber, resolveDoneWindowDays, daysSinceIso, isoToPluginDate, pluginDateToIso } from '../../utils/dateUtils';
 import { renderTopicCard, assigneeColor, assigneeInitials } from './TopicCard';
@@ -415,6 +416,7 @@ export class TopicsOverviewView {
 		const sorted = [...topics].sort((a, b) => this.sortByPriorityImpact(a, b));
 		const jiraLookup = this.makeJiraLookup();
 		const assigneeLookup = this.makeAssigneeLookup();
+		const deriveBlock = this.makeDeriveBlock();
 		const myEmail = this.settings.jiraEmail?.trim() ?? '';
 
 		const table = parent.createEl('table', { cls: 'friday-topics-table' });
@@ -445,6 +447,11 @@ export class TopicsOverviewView {
 				row.addClass('is-snoozed');
 				titleCell.createSpan({ cls: 'friday-topics-table-snoozed', text: '\u{1F4A4}' })
 					.setAttribute('title', `Snoozed until ${topic.snoozedUntil}`);
+			}
+			const risk = deriveTopicRisk(topic, deriveBlock(topic).state === 'blocked');
+			if (risk.atRisk) {
+				titleCell.createSpan({ cls: 'friday-topics-table-atrisk', text: '⚠' })
+					.setAttribute('title', `At risk: ${risk.reasons.join(' · ')}`);
 			}
 			const titleLink = titleCell.createEl('a', {
 				cls: 'friday-topics-table-titlelink',
@@ -960,10 +967,12 @@ export class TopicsOverviewView {
 	): void {
 		const jiraLookup = this.makeJiraLookup();
 		const assigneeLookup = this.makeAssigneeLookup();
+		const deriveBlock = this.makeDeriveBlock();
 		const card = renderTopicCard(parent, topic, {
 			draggable: opts.draggable ?? false,
 			isDragging: this.isDragging,
 			showMatrixMetadata: true,
+			risk: deriveTopicRisk(topic, deriveBlock(topic).state === 'blocked'),
 			onTitleClick: (t) => this.onTopicClick(t),
 			onBlockedToggle: async (t) => {
 				await this.topicService.setTopicBlocked(t.filePath, !t.blocked);
@@ -977,7 +986,7 @@ export class TopicsOverviewView {
 			emphasizeAssignee: this.emphasizeAssignees(),
 			jiraLookup,
 			assigneeLookup,
-			deriveBlock: this.makeDeriveBlock(),
+			deriveBlock,
 			dependencyLookup: (t) => ({
 				blockedBy: this.depIndex?.blockersOf(t) ?? [],
 				blocks: this.depIndex?.blocks(t) ?? [],
@@ -1065,16 +1074,36 @@ export class TopicsOverviewView {
 
 		const members = (this.settings.teamMembers ?? []).filter(m => m.active);
 		if (members.length > 0) {
+			// Capacity context on every option: committed topic load vs effective target,
+			// so over-assignment is visible at the moment of assignment.
+			const loadIndex = buildTopicLoadIndex(this.topics, this.settings);
+			const memberLabel = (email: string, name: string): string => {
+				const l = loadIndex.get(email.toLowerCase());
+				return l ? `${name} · ${formatTopicLoad(l)}${l.over ? ' ⚠' : ''}` : name;
+			};
 			const opts = [
 				{ value: '', label: 'Owner —' },
-				...members.map(m => ({ value: m.email, label: m.nickname || m.fullName || m.email })),
+				...members.map(m => ({ value: m.email, label: memberLabel(m.email, m.nickname || m.fullName || m.email) })),
 			];
 			// Preserve an out-of-team current assignee so the select doesn't silently clear it.
 			if (topic.assignee && !members.some(m => m.email === topic.assignee)) {
 				opts.push({ value: topic.assignee, label: topic.assignee });
 			}
-			addSelect('Assignee', opts, topic.assignee ?? '',
-				(v) => this.topicService.updateTopicFrontmatter(topic.filePath, { assignee: v || null }));
+			addSelect('Assignee', opts, topic.assignee ?? '', async (v) => {
+				await this.topicService.updateTopicFrontmatter(topic.filePath, { assignee: v || null });
+				// Non-blocking capacity heads-up when the pick lands someone over target.
+				const l = v ? loadIndex.get(v.toLowerCase()) : undefined;
+				if (l && l.target > 0) {
+					const counted = topic.assignee?.toLowerCase() === v.toLowerCase()
+						|| !((topic.status === 'open' || topic.status === 'in-progress') && !isTopicSnoozed(topic));
+					const newLoad = counted ? l.load : l.load + 1;
+					if (newLoad > l.target) {
+						const member = members.find(m => m.email.toLowerCase() === v.toLowerCase());
+						const name = member ? (member.nickname || member.fullName || member.email) : v;
+						new Notice(`Heads up: ${name} now has ${newLoad} committed topics (target ${l.target}).`);
+					}
+				}
+			});
 		}
 	}
 
@@ -1342,9 +1371,31 @@ export class TopicsOverviewView {
 		const deriveBlock = this.makeDeriveBlock();
 		const lanes = canvas.createDiv({ cls: 'friday-roadmap-lanes' });
 
+		// Capacity per assignee lane: committed topic load vs effective target, red when over —
+		// the moment you schedule someone past their capacity, the lane says so.
+		const loadByLabel = new Map<string, { text: string; over: boolean }>();
+		if (this.roadmapGroupBy === 'assignee') {
+			const loadIndex = buildTopicLoadIndex(this.topics, this.settings);
+			for (const m of this.settings.teamMembers ?? []) {
+				const l = loadIndex.get(m.email.toLowerCase());
+				if (l) loadByLabel.set(m.nickname || m.fullName || m.email, { text: formatTopicLoad(l), over: l.over });
+			}
+		}
+
 		for (const [groupLabel, items] of this.groupForRoadmap(dated)) {
 			const lane = lanes.createDiv({ cls: 'friday-roadmap-lane' });
-			const laneHeader = lane.createDiv({ cls: 'friday-roadmap-lane-header', text: groupLabel });
+			const laneHeader = lane.createDiv({ cls: 'friday-roadmap-lane-header' });
+			laneHeader.createSpan({ text: groupLabel });
+			const laneLoad = loadByLabel.get(groupLabel);
+			if (laneLoad) {
+				const chip = laneHeader.createSpan({
+					cls: `friday-roadmap-lane-load${laneLoad.over ? ' is-over' : ''}`,
+					text: laneLoad.text,
+				});
+				chip.setAttribute('title', laneLoad.over
+					? 'Over capacity: committed topics (To Do + In Progress) exceed the target'
+					: 'Committed topics (To Do + In Progress) vs capacity target');
+			}
 			laneHeader.style.width = `${ROADMAP_LABEL_W}px`;
 			for (const { topic, startMs, endMs } of items) {
 				const row = lane.createDiv({ cls: 'friday-roadmap-row' });

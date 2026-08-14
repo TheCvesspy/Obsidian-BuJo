@@ -23,6 +23,9 @@ export interface TopicCardOptions {
 	 *  title) instead of the small muted chip. Used by the Team tab, where whose-topic-is-this
 	 *  is the primary scanning question. */
 	emphasizeAssignee?: boolean;
+	/** Schedule-risk verdict (from deriveTopicRisk). When atRisk, an amber AT RISK badge
+	 *  renders in the header with the reasons in the tooltip. */
+	risk?: { atRisk: boolean; reasons: string[] };
 	/** If true, show impact/effort/due-date metadata chips below the title. */
 	showMatrixMetadata?: boolean;
 	/** Lookup live JIRA data for a given key. Called once per key in `topic.jira[]`.
@@ -135,6 +138,12 @@ export function renderTopicCard(
 		}
 	} else if (topic.blocked) {
 		headerEl.createSpan({ cls: 'friday-kanban-card-blocked', text: 'BLOCKED' });
+	}
+
+	// At-risk badge: the early-warning band before work is simply overdue (deriveTopicRisk).
+	if (opts.risk?.atRisk) {
+		const badge = headerEl.createSpan({ cls: 'friday-kanban-card-atrisk', text: 'AT RISK' });
+		badge.setAttribute('title', opts.risk.reasons.join(' · '));
 	}
 
 	// Aging badge: an in-progress topic that has sat in its column past the aging-WIP

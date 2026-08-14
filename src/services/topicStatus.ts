@@ -68,14 +68,65 @@ export function deriveTopicBlock(input: DeriveInput): DerivedBlock {
 	return { state, reasons, sources };
 }
 
+/** Today as a local ISO date (YYYY-MM-DD). String comparison works for ISO dates. */
+function localTodayIso(): string {
+	const now = new Date();
+	return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 /** True while a topic's snooze is active: `snoozedUntil` is set and still in the future.
  *  The topic wakes ON the stored date (mirrors task `@snooze` semantics). Done topics are
  *  never considered snoozed — a leftover snooze on finished work is meaningless. */
 export function isTopicSnoozed(topic: SprintTopic): boolean {
 	if (!topic.snoozedUntil || topic.status === 'done') return false;
-	const now = new Date();
-	const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-	return topic.snoozedUntil > todayIso;
+	return topic.snoozedUntil > localTodayIso();
+}
+
+export interface TopicRisk {
+	atRisk: boolean;
+	/** Human-readable reasons, e.g. ["Due in 3d but not started"]. Empty when clear. */
+	reasons: string[];
+}
+
+/** How far ahead a due date counts as "approaching" for risk purposes. Wider than the
+ *  task-level urgencyThresholdDays (default 2) — topics are initiatives, and a lead needs
+ *  more than two days of warning to unblock or re-plan one. */
+const RISK_WINDOW_DAYS = 7;
+
+/**
+ * Derive a topic's schedule risk — the early-warning band BEFORE work is simply overdue.
+ * All rules are due-date-driven (no due date = no schedule to be at risk against):
+ *   - overdue and not done
+ *   - due within RISK_WINDOW_DAYS but not started (backlog / To Do)
+ *   - due within the window with task progress under 50%
+ *   - due within the window while blocked (caller supplies the derived block state)
+ * Done topics are never at risk; snoozed topics are deliberately parked, so they don't nag.
+ */
+export function deriveTopicRisk(topic: SprintTopic, isBlocked: boolean): TopicRisk {
+	const reasons: string[] = [];
+	if (topic.status === 'done' || isTopicSnoozed(topic) || !topic.dueDate) {
+		return { atRisk: false, reasons };
+	}
+	const due = new Date(topic.dueDate + 'T00:00:00').getTime();
+	if (isNaN(due)) return { atRisk: false, reasons };
+	const today = new Date(localTodayIso() + 'T00:00:00').getTime();
+	const days = Math.round((due - today) / 86400000);
+	const dueLabel = days === 0 ? 'due today' : `due in ${days}d`;
+
+	if (days < 0) {
+		reasons.push(`Overdue by ${-days}d`);
+	} else if (days <= RISK_WINDOW_DAYS) {
+		if (topic.status === 'backlog' || topic.status === 'open') {
+			reasons.push(`${dueLabel[0].toUpperCase()}${dueLabel.slice(1)} but not started`);
+		}
+		if (topic.taskTotal > 0 && topic.taskDone / topic.taskTotal < 0.5) {
+			reasons.push(`Tasks at ${topic.taskDone}/${topic.taskTotal} and ${dueLabel}`);
+		}
+		if (isBlocked) {
+			reasons.push(`Blocked and ${dueLabel}`);
+		}
+	}
+	return { atRisk: reasons.length > 0, reasons };
 }
 
 /** Adapt a cached JiraIssueInfo-shaped object into the signal the derivation consumes.
