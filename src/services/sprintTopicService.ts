@@ -216,6 +216,40 @@ export class SprintTopicService {
 		});
 	}
 
+	/** Prepend one or more task/continuation lines to the top of a topic's `## Tasks`
+	 *  section (before any existing tasks, after the heading), so the newest task
+	 *  surfaces first and the topic parser counts it in taskTotal/taskDone. The section
+	 *  is created at end-of-file if missing. Returns false when the topic file cannot
+	 *  be found. */
+	async appendTasksToTopic(filePath: string, lines: string[]): Promise<boolean> {
+		if (lines.length === 0) return false;
+		const file = this.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return false;
+
+		await this.vault.process(file, content => {
+			const contentLines = content.split('\n');
+			const start = contentLines.findIndex(l => /^##\s+Tasks\s*$/i.test(l));
+			if (start === -1) {
+				return content.trimEnd() + '\n\n## Tasks\n\n' + lines.join('\n') + '\n';
+			}
+			// Insert at the top of the section: just after the heading, preserving one
+			// conventional blank line between the heading and the task list if present.
+			let insertAt = start + 1;
+			if (insertAt < contentLines.length && contentLines[insertAt].trim() === '') insertAt++;
+			// Keep a blank line before a following `##` heading (e.g. when the section
+			// was previously empty) so sections stay visually separated.
+			const tail = contentLines.slice(insertAt);
+			const needsGap = tail.length > 0 && /^##\s+/.test(tail[0]);
+			return [
+				...contentLines.slice(0, insertAt),
+				...lines,
+				...(needsGap ? [''] : []),
+				...tail,
+			].join('\n');
+		});
+		return true;
+	}
+
 	/** Rename a topic: rewrites the body H1 and renames the file. Uses
 	 *  fileManager.renameFile when available so wiki-links across the vault update.
 	 *  Returns the new file path (unchanged when the sanitized name is identical).

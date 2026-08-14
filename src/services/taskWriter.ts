@@ -1,7 +1,36 @@
 import { Vault, TFile } from 'obsidian';
 import { TaskItem, TaskStatus } from '../types';
-import { CHECKBOX_REGEX, DUE_DATE_REGEX, SNOOZE_DATE_REGEX, SOMEDAY_TAG_REGEX, DONE_DATE_REGEX, SYNC_CLEAR_DELAY_MS } from '../constants';
+import {
+	CHECKBOX_REGEX, DUE_DATE_REGEX, SNOOZE_DATE_REGEX, SOMEDAY_TAG_REGEX, DONE_DATE_REGEX,
+	PRIORITY_TAG_REGEX, TYPE_TAG_REGEX, MIGRATED_FROM_REGEX, WORK_TYPE_REGEX, PURPOSE_REGEX,
+	TRAILING_WIKILINK_REGEX, SYNC_CLEAR_DELAY_MS,
+} from '../constants';
 import { locateTaskLine } from '../utils/lineLocator';
+
+/**
+ * A partial edit of a task's fields (v3 task edit dialog). Only the keys present are
+ * rewritten — everything else on the line survives verbatim, including raw date formats,
+ * `(from [[…]])` annotations, `@done` stamps, and the trailing `[[Topic]]` link.
+ * `null` clears the field where clearing is meaningful.
+ */
+export interface TaskFieldEdits {
+	text?: string;
+	status?: TaskStatus;
+	/** 'none' clears the #priority tag. */
+	priority?: string;
+	dueDateRaw?: string | null;
+	snoozeDateRaw?: string | null;
+	someday?: boolean;
+	/** null = Auto (no #type tag). */
+	typeTag?: string | null;
+	/** Work-type short code; null clears. */
+	workType?: string | null;
+	/** Purpose short code; null clears. */
+	purpose?: string | null;
+	/** Replaces the task's immediate description block (the non-checkbox continuation
+	 *  lines directly under it, before any child checkbox). null/'' clears it. */
+	description?: string | null;
+}
 
 /** Collapse the double-spaces and dangling trailing whitespace left after a tag is stripped
  *  from a line, while preserving the leading indentation (tabs/spaces) that encodes hierarchy. */
@@ -99,6 +128,144 @@ export class TaskWriter {
             }
             return tidy(line.replace(SOMEDAY_TAG_REGEX, ''));
         });
+    }
+
+    /**
+     * Apply a partial field edit to a task: rebuilds its line from the edited values
+     * plus the tokens already present (parsed with the same regex order as taskParser,
+     * so nothing is misread), and optionally replaces its immediate description block.
+     * Status changes route through the same @done-stamp logic as setStatus. Returns
+     * false when the task can't be located.
+     */
+    async updateTaskFields(task: TaskItem, edits: TaskFieldEdits): Promise<boolean> {
+        const file = this.vault.getAbstractFileByPath(task.sourcePath);
+        if (!(file instanceof TFile)) return false;
+
+        let matched = false;
+        await this.vault.process(file, content => {
+            const lines = content.split('\n');
+            const start = locateTaskLine(task, lines);
+            if (start === -1) return content;
+            const cb = lines[start].match(CHECKBOX_REGEX);
+            if (!cb) return content;
+            matched = true;
+
+            const indent = cb[1];
+            const statusChar = cb[2];
+            let rest = cb[3];
+
+            // Capture current tokens, then strip them in the parser's order so the
+            // remaining string is exactly what the parser would call the task text.
+            const curPriority = rest.match(PRIORITY_TAG_REGEX)?.[1]?.toLowerCase() ?? null;
+            const curType = rest.match(TYPE_TAG_REGEX)?.[1]?.toLowerCase() ?? null;
+            const curDueRaw = rest.match(DUE_DATE_REGEX)?.[1] ?? null;
+            const curSnoozeRaw = rest.match(SNOOZE_DATE_REGEX)?.[1] ?? null;
+            const curSomeday = SOMEDAY_TAG_REGEX.test(rest);
+            const doneStamp = rest.match(DONE_DATE_REGEX)?.[0] ?? null;
+            const migratedFrom = rest.match(MIGRATED_FROM_REGEX)?.[1] ?? null;
+            const curW = rest.match(WORK_TYPE_REGEX)?.[1] ?? null;
+            const curP = rest.match(PURPOSE_REGEX)?.[1] ?? null;
+
+            rest = rest
+                .replace(PRIORITY_TAG_REGEX, '')
+                .replace(TYPE_TAG_REGEX, '')
+                .replace(DUE_DATE_REGEX, '')
+                .replace(SNOOZE_DATE_REGEX, '')
+                .replace(SOMEDAY_TAG_REGEX, '')
+                .replace(DONE_DATE_REGEX, '')
+                .replace(MIGRATED_FROM_REGEX, ' ')
+                .replace(WORK_TYPE_REGEX, '')
+                .replace(PURPOSE_REGEX, '');
+            const trailingLink = rest.match(TRAILING_WIKILINK_REGEX)?.[0]?.trim() ?? null;
+            if (trailingLink) rest = rest.replace(TRAILING_WIKILINK_REGEX, '');
+            const curText = rest.replace(/\s{2,}/g, ' ').trim();
+
+            // Edited values win; absent keys keep what the line already had.
+            const text = edits.text !== undefined ? edits.text.trim() : curText;
+            const priority = edits.priority !== undefined ? edits.priority : (curPriority ?? 'none');
+            const dueRaw = edits.dueDateRaw !== undefined ? edits.dueDateRaw : curDueRaw;
+            const snoozeRaw = edits.snoozeDateRaw !== undefined ? edits.snoozeDateRaw : curSnoozeRaw;
+            const isSomeday = edits.someday !== undefined ? edits.someday : curSomeday;
+            const typeTag = edits.typeTag !== undefined ? edits.typeTag : curType;
+            const workType = edits.workType !== undefined ? edits.workType : curW;
+            const purpose = edits.purpose !== undefined ? edits.purpose : curP;
+
+            const parts = [`${indent}- [${statusChar}] ${text}`];
+            if (priority && priority !== 'none') parts.push(`#priority/${priority}`);
+            if (dueRaw) parts.push(`@due ${dueRaw}`);
+            if (snoozeRaw) parts.push(`@snooze ${snoozeRaw}`);
+            if (typeTag) parts.push(`#type/${typeTag}`);
+            if (workType) parts.push(`#w/${workType}`);
+            if (purpose) parts.push(`#p/${purpose}`);
+            if (isSomeday) parts.push('#someday');
+            if (migratedFrom) parts.push(`(from [[${migratedFrom}]])`);
+            if (doneStamp) parts.push(doneStamp);
+            if (trailingLink) parts.push(trailingLink); // tail position — parser contract
+
+            let newLine = tidy(parts.join(' '));
+            if (edits.status !== undefined) newLine = withStatus(newLine, edits.status);
+            lines[start] = newLine;
+
+            // Description: replace the contiguous non-checkbox continuation lines directly
+            // under the task (children and their own descriptions are untouched).
+            if (edits.description !== undefined) {
+                let end = start + 1;
+                while (end < lines.length) {
+                    const l = lines[end];
+                    if (l.trim().length === 0) break;
+                    if (/^#{1,6}\s/.test(l)) break;
+                    if (CHECKBOX_REGEX.test(l)) break;
+                    const lineIndent = (l.match(/^(\s*)/)?.[1] ?? '').length;
+                    if (lineIndent <= indent.length) break;
+                    end++;
+                }
+                const desc = (edits.description ?? '').trim();
+                const descLines = desc ? desc.split('\n').map(l => `${indent}    ${l}`) : [];
+                lines.splice(start + 1, end - (start + 1), ...descLines);
+            }
+
+            return lines.join('\n');
+        });
+        return matched;
+    }
+
+    /**
+     * Remove a task's line plus its continuation block — deeper-indented lines
+     * (checkbox children and description), including interior blank lines — from its
+     * source file. Returns the removed lines dedented to the root's column, or null
+     * when the task can't be located. Used by triage's "send to Topic": the block is
+     * re-homed into the topic file, not duplicated.
+     */
+    async removeTaskBlock(task: TaskItem): Promise<string[] | null> {
+        const file = this.vault.getAbstractFileByPath(task.sourcePath);
+        if (!(file instanceof TFile)) return null;
+
+        let removed: string[] | null = null;
+        await this.vault.process(file, content => {
+            const lines = content.split('\n');
+            const start = locateTaskLine(task, lines);
+            if (start === -1) return content;
+
+            const prefix = lines[start].match(/^(\s*)/)?.[1] ?? '';
+            let end = start + 1;
+            while (end < lines.length) {
+                const line = lines[end];
+                if (line.trim().length === 0) { end++; continue; } // blanks may sit inside a block
+                if (/^#{1,6}\s/.test(line)) break;
+                const indent = (line.match(/^(\s*)/)?.[1] ?? '').length;
+                if (indent <= prefix.length) break;
+                end++;
+            }
+            // Trailing blank lines are separation, not content — leave them behind.
+            let lastContent = end;
+            while (lastContent > start + 1 && lines[lastContent - 1].trim().length === 0) lastContent--;
+
+            removed = lines
+                .slice(start, lastContent)
+                .map(l => (l.startsWith(prefix) ? l.slice(prefix.length) : l));
+            return [...lines.slice(0, start), ...lines.slice(lastContent)].join('\n');
+        });
+        return removed;
     }
 
     /**

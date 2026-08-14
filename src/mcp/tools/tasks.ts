@@ -2,6 +2,9 @@ import { TaskItem, TaskStatus, ItemCategory, Priority, PluginSettings } from '..
 import { TaskStore } from '../../services/taskStore';
 import { TaskWriter } from '../../services/taskWriter';
 import { DailyNoteService } from '../../services/dailyNoteService';
+import { TasksInboxService } from '../../services/tasksInboxService';
+import { SprintTopicService } from '../../services/sprintTopicService';
+import { buildTaskBlock } from '../../ui/InsertTaskModal';
 import { parseDueDate } from '../../parser/dateParser';
 import { formatDateISO } from '../../utils/dateUtils';
 import {
@@ -19,6 +22,8 @@ interface TasksDeps {
 	store: TaskStore;
 	writer: TaskWriter;
 	dailyNoteService: DailyNoteService;
+	tasksInboxService: TasksInboxService;
+	sprintTopicService: SprintTopicService;
 	getSettings: () => PluginSettings;
 }
 
@@ -26,6 +31,7 @@ const FILTERS = ['today', 'overdue', 'unscheduled', 'week', 'all'] as const;
 const STATUS_NAMES = ['open', 'done', 'cancelled', 'migrated', 'scheduled'] as const;
 const PRIORITY_NAMES = ['high', 'medium', 'low', 'none'] as const;
 const KIND_NAMES = ['task', 'inbox'] as const;
+const TYPE_NAMES = ['task', 'openpoint'] as const;
 
 type FilterName = typeof FILTERS[number];
 type StatusName = typeof STATUS_NAMES[number];
@@ -35,6 +41,7 @@ export function taskTools(deps: TasksDeps): McpTool[] {
 	return [
 		listTool(deps),
 		searchTool(deps),
+		createTool(deps),
 		setStatusTool(deps),
 		setDueDateTool(deps),
 		addToDailyTool(deps),
@@ -152,6 +159,121 @@ function searchTool(deps: TasksDeps): McpTool {
 					returned: Math.min(limit, matches.length),
 					truncated,
 					tasks: matches.slice(0, limit).map(toDto),
+				});
+			} catch (err) {
+				if (err instanceof ToolError) return errorResult(err.message);
+				throw err;
+			}
+		},
+	};
+}
+
+// ─── tasks_create ────────────────────────────────────────────────────────────
+
+function createTool(deps: TasksDeps): McpTool {
+	return {
+		name: 'tasks_create',
+		description:
+			'Create a new task, in the same format as the plugin\'s "Quick Create Task" command. ' +
+			'By default the task lands in the central Tasks.md inbox (settings.tasksFilePath, ' +
+			'default BuJo/Tasks.md) for later triage. If the task belongs to a topic, pass `topic` ' +
+			'(the topic\'s title or file path) and it is written into that topic\'s ## Tasks section ' +
+			'instead — where the topic owns it — so no trailing [[link]] is needed. Use ' +
+			'tasks_add_to_daily only when the task should live in a specific daily note. Emits the ' +
+			'plugin\'s inline-tag conventions: #priority/<level>, @due <date>, #type/<type>, ' +
+			'#w/<workType>, #p/<purpose>. Optional `description` is written as indented lines ' +
+			'beneath the task. `workType`/`purpose` take the short codes configured in settings ' +
+			'(run with an invalid code to see the available ones).',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				text: { type: 'string', description: 'Task text. Required.' },
+				topic: {
+					type: 'string',
+					description:
+						'Optional. Topic title or file path. When set, the task is written into that ' +
+						'topic\'s ## Tasks section instead of the Tasks.md inbox. Use topics_list to ' +
+						'discover valid topics.',
+				},
+				priority: {
+					type: 'string',
+					enum: [...PRIORITY_NAMES],
+					description: 'Priority level. Default "none" (no tag emitted).',
+				},
+				due: {
+					type: 'string',
+					description:
+						'Natural-language date ("today", "tomorrow", "next friday", "in 3 days", ' +
+						'"end of week") or DD-MM / DD-MM-YYYY. Validated against the same parser the UI uses.',
+				},
+				type: {
+					type: 'string',
+					enum: [...TYPE_NAMES],
+					description: 'Item type. Omit to let the plugin infer it from context (heading).',
+				},
+				workType: {
+					type: 'string',
+					description: 'Work-type short code from settings (e.g. "DW"). Emitted as #w/<code>.',
+				},
+				purpose: {
+					type: 'string',
+					description: 'Purpose short code from settings (e.g. "D"). Emitted as #p/<code>.',
+				},
+				description: {
+					type: 'string',
+					description: 'Optional details, written as indented lines below the task. May be multi-line.',
+				},
+			},
+			required: ['text'],
+			additionalProperties: false,
+		},
+		handler: async (args): Promise<McpToolResult> => {
+			try {
+				const text = requireString(args, 'text').trim();
+				const priority = optionalEnum(args, 'priority', PRIORITY_NAMES) ?? 'none';
+				const typeTag = optionalEnum(args, 'type', TYPE_NAMES) ?? '';
+				const due = optionalString(args, 'due');
+				const description = optionalString(args, 'description') ?? '';
+				const topicRef = optionalString(args, 'topic');
+
+				if (due) {
+					const parsed = parseDueDate(due);
+					if (!parsed) {
+						return errorResult(
+							`Could not parse "due" value "${due}". Try "today", "tomorrow", ` +
+							'"next friday", "in 3 days", "end of week", "DD-MM", or "DD-MM-YYYY".',
+						);
+					}
+				}
+
+				const settings = deps.getSettings();
+				const workType = resolveShortCode(args, 'workType', settings.workTypes);
+				const purpose = resolveShortCode(args, 'purpose', settings.purposes);
+
+				const block = buildTaskBlock(text, priority, due ?? '', typeTag, workType, purpose, description);
+
+				// Topic-owned task → write into the topic's ## Tasks section.
+				if (topicRef) {
+					const topic = await resolveTopic(deps, topicRef);
+					if ('error' in topic) return errorResult(topic.error);
+					const ok = await deps.sprintTopicService.appendTasksToTopic(topic.filePath, block.split('\n'));
+					if (!ok) return errorResult(`Could not write to topic file "${topic.filePath}".`);
+					return jsonResult({
+						ok: true,
+						target: 'topic',
+						topic: topic.title,
+						path: topic.filePath,
+						block,
+					});
+				}
+
+				// Loose task → central Tasks.md inbox.
+				await deps.tasksInboxService.appendLines(block.split('\n'));
+				return jsonResult({
+					ok: true,
+					target: 'inbox',
+					path: settings.tasksFilePath,
+					block,
 				});
 			} catch (err) {
 				if (err instanceof ToolError) return errorResult(err.message);
@@ -360,6 +482,60 @@ function addToDailyTool(deps: TasksDeps): McpTool {
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve an optional work-type/purpose short code against the configured categories.
+ * Matches case-insensitively and returns the canonical short code; throws a ToolError
+ * listing the valid codes when the caller passes an unknown one. Empty/missing → ''.
+ */
+function resolveShortCode(
+	args: Record<string, unknown>,
+	key: string,
+	categories: { name: string; shortCode: string }[],
+): string {
+	const raw = optionalString(args, key);
+	if (!raw) return '';
+	const match = categories.find(c => c.shortCode.toLowerCase() === raw.toLowerCase());
+	if (!match) {
+		const valid = categories.length
+			? categories.map(c => `${c.shortCode} (${c.name})`).join(', ')
+			: '(none configured)';
+		throw new ToolError(`Unknown "${key}" code "${raw}". Valid codes: ${valid}.`);
+	}
+	return match.shortCode;
+}
+
+/**
+ * Resolve a topic reference (file path OR title) to its topic. Tries, in order:
+ * exact file path, case-insensitive title, case-insensitive basename. Returns an
+ * `{ error }` object (never throws) when there is no match or the reference is
+ * ambiguous, so the handler can surface a readable message to the model.
+ */
+async function resolveTopic(
+	deps: TasksDeps,
+	ref: string,
+): Promise<{ filePath: string; title: string } | { error: string }> {
+	const needle = ref.trim();
+	const all = await deps.sprintTopicService.getAllTopics();
+
+	const byPath = all.find(t => t.filePath === needle);
+	if (byPath) return { filePath: byPath.filePath, title: byPath.title };
+
+	const lower = needle.toLowerCase();
+	const byTitle = all.filter(t => t.title.toLowerCase() === lower);
+	if (byTitle.length === 1) return { filePath: byTitle[0].filePath, title: byTitle[0].title };
+	if (byTitle.length > 1) {
+		return { error: `Multiple topics titled "${ref}". Pass the file path instead: ${byTitle.map(t => t.filePath).join(', ')}.` };
+	}
+
+	const byBase = all.filter(t => basenameNoExt(t.filePath).toLowerCase() === lower);
+	if (byBase.length === 1) return { filePath: byBase[0].filePath, title: byBase[0].title };
+	if (byBase.length > 1) {
+		return { error: `Ambiguous topic "${ref}". Pass the file path instead: ${byBase.map(t => t.filePath).join(', ')}.` };
+	}
+
+	return { error: `No topic found matching "${ref}". Use topics_list to see available topics.` };
+}
 
 function filterByBucket(deps: TasksDeps, filter: FilterName): TaskItem[] {
 	const store = deps.store;

@@ -17,6 +17,8 @@ export class TriageView {
 		private settings: PluginSettings,
 		private callbacks: TaskItemRowCallbacks,
 		private searchQuery: string = '',
+		/** Opens the focused card-by-card processor. Renders the ⚡ Process button when set. */
+		private onProcess?: () => void,
 	) {
 		this.el = container.createDiv({ cls: 'friday-triage-view' });
 	}
@@ -33,6 +35,11 @@ export class TriageView {
 		const header = this.el.createDiv({ cls: 'friday-view-header' });
 		header.createSpan({ text: '📥 Triage' });
 		header.createSpan({ cls: 'friday-pending-count', text: ` (${items.length} to sort)` });
+		if (items.length > 0 && this.onProcess) {
+			const btn = header.createEl('button', { cls: 'friday-triage-process-btn', text: '⚡ Process' });
+			btn.setAttribute('title', 'Triage one item at a time (keyboard-driven)');
+			btn.addEventListener('click', () => this.onProcess!());
+		}
 
 		if (items.length === 0) {
 			this.el.createDiv({

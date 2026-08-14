@@ -14,7 +14,10 @@
       "Bash(echo \"esbuild=$?\")",
       "Bash(cp \"C:\\\\Users\\\\on079542\\\\Documents\\\\Projects\\\\Obsidian Task Manager\\\\main.js\" \"/c/Users/on079542/Obsidian Vaults/QuillWork/.obsidian/plugins/obsidian-task-bujo/main.js\")",
       "Read(//c/Users/on079542/Documents/Projects/Obsidian Task Manager/**)",
-      "Bash(git push origin master)"
+      "Bash(git push origin master)",
+      "Bash(cd \"C:/Users/on079542/Obsidian Vaults/QuillWork/BuJo\" && echo \"=== Daily notes \\(count + recent\\) ===\" && ls Daily | tail -15 && echo \"total:\" && ls Daily | wc -l && echo \"\" && echo \"=== Team folder ===\" && find Team -maxdepth 2 | head -40)",
+      "Bash(git checkout *)",
+      "Bash(git add *)"
     ]
   }
 }

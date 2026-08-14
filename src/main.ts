@@ -161,6 +161,8 @@ export default class FridayPlugin extends Plugin {
 				store: this.store,
 				writer: this.writer,
 				dailyNoteService: this.dailyNoteService,
+				tasksInboxService: this.tasksInboxService,
+				sprintTopicService: this.sprintTopicService,
 				getSettings: () => this.settings,
 			}),
 			...topicTools({

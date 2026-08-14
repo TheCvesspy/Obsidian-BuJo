@@ -4071,3 +4071,184 @@ a.friday-topics-table-jirakey:hover {
 .friday-section-overdue .friday-section-header {
     color: var(--text-error);
 }
+
+/* ─── Triage: process button + inline row verbs ─── */
+
+.friday-triage-process-btn {
+    margin-left: auto;
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: none;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.friday-triage-process-btn:hover {
+    opacity: 0.9;
+}
+
+/* ─── Triage: focused card-by-card processor modal ─── */
+
+.friday-triage-process-modal .modal-content {
+    max-width: 520px;
+}
+
+.friday-triage-proc-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+}
+.friday-triage-proc-counter {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.friday-triage-proc-bar {
+    height: 3px;
+    margin: 8px 0 14px;
+    border-radius: 2px;
+    background: var(--background-modifier-border);
+    overflow: hidden;
+}
+.friday-triage-proc-bar-fill {
+    height: 100%;
+    background: var(--interactive-accent);
+    transition: width 160ms ease;
+}
+
+.friday-triage-proc-card {
+    padding: 14px 16px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    background: var(--background-secondary);
+    margin-bottom: 14px;
+}
+.friday-triage-proc-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-normal);
+    line-height: 1.4;
+}
+.friday-triage-proc-meta {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.friday-triage-proc-desc {
+    margin-top: 8px;
+    padding: 6px 10px;
+    border-left: 2px solid var(--background-modifier-border);
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.friday-triage-proc-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+.friday-triage-proc-action {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+}
+.friday-triage-proc-action:hover {
+    background: var(--background-modifier-hover);
+}
+.friday-triage-proc-action-emoji {
+    font-size: 14px;
+}
+.friday-triage-proc-action kbd,
+.friday-triage-proc-preset kbd {
+    margin-left: auto;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--font-monospace);
+}
+
+.friday-triage-proc-snooze {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+.friday-triage-proc-preset {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    cursor: pointer;
+}
+.friday-triage-proc-preset:hover {
+    background: var(--background-modifier-hover);
+}
+
+.friday-triage-proc-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+}
+.friday-triage-proc-nav {
+    padding: 5px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    cursor: pointer;
+}
+.friday-triage-proc-nav:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.friday-triage-proc-hint {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+.friday-triage-proc-done {
+    text-align: center;
+    padding: 24px 12px;
+}
+.friday-triage-proc-done-emoji {
+    font-size: 40px;
+}
+.friday-triage-proc-done-title {
+    margin-top: 8px;
+    font-size: 18px;
+    font-weight: 700;
+}
+.friday-triage-proc-done-summary {
+    margin: 8px 0 18px;
+    font-size: 13px;
+    color: var(--text-muted);
+}

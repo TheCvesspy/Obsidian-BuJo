@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownView, Menu, Notice } from 'obsidian';
+import { ItemView, WorkspaceLeaf, MarkdownView, Menu, Notice, TFile } from 'obsidian';
 import { FridayViewMode, GroupMode, TaskItem, TaskStatus, PluginSettings, PluginData, SprintTopic, WeeklySnapshot, MonthlySnapshot, StoreEventCallback } from '../types';
 import { VIEW_TYPE_FRIDAY, REFRESH_DEBOUNCE_MS } from '../constants';
 import { TaskStore } from '../services/taskStore';
@@ -29,6 +29,9 @@ import { SyntaxReferenceModal } from './components/SyntaxReference';
 import { AddTaskBar } from './components/AddTaskBar';
 import { SprintTopicModal } from './SprintTopicModal';
 import { DueDateModal } from './DueDateModal';
+import { TopicPickerModal } from './TopicPickerModal';
+import { TriageProcessModal } from './TriageProcessModal';
+import { TaskEditModal } from './TaskEditModal';
 import { TaskItemRowCallbacks } from './components/TaskItemRow';
 import { SubtaskConfirmModal } from './SubtaskConfirmModal';
 import { formatDateISO, formatDateDMY, pluginDateToIso } from '../utils/dateUtils';
@@ -167,6 +170,14 @@ export class FridayView extends ItemView {
 				await this.writer.setStatus(task, newStatus);
 			},
 			onSnooze: (task: TaskItem, evt: MouseEvent) => this.showSnoozeMenu(task, evt),
+			onEdit: (task: TaskItem) => {
+				new TaskEditModal(this.app, task, this.settings, async (edits) => {
+					if (Object.keys(edits).length === 0) return; // nothing changed
+					const ok = await this.writer.updateTaskFields(task, edits);
+					if (ok) new Notice(`Updated: ${task.text}`);
+					else new Notice('Could not locate the task — the file may have changed. Try again.');
+				}).open();
+			},
 			onSomeday: async (task: TaskItem) => {
 				await this.writer.setSomeday(task, true);
 				new Notice(`Sent to Someday: ${task.text}`);
@@ -246,6 +257,90 @@ export class FridayView extends ItemView {
 		menu.showAtMouseEvent(evt);
 	}
 
+	/** Row callbacks for the Triage board: the base set plus the remaining triage
+	 *  verbs — date it (📅), send it to a Topic (📌), drop it (✖). Only Triage rows
+	 *  get these; other views keep the base callbacks. */
+	private get triageCallbacks(): TaskItemRowCallbacks {
+		return {
+			...this.taskCallbacks,
+			onSetDue: (task: TaskItem) => {
+				new DueDateModal(this.app, task.dueDateRaw ?? '', async (pluginDate) => {
+					if (!pluginDate) return;
+					const iso = pluginDateToIso(pluginDate);
+					await this.writer.updateDueDate(task, this.settings.dateFormat === 'dmy' ? pluginDate : iso);
+					new Notice(`Due ${iso}: ${task.text}`);
+				}).open();
+			},
+			onSendToTopic: (task: TaskItem) => void this.pickTopicAndMove(task),
+			onDrop: async (task: TaskItem) => {
+				await this.writer.setStatus(task, TaskStatus.Cancelled);
+				new Notice(`Dropped: ${task.text}`);
+			},
+		};
+	}
+
+	/** Open the topic picker, then move the task into the chosen topic. */
+	private async pickTopicAndMove(task: TaskItem): Promise<void> {
+		const topics = await this.sprintTopicService.getAllTopics();
+		if (topics.length === 0) {
+			new Notice('No topics yet — create one in the Topics view first.');
+			return;
+		}
+		new TopicPickerModal(this.app, topics, (topic) => {
+			void this.moveTaskToTopic(task, topic);
+		}).open();
+	}
+
+	/** Move a task (plus its indented children/description) into a topic's ## Tasks
+	 *  section — the v3 "send to Topic" triage verb. The topic file's existence is
+	 *  checked BEFORE the block is removed from its source, so a bad target can't
+	 *  lose the task. */
+	private async moveTaskToTopic(task: TaskItem, topic: SprintTopic): Promise<boolean> {
+		if (!(this.app.vault.getAbstractFileByPath(topic.filePath) instanceof TFile)) {
+			new Notice(`Topic file not found: ${topic.filePath}`);
+			return false;
+		}
+		const block = await this.writer.removeTaskBlock(task);
+		if (!block) {
+			new Notice('Could not locate the task — the file may have changed. Try again.');
+			return false;
+		}
+		const ok = await this.sprintTopicService.appendTasksToTopic(topic.filePath, block);
+		if (!ok) {
+			new Notice(`Could not write to topic "${topic.title}".`);
+			return false;
+		}
+		new Notice(`Moved to ${topic.title}: ${task.text}`);
+		return true;
+	}
+
+	/** Launch the focused card-by-card triage processor over the current queue. */
+	private openTriageProcessor(): void {
+		const items = this.store.getTriage(this.settings.tasksFilePath);
+		if (items.length === 0) {
+			new Notice('Inbox zero — nothing to process.');
+			return;
+		}
+		new TriageProcessModal(this.app, items, {
+			complete: async (t) => { await this.writer.setStatus(t, TaskStatus.Done); },
+			drop: async (t) => { await this.writer.setStatus(t, TaskStatus.Cancelled); },
+			someday: async (t) => { await this.writer.setSomeday(t, true); },
+			setDue: async (t, pluginDate) => {
+				const iso = pluginDateToIso(pluginDate);
+				await this.writer.updateDueDate(t, this.settings.dateFormat === 'dmy' ? pluginDate : iso);
+			},
+			snoozeForDays: async (t, days) => {
+				await this.writer.setSnooze(t, this.formatForWrite(this.daysFromNow(days)));
+			},
+			snoozeUntil: async (t, pluginDate) => {
+				const iso = pluginDateToIso(pluginDate);
+				await this.writer.setSnooze(t, this.settings.dateFormat === 'dmy' ? pluginDate : iso);
+			},
+			moveToTopic: (t, topic) => this.moveTaskToTopic(t, topic),
+			getTopics: () => this.sprintTopicService.getAllTopics(),
+		}).open();
+	}
+
 	/** Coalesce rapid store events into a single refresh */
 	private scheduleRefresh(): void {
 		// Suppress refresh during drag-and-drop to prevent board rebuilds mid-drag
@@ -278,7 +373,10 @@ export class FridayView extends ItemView {
 				break;
 			}
 			case FridayViewMode.Triage: {
-				new TriageView(this.contentContainer, this.store, this.settings, this.taskCallbacks, this.searchQuery).render();
+				new TriageView(
+					this.contentContainer, this.store, this.settings, this.triageCallbacks,
+					this.searchQuery, () => this.openTriageProcessor(),
+				).render();
 				break;
 			}
 			case FridayViewMode.Someday: {

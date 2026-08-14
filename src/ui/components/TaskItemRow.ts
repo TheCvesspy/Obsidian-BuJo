@@ -15,6 +15,14 @@ export interface TaskItemRowCallbacks {
 	onSomeday?: (task: TaskItem) => void;
 	/** Wake a task — clears snooze and/or #someday (v3). Rendered on snoozed/someday rows. */
 	onWake?: (task: TaskItem) => void;
+	/** Set/replace @due (v3 triage). When provided, a 📅 action renders on open rows. */
+	onSetDue?: (task: TaskItem) => void;
+	/** Move the task into a Topic's ## Tasks section (v3 triage). 📌 on open rows. */
+	onSendToTopic?: (task: TaskItem) => void;
+	/** Drop — mark cancelled (v3 triage). ✖ on open rows. */
+	onDrop?: (task: TaskItem) => void;
+	/** Open the full task settings dialog (v3). ✏️ renders on every row when provided. */
+	onEdit?: (task: TaskItem) => void;
 }
 
 export class TaskItemRow {
@@ -121,21 +129,43 @@ export class TaskItemRow {
 		// the callbacks (Today/Upcoming/Triage/Someday do; legacy views don't).
 		if (task.status === TaskStatus.Open) {
 			const isDeferred = task.someday || task.snoozeDate != null;
+			if (callbacks.onSetDue && !isDeferred) {
+				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '📅' });
+				btn.setAttribute('title', 'Set due date…');
+				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSetDue!(task); });
+			}
 			if (callbacks.onSnooze && !isDeferred) {
 				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '⏰' });
 				btn.setAttribute('title', 'Snooze…');
 				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSnooze!(task, e as MouseEvent); });
+			}
+			if (callbacks.onSendToTopic && !isDeferred) {
+				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '📌' });
+				btn.setAttribute('title', 'Send to topic…');
+				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSendToTopic!(task); });
 			}
 			if (callbacks.onSomeday && !isDeferred) {
 				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '💤' });
 				btn.setAttribute('title', 'Send to Someday');
 				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onSomeday!(task); });
 			}
+			if (callbacks.onDrop && !isDeferred) {
+				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '✖' });
+				btn.setAttribute('title', 'Drop — mark cancelled');
+				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onDrop!(task); });
+			}
 			if (callbacks.onWake && task.someday) {
 				const btn = this.el.createSpan({ cls: 'friday-row-action', text: '↩︎' });
 				btn.setAttribute('title', 'Wake — remove from Someday');
 				btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onWake!(task); });
 			}
+		}
+
+		// Edit dialog (v3): full field management, available on every row regardless of status.
+		if (callbacks.onEdit) {
+			const btn = this.el.createSpan({ cls: 'friday-row-action', text: '✏️' });
+			btn.setAttribute('title', 'Edit task…');
+			btn.addEventListener('click', (e) => { e.stopPropagation(); callbacks.onEdit!(task); });
 		}
 
 		// Source file link

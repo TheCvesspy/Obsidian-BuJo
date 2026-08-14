@@ -139,6 +139,8 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 - **Methods**:
   - `setStatus(task, newStatus)`: replaces checkbox character in source file
   - `updateDueDate(task, newDateRaw)`: replaces or appends `@due` tag
+  - `updateTaskFields(task, edits)`: partial field edit (text/status/priority/due/snooze/someday/type/workType/purpose/description) — rebuilds the line from parsed tokens (same regex order as `taskParser`), preserving untouched metadata verbatim; backs the ✏️ Edit Task dialog (`TaskEditModal`)
+  - `removeTaskBlock(task)`: removes the task line + its deeper-indented continuation block from the source file and returns the dedented lines — backs triage's "send to Topic" move (paired with `SprintTopicService.appendTasksToTopic`)
   - `syncOriginalStatus(task, newStatus)`: two-way sync — finds original via `migratedFrom` wiki-link, replaces `[>]` status. Sets `syncing=true` during write
   - `findTaskLine()`: tries recorded `lineNumber` first (O(1)), falls back to `indexOf` scan
   - `resolveWikiLink()`: resolves by exact path, then basename
@@ -167,7 +169,7 @@ All regex patterns for parsing and timing constants for debouncing. See [§13](#
 #### `sprintTopicService.ts` (~230 lines) — Topic CRUD & Frontmatter
 - **Class**: `SprintTopicService`
 - CRUD for topic files in `{sprintTopicsPath}/` + frontmatter field setters
-- Key methods: `createTopic(title, jira, priority, linkedPages, sprintId, impact?, effort?, dueDate?)`, `setTopicStatus`, `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `updateSortOrder`
+- Key methods: `createTopic(title, jira, priority, linkedPages, sprintId, impact?, effort?, dueDate?)`, `setTopicStatus`, `setTopicBlocked`, `setTopicImpact`, `setTopicEffort`, `setTopicDueDate`, `updateSortOrder`, `appendTasksToTopic(filePath, lines)` (prepends task lines to the topic's `## Tasks` section — backs the `tasks_create` MCP tool's topic routing)
 - **Central sprint-change helper**: `assignTopicToSprint(filePath, sprintId)` — reads current `sprint` + `sprintHistory`, merges old+new into history, writes atomically. Every sprint-change path routes through this (including `moveTopicToBacklog`, `carryForwardTopic`, `archiveTopic`, `cancelTopic`) so history is never lost
 - `updateTopicFrontmatter(filePath, updates)` — generic updater; `null` deletes the key, everything else stringifies
 - See §15 for full schema and prioritization semantics
