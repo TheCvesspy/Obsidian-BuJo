@@ -63,6 +63,7 @@ var DEFAULT_SETTINGS = {
   tasksFilePath: "BuJo/Tasks.md",
   archiveCompletedAfterDays: 7,
   upcomingWindowDays: 14,
+  todayLookaheadDays: 3,
   dateFormat: "iso",
   morningReviewOnStartup: false,
   taskHeadings: ["Tasks", "TODO", "Action Items"],
@@ -566,6 +567,15 @@ var FridaySettingTab = class extends import_obsidian3.PluginSettingTab {
         const n = parseInt(value, 10);
         if (!isNaN(n) && n > 0) {
           this.plugin.settings.upcomingWindowDays = n;
+          this.debouncedSave(false);
+        }
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("Today look-ahead (days)").setDesc("How many days of upcoming work the Today view previews below today's list. 0 hides the preview.").addText(
+      (text) => text.setPlaceholder("3").setValue(String(this.plugin.settings.todayLookaheadDays)).onChange((value) => {
+        const n = parseInt(value, 10);
+        if (!isNaN(n) && n >= 0) {
+          this.plugin.settings.todayLookaheadDays = n;
           this.debouncedSave(false);
         }
       })
@@ -7079,6 +7089,8 @@ var TaskList = class {
 };
 
 // src/ui/components/TodayView.ts
+var MAX_LOOKAHEAD_DAYS = 14;
+var DEFAULT_LOOKAHEAD_DAYS = 3;
 var TodayView = class {
   constructor(container, store, settings, callbacks, searchQuery = "") {
     this.container = container;
@@ -7091,10 +7103,13 @@ var TodayView = class {
   render() {
     this.el.empty();
     const today = todayStart();
+    const lookaheadDays = this.lookaheadDays();
     let tasks = this.store.getToday();
+    let ahead = lookaheadDays > 0 ? this.store.getUpcoming(lookaheadDays) : [];
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase();
       tasks = tasks.filter((t) => t.text.toLowerCase().includes(q));
+      ahead = ahead.filter((t) => t.text.toLowerCase().includes(q));
     }
     const overdue = [];
     const dueToday = [];
@@ -7106,13 +7121,13 @@ var TodayView = class {
     }
     const header = this.el.createDiv({ cls: "friday-view-header" });
     header.createSpan({ text: `Today \u2014 ${formatDateDisplay(today)}` });
-    header.createSpan({ cls: "friday-pending-count", text: ` (${tasks.length} to do)` });
+    const counts = `${tasks.length} to do` + (ahead.length > 0 ? ` \xB7 ${ahead.length} coming up` : "");
+    header.createSpan({ cls: "friday-pending-count", text: ` (${counts})` });
     if (tasks.length === 0) {
       this.el.createDiv({
         cls: "friday-empty",
         text: "All clear for today. \u{1F389} Nothing due and nothing overdue."
       });
-      return;
     }
     const allTasks = this.store.getTasks();
     const sections = [
@@ -7130,6 +7145,49 @@ var TodayView = class {
       wrap.createEl("h4", { cls: "friday-section-header", text: `${label} (${items.length})` });
       new TaskList(wrap, grouped, this.callbacks, true, void 0, allTasks);
     }
+    if (lookaheadDays > 0)
+      this.renderLookahead(ahead, lookaheadDays, today, allTasks);
+  }
+  /** The next-N-days preview, bucketed by due day. Days with nothing due are skipped. */
+  renderLookahead(ahead, days, today, allTasks) {
+    const sectionEl = this.el.createDiv({ cls: "friday-section friday-today-lookahead" });
+    sectionEl.createEl("h4", {
+      cls: "friday-section-header",
+      text: `Next ${days} days (${ahead.length})`
+    });
+    if (ahead.length === 0) {
+      sectionEl.createDiv({ cls: "friday-empty", text: `Nothing due in the next ${days} days.` });
+      return;
+    }
+    const byDay = /* @__PURE__ */ new Map();
+    for (const t of ahead) {
+      if (!t.dueDate)
+        continue;
+      const key = t.dueDate.toDateString();
+      if (!byDay.has(key)) {
+        byDay.set(key, { label: this.dayLabel(t.dueDate, today), ms: t.dueDate.getTime(), items: [] });
+      }
+      byDay.get(key).items.push(t);
+    }
+    const grouped = /* @__PURE__ */ new Map();
+    for (const day of [...byDay.values()].sort((a, b) => a.ms - b.ms)) {
+      grouped.set(day.label, day.items);
+    }
+    new TaskList(sectionEl, grouped, this.callbacks, true, void 0, allTasks);
+  }
+  dayLabel(d, today) {
+    const tomorrow = new Date(today.getTime());
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    if (isSameDay(d, tomorrow))
+      return "Tomorrow";
+    return d.toLocaleDateString(void 0, { weekday: "long", month: "short", day: "numeric" });
+  }
+  /** Configured look-ahead, clamped to a sane range. 0 disables the preview. */
+  lookaheadDays() {
+    const raw = this.settings.todayLookaheadDays;
+    if (typeof raw !== "number" || !isFinite(raw))
+      return DEFAULT_LOOKAHEAD_DAYS;
+    return Math.max(0, Math.min(MAX_LOOKAHEAD_DAYS, Math.round(raw)));
   }
   destroy() {
     this.el.empty();

@@ -390,6 +390,8 @@ Markdown Files in Vault
 
 | Mode | Enum | Description |
 |------|------|-------------|
+| **Today** | `FridayViewMode.Today` | The daily driver. **Overdue → Due Today** (active root tasks from every home; snoozed & someday excluded), grouped by `defaultGroupMode`, followed by a muted **"Next N days" look-ahead** bucketed by due day (Tomorrow, then weekday). Window = `todayLookaheadDays` (default 3, clamped 0–14; 0 hides it). Header counts read `(N to do · M coming up)`. |
+| **Upcoming** | `FridayViewMode.Upcoming` | Active tasks due after today within `upcomingWindowDays` (default 14), bucketed by day, plus a **💤 Waking soon** section for snoozed tasks that wake inside the same window. |
 | **Daily** | `FridayViewMode.Daily` | 4 sections: Overdue → Carried Over → Due Today → Unscheduled. Shows pending count header. |
 | **Weekly** | `FridayViewMode.Weekly` | 7-day calendar (Mon–Sun) with per-day task lists and progress bars (done/total %). |
 | **Monthly** | `FridayViewMode.Monthly` | Goals progress, stats cards, month navigation, trends table, save snapshot. |

@@ -243,6 +243,8 @@ export interface PluginSettings {
 	archiveCompletedAfterDays: number;
 	/** v3: how many days ahead the Upcoming view looks (also the snooze-wake window). */
 	upcomingWindowDays: number;
+	/** v3: how many days of upcoming work the Today view previews below today's list. 0 hides it. */
+	todayLookaheadDays: number;
 	/** v3: preferred date format for @due / @snooze written by the plugin. */
 	dateFormat: 'iso' | 'dmy';
 	/** Show the Morning Review (1:1 & waiting-on nudges + quick capture) once per day at startup. */
@@ -474,6 +476,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	tasksFilePath: 'BuJo/Tasks.md',
 	archiveCompletedAfterDays: 7,
 	upcomingWindowDays: 14,
+	todayLookaheadDays: 3,
 	dateFormat: 'iso',
 	morningReviewOnStartup: false,
 	taskHeadings: ['Tasks', 'TODO', 'Action Items'],

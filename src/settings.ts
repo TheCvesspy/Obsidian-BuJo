@@ -238,6 +238,22 @@ export class FridaySettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
+            .setName('Today look-ahead (days)')
+            .setDesc('How many days of upcoming work the Today view previews below today\'s list. 0 hides the preview.')
+            .addText(text =>
+                text
+                    .setPlaceholder('3')
+                    .setValue(String(this.plugin.settings.todayLookaheadDays))
+                    .onChange(value => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 0) {
+                            this.plugin.settings.todayLookaheadDays = n;
+                            this.debouncedSave(false);
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
             .setName('Auto-archive completed after (days)')
             .setDesc('Completed tasks in the Tasks inbox are swept to the archive once closed this long. 0 = manual only.')
             .addText(text =>

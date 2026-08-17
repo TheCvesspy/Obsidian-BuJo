@@ -4314,6 +4314,32 @@ a.friday-topics-table-jirakey:hover {
     color: var(--text-error);
 }
 
+/* ─── Today: next-few-days look-ahead ─── */
+
+/* Demoted below today's live list — it's context, not the to-do list. */
+.friday-today-lookahead {
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border);
+    opacity: 0.75;
+}
+
+.friday-today-lookahead:hover {
+    opacity: 1;
+}
+
+.friday-today-lookahead .friday-section-header {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.friday-today-lookahead .friday-empty {
+    padding: 8px 0;
+    font-size: 13px;
+}
+
 /* ─── Triage: process button + inline row verbs ─── */
 
 .friday-triage-process-btn {
